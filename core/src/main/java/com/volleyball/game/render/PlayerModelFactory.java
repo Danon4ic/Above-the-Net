@@ -44,7 +44,10 @@ final class PlayerModelFactory {
     static final float ANKLE_HEIGHT = 0.035f;
     static final float SHOULDER_HEIGHT = 0.44f;
     static final float SHOULDER_WIDTH = 0.26f;
-    static final float UPPER_ARM_LENGTH = 0.29f;
+    static final float UPPER_ARM_LENGTH = 0.34f;
+    /** The palm in the forearm's frame (a little ahead of the forearm's axis, below the elbow). */
+    static final float HAND_X = 0.03f;
+    static final float HAND_Y = -0.345f;
 
     private static final Color SKIN = new Color(0.86f, 0.68f, 0.55f, 1f);
     private static final Color HAIR = new Color(0.20f, 0.14f, 0.10f, 1f);
@@ -134,10 +137,10 @@ final class PlayerModelFactory {
             GeometryBuilder upper = node(left ? UPPER_ARM_LEFT : UPPER_ARM_RIGHT, 0f, SHOULDER_HEIGHT, side * SHOULDER_WIDTH, material);
             upper.box(0f, -0.07f, 0f, 0.115f, 0.15f, 0.115f, shirt);
             upper.box(0f, -0.01f, 0f, 0.13f, 0.09f, 0.13f, liberoTrim != null ? liberoTrim : shirt); // shoulder cap
-            upper.box(0f, -0.2f, 0f, coach ? 0.1f : 0.085f, 0.17f, coach ? 0.1f : 0.085f, sleeve);
+            upper.box(0f, -0.24f, 0f, coach ? 0.1f : 0.085f, 0.2f, coach ? 0.1f : 0.085f, sleeve);
             GeometryBuilder fore = node(left ? FOREARM_LEFT : FOREARM_RIGHT, 0f, -UPPER_ARM_LENGTH, 0f, material);
-            fore.box(0f, -0.12f, 0f, coach ? 0.09f : 0.075f, coach ? 0.24f : 0.26f, coach ? 0.09f : 0.075f, sleeve);
-            fore.box(0.005f, -0.31f, 0f, 0.075f, 0.11f, 0.05f, SKIN);    // hand
+            fore.box(0f, -0.14f, 0f, coach ? 0.09f : 0.075f, coach ? 0.27f : 0.29f, coach ? 0.09f : 0.075f, sleeve);
+            fore.box(0.005f, -0.345f, 0f, 0.075f, 0.11f, 0.05f, SKIN);   // hand
 
             GeometryBuilder thigh = node(left ? THIGH_LEFT : THIGH_RIGHT, 0f, -HIP_DROP, side * HIP_WIDTH, material);
             thigh.box(0f, -0.21f, 0f, coach ? 0.16f : 0.15f, 0.42f, coach ? 0.16f : 0.15f, leg);

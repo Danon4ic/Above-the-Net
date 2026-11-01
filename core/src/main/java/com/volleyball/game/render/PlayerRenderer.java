@@ -320,7 +320,7 @@ public final class PlayerRenderer implements Disposable {
         if (f == null || !drawn.contains(f.instance)) return false;
         for (int i = 0; i < 2; i++) {
             handMatrix.set(f.instance.transform).mul(f.forearm[i].globalTransform);
-            (i == 0 ? left : right).set(0.03f, -0.31f, 0f).mul(handMatrix);
+            (i == 0 ? left : right).set(PlayerModelFactory.HAND_X, PlayerModelFactory.HAND_Y, 0f).mul(handMatrix);
         }
         return true;
     }
@@ -753,7 +753,7 @@ public final class PlayerRenderer implements Disposable {
     // ------------------------------------------------------------------ contact with the ball
 
     /** The arm: shoulder to elbow, and the palm in the forearm's frame (see {@link #hands}). */
-    private final ArmIK armIK = new ArmIK(PlayerModelFactory.UPPER_ARM_LENGTH, 0.03f, -0.31f);
+    private final ArmIK armIK = new ArmIK(PlayerModelFactory.UPPER_ARM_LENGTH, PlayerModelFactory.HAND_X, PlayerModelFactory.HAND_Y);
     private final ArmPose heldLeft = new ArmPose();
     private final ArmPose heldRight = new ArmPose();
     private final com.badlogic.gdx.math.Matrix4 torsoWorld = new com.badlogic.gdx.math.Matrix4();
@@ -874,7 +874,8 @@ public final class PlayerRenderer implements Disposable {
     }
 
     /** Arm length, shoulder to palm. */
-    private static final float ARM_REACH = PlayerModelFactory.UPPER_ARM_LENGTH + 0.31f;
+    private static final float ARM_REACH = PlayerModelFactory.UPPER_ARM_LENGTH
+            + (float) Math.hypot(PlayerModelFactory.HAND_X, PlayerModelFactory.HAND_Y);
     /** The trunk leans at most this far (rad) to bring a hand to a ball out of the arm's reach. */
     static final float MAX_TRUNK_REACH = 0.4f;
     /** How far (m) a shoulder rises with the arm reaching overhead. */
@@ -1016,7 +1017,7 @@ public final class PlayerRenderer implements Disposable {
         if (dirty) f.instance.calculateTransforms();
         for (int i = 0; i < 2; i++) {
             handMatrix.set(f.instance.transform).mul(f.forearm[i].globalTransform);
-            f.hand[i].set(0.03f, -0.31f, 0f).mul(handMatrix);
+            f.hand[i].set(PlayerModelFactory.HAND_X, PlayerModelFactory.HAND_Y, 0f).mul(handMatrix);
         }
         f.handsKnown = true;
         if (ballLive) f.lastBall.set(drawnBall);
