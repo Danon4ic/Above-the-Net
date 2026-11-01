@@ -23,6 +23,7 @@ import com.volleyball.game.mechanics.ServeType;
 import com.volleyball.game.physics.PlayerLocomotion;
 import com.volleyball.game.entities.Ball;
 import com.volleyball.game.render.anim.ArmIK;
+import com.volleyball.game.render.anim.FallKind;
 import com.volleyball.game.render.anim.PlayerAnimState;
 import com.volleyball.game.render.anim.Spring;
 
@@ -118,6 +119,9 @@ public final class PlayerRenderer implements Disposable {
         boolean handsKnown;
         /** The ball action was armed (waiting for the ball) last frame: the next unarmed frame is the contact. */
         boolean wasHeld;
+        /** The fall in progress (decided as the dive starts) and whether the player is down. */
+        FallKind fall = FallKind.SPRAWL;
+        boolean down;
         /** The ball as drawn last frame (with the hands of that frame: the last picture before the contact). */
         final Vector3 lastBall = new Vector3();
 
@@ -390,7 +394,10 @@ public final class PlayerRenderer implements Disposable {
 
     /** Dives and falls: tip the whole body over towards the dive direction, pivoting at the feet. */
     private void applyTilt(Figure f, VolleyballPlayer player, float yaw) {
-        float tilt = player.bodyTilt();
+        boolean down = !player.isUpright();
+        if (down && !f.down) f.fall = FallKind.of(player);
+        f.down = down;
+        float tilt = player.bodyTilt() * f.fall.tilt;
         if (tilt <= 0f) return;
         // Dive direction in the model's local frame (model faces +X, right is +Z).
         float cos = MathUtils.cos(yaw);
@@ -445,14 +452,19 @@ public final class PlayerRenderer implements Disposable {
             return;
         }
         if (body != BodyState.UPRIGHT) {
+            // Down for a ball: the fall's keyframes, reached through the springs (no jump into the
+            // dive), the hands going for the ball, and the body kept on top of the floor.
             poseDiveAndRecovery(f, player);
-            f.syncTo(leftArm, rightArm, 0f, 0f);
-            f.springs[9].snap(0f);
-            f.springs[10].snap(0f);
-            f.roll = 0f;
+            f.blend(leftArm, rightArm, diveLean, 0f, 0f, f.drop, DIVE_HALF_LIFE, dt);
+            applyArm(f, 0, f.left);
+            applyArm(f, 1, f.right);
+            f.torso.rotation.setFromAxisRad(0f, 0f, 1f, f.lean);
+            f.head.rotation.setFromAxisRad(0f, 0f, 1f, diveHead);
             f.wasAirborne = false;
             f.state = PlayerAnimState.of(player, forwardSpeed, sideSpeed, 10f, false);
             f.instance.calculateTransforms();
+            reachForBall(f, player, action, player.isActionPoseHeld());
+            keepAboveFloor(f);
             return;
         }
         float progress = player.actionPoseProgress();
@@ -790,6 +802,8 @@ public final class PlayerRenderer implements Disposable {
     }
 
     private void logContactGaps() {
+        Gdx.app.log("Contact", String.format(java.util.Locale.ROOT, "floor: %d corrected frames, deepest %.2f m below the floor",
+                floorCorrections, floorDeepest));
         for (Map.Entry<ActionPose, com.badlogic.gdx.utils.FloatArray> e : contactGaps.entrySet()) {
             float[] v = e.getValue().toArray();
             java.util.Arrays.sort(v);
@@ -823,7 +837,7 @@ public final class PlayerRenderer implements Disposable {
         ContactType type;
         ServeType serve = null;
         switch (action) {
-            case PLATFORM -> type = ContactType.FOREARM_PASS;
+            case PLATFORM -> type = player.isUpright() ? ContactType.FOREARM_PASS : ContactType.DIVE;
             case OVERHEAD -> type = ContactType.OVERHEAD_PASS;
             case TOSS -> {
                 type = ContactType.SERVE;
@@ -1494,20 +1508,36 @@ public final class PlayerRenderer implements Disposable {
         float pelvisDrop = 0f;
         float lean;
         float head;
+        boolean knee = f.fall == FallKind.KNEE_DROP;
         switch (player.bodyState()) {
             case DIVING -> {
                 float p = smooth(t / PlayerLocomotion.DIVE_TIME);
-                pelvisDrop = 0.22f * (1f - p);
-                solveLeg(f, 0, MathUtils.lerp(-0.05f, -0.38f, p), -hip * MathUtils.lerp(0.85f, 0.97f, p), 0f, -0.6f * p);
-                solveLeg(f, 1, MathUtils.lerp(0.25f, -0.2f, p), -hip * MathUtils.lerp(0.62f, 0.9f, p), 0f, -0.5f * p);
-                float raise = MathUtils.lerp(1.2f, 2.95f, p);
-                leftArm.set(raise, MathUtils.lerp(0.2f, -0.08f, p), MathUtils.lerp(0.7f, 0.05f, p));
-                rightArm.set(raise, MathUtils.lerp(0.2f, -0.08f, p), MathUtils.lerp(0.7f, 0.05f, p));
-                lean = MathUtils.lerp(-0.55f, 0.15f, p);
-                head = 0.55f * p;
+                if (knee) {
+                    // Down through the front knee: it folds under the body, the rear leg trails,
+                    // the trunk goes forwards and the arms reach for the floor in front.
+                    pelvisDrop = 0.3f * p;
+                    solveLeg(f, 0, MathUtils.lerp(0.05f, 0.32f, p), -hip * MathUtils.lerp(0.85f, 0.5f, p), -0.05f, 0f);
+                    solveLeg(f, 1, MathUtils.lerp(0.05f, -0.38f, p), -hip * MathUtils.lerp(0.85f, 0.62f, p), 0.05f, -0.8f * p);
+                    float raise = MathUtils.lerp(1.0f, 1.75f, p);
+                    leftArm.set(raise, MathUtils.lerp(0.25f, 0.05f, p), MathUtils.lerp(0.7f, 0.15f, p));
+                    rightArm.set(raise, MathUtils.lerp(0.25f, 0.05f, p), MathUtils.lerp(0.7f, 0.15f, p));
+                    lean = MathUtils.lerp(-0.4f, -0.7f, p);
+                    head = 0.45f * p;
+                } else {
+                    // The flat dive: dip, one leg drives, the other trails, arms reach ahead, back arches.
+                    pelvisDrop = 0.22f * (1f - p);
+                    solveLeg(f, 0, MathUtils.lerp(-0.05f, -0.38f, p), -hip * MathUtils.lerp(0.85f, 0.97f, p), 0f, -0.6f * p);
+                    solveLeg(f, 1, MathUtils.lerp(0.25f, -0.2f, p), -hip * MathUtils.lerp(0.62f, 0.9f, p), 0f, -0.5f * p);
+                    float raise = MathUtils.lerp(1.2f, 2.95f, p);
+                    leftArm.set(raise, MathUtils.lerp(0.2f, -0.08f, p), MathUtils.lerp(0.7f, 0.05f, p));
+                    rightArm.set(raise, MathUtils.lerp(0.2f, -0.08f, p), MathUtils.lerp(0.7f, 0.05f, p));
+                    lean = MathUtils.lerp(-0.55f, 0.15f, p);
+                    head = 0.55f * p;
+                }
             }
             case ON_FLOOR -> {
                 if (player.isDiveRoll()) {
+                    // Hip, back, shoulder: the knees tuck through the roll, the arms hug in.
                     float r = smooth(t / ROLL_TIME);
                     float tuck = MathUtils.sin(r * MathUtils.PI);
                     solveLeg(f, 0, 0.3f * tuck, -hip * MathUtils.lerp(0.95f, 0.5f, tuck), 0f, -0.5f);
@@ -1516,19 +1546,44 @@ public final class PlayerRenderer implements Disposable {
                     rightArm.set(MathUtils.lerp(2.9f, 1.1f, tuck), 0.2f, 1.6f * tuck);
                     lean = -0.6f * tuck;
                     head = -0.4f * tuck;
+                } else if (knee) {
+                    // On the knee and the hands; the hands come back under the shoulders to push up.
+                    float q = smooth((t / PlayerLocomotion.FLOOR_TIME - 0.3f) / 0.7f);
+                    pelvisDrop = 0.3f;
+                    solveLeg(f, 0, 0.32f, -hip * 0.5f, -0.05f, 0f);
+                    solveLeg(f, 1, -0.38f, -hip * 0.62f, 0.05f, -0.8f);
+                    leftArm.set(MathUtils.lerp(1.75f, 1.1f, q), 0.1f, MathUtils.lerp(0.15f, 0.5f, q));
+                    rightArm.set(MathUtils.lerp(1.75f, 1.1f, q), 0.1f, MathUtils.lerp(0.15f, 0.5f, q));
+                    lean = MathUtils.lerp(-0.7f, -0.55f, q);
+                    head = 0.45f;
                 } else {
+                    // Sliding on the chest, arms out in front; then the hands come under the shoulders.
+                    // A specialist keeps the lead arm out longer (the pancake reach).
                     float q = smooth((t / PlayerLocomotion.FLOOR_TIME - 0.35f) / 0.65f);
+                    float lead = smooth((t / PlayerLocomotion.FLOOR_TIME - 0.55f) / 0.45f);
                     solveLeg(f, 0, -0.12f, -hip * 0.96f, 0f, -0.9f);
                     solveLeg(f, 1, -0.05f, -hip * 0.9f, 0f, -0.9f);
                     leftArm.set(MathUtils.lerp(2.95f, 0.45f, q), MathUtils.lerp(-0.08f, 0.35f, q), MathUtils.lerp(0.05f, 1.7f, q));
-                    rightArm.set(MathUtils.lerp(2.95f, 0.45f, q), MathUtils.lerp(-0.08f, 0.35f, q), MathUtils.lerp(0.05f, 1.7f, q));
+                    rightArm.set(MathUtils.lerp(2.95f, 0.45f, lead), MathUtils.lerp(-0.08f, 0.35f, lead), MathUtils.lerp(0.05f, 1.7f, lead));
                     lean = MathUtils.lerp(0.15f, 0.05f, q);
                     head = 0.55f;
                 }
             }
             default -> {
                 float g = MathUtils.clamp(t / PlayerLocomotion.GET_UP_TIME, 0f, 1f);
-                if (g < 0.5f) {
+                if (knee) {
+                    // From the knee straight up through a crouch, the eyes on the ball.
+                    float u = smooth(g);
+                    pelvisDrop = MathUtils.lerp(0.3f, 0.06f, u);
+                    float standingHip = hip - pelvisDrop;
+                    solveLeg(f, 0, MathUtils.lerp(0.32f, 0.05f, u), -Math.min(standingHip, hip * MathUtils.lerp(0.5f, 1f, u)), -0.05f, 0f);
+                    solveLeg(f, 1, MathUtils.lerp(-0.38f, -0.05f, u), -Math.min(standingHip, hip * MathUtils.lerp(0.62f, 1f, u)), 0.05f, -0.8f * (1f - u));
+                    leftArm.set(MathUtils.lerp(1.1f, 0.6f, u), 0.2f, MathUtils.lerp(0.5f, 0.9f, u));
+                    rightArm.set(MathUtils.lerp(1.1f, 0.6f, u), 0.2f, MathUtils.lerp(0.5f, 0.9f, u));
+                    lean = MathUtils.lerp(-0.55f, -0.25f, u);
+                    head = MathUtils.lerp(0.45f, 0.1f, u);
+                } else if (g < 0.5f) {
+                    // Push up onto the knees...
                     float k = smooth(g / 0.5f);
                     solveLeg(f, 0, MathUtils.lerp(-0.05f, 0.3f, k), -hip * MathUtils.lerp(0.95f, 0.5f, k), 0f, -0.6f);
                     solveLeg(f, 1, MathUtils.lerp(-0.05f, 0.25f, k), -hip * MathUtils.lerp(0.95f, 0.55f, k), 0f, -0.6f);
@@ -1537,6 +1592,7 @@ public final class PlayerRenderer implements Disposable {
                     lean = MathUtils.lerp(0.05f, -0.45f, k);
                     head = MathUtils.lerp(0.5f, 0.2f, k);
                 } else {
+                    // ...then stand through a crouch.
                     float u = smooth((g - 0.5f) / 0.5f);
                     pelvisDrop = MathUtils.lerp(0.38f, 0.05f, u);
                     float standingHip = hip - pelvisDrop;
@@ -1551,10 +1607,55 @@ public final class PlayerRenderer implements Disposable {
         }
         f.pelvis.translation.set(0f, PlayerModelFactory.PELVIS_HEIGHT - pelvisDrop, 0f);
         f.pelvis.rotation.idt();
-        applyArm(f, 0, leftArm);
-        applyArm(f, 1, rightArm);
-        f.torso.rotation.setFromAxisRad(0f, 0f, 1f, lean);
-        f.head.rotation.setFromAxisRad(0f, 0f, 1f, head);
+        f.drop = pelvisDrop;
+        f.springs[10].snap(pelvisDrop);
+        diveLean = lean;
+        diveHead = head;
+    }
+
+    // The trunk and the head of a fall (written by poseDiveAndRecovery).
+    private float diveLean;
+    private float diveHead;
+    /** Going down the pose follows its keyframes this closely (s to halve the distance). */
+    private static final float DIVE_HALF_LIFE = 0.03f;
+
+    // Points on the body (node frame) that can touch the floor: hands, knees, toes, heels, the
+    // head, the chest and back, the shoulders and the hips.
+    private final Vector3 probe = new Vector3();
+    private float floorDeepest;
+    private int floorCorrections;
+
+    /**
+     * Keeps a player who is down on top of the floor: the lowest point of the body (the keyframes
+     * and the tilt are approximations) is found and the figure lifted so it rests on the floor
+     * instead of sinking into it.
+     */
+    private void keepAboveFloor(Figure f) {
+        float lowest = Float.MAX_VALUE;
+        for (int i = 0; i < 2; i++) {
+            lowest = Math.min(lowest, pointY(f, f.forearm[i], PlayerModelFactory.HAND_X, PlayerModelFactory.HAND_Y - 0.05f, 0f));
+            lowest = Math.min(lowest, pointY(f, f.shin[i], 0.06f, 0f, 0f));
+            lowest = Math.min(lowest, pointY(f, f.foot[i], 0.19f, -0.035f, 0f));
+            lowest = Math.min(lowest, pointY(f, f.foot[i], -0.08f, -0.035f, 0f));
+        }
+        lowest = Math.min(lowest, pointY(f, f.head, 0f, 0.27f, 0f));
+        lowest = Math.min(lowest, pointY(f, f.head, 0.12f, 0.12f, 0f));
+        lowest = Math.min(lowest, pointY(f, f.torso, 0.13f, 0.3f, 0f));
+        lowest = Math.min(lowest, pointY(f, f.torso, -0.13f, 0.3f, 0f));
+        lowest = Math.min(lowest, pointY(f, f.torso, 0f, 0.46f, -0.2f));
+        lowest = Math.min(lowest, pointY(f, f.torso, 0f, 0.46f, 0.2f));
+        lowest = Math.min(lowest, pointY(f, f.pelvis, 0.13f, -0.08f, 0f));
+        lowest = Math.min(lowest, pointY(f, f.pelvis, -0.13f, -0.08f, 0f));
+        float floor = 0.01f;
+        if (lowest >= floor) return;
+        floorDeepest = Math.max(floorDeepest, floor - lowest);
+        floorCorrections++;
+        f.instance.transform.trn(0f, floor - lowest, 0f);
+    }
+
+    private float pointY(Figure f, Node node, float x, float y, float z) {
+        handMatrix.set(f.instance.transform).mul(node.globalTransform);
+        return probe.set(x, y, z).mul(handMatrix).y;
     }
 
     private static float smooth(float x) {
