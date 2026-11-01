@@ -22,12 +22,22 @@ import java.util.Map;
 import java.util.Random;
 
 /**
- * A team's answer to the opponent's attack: reading the set, who blocks and how (single or double
- * block, block style from scouting, falling for decoys), and the back-court formation that
+ * A team's answer to the opponent's attack: reading the set, who blocks and how (single, double
+ * or triple block, block style from scouting, falling for decoys), and the back-court formation that
  * defends what gets past the block. The team AI calls {@link #read} once per step while the
  * opponent has the ball and then asks, player by player, what each one does.
  */
 final class TeamDefense {
+    /**
+     * A third blocker (professional teams) joins only a slow ball: at least this long (s) from the
+     * set to the hit, measured when the set is read...
+     */
+    static final float TRIPLE_MIN_TIME = 0.75f;
+    /** ...and only from this close (m, along the net) to where the ball will be hit. */
+    static final float TRIPLE_REACH = 3.5f;
+    /** Distance (m) between neighbouring blockers' block positions in a group block. */
+    static final float BLOCK_SPACING = 0.7f;
+
     private final GameWorld world;
     private final CourtSide side;
     private final TeamTactics tactics;
@@ -39,6 +49,12 @@ final class TeamDefense {
     private final TrajectoryPredictor.Prediction setRead = new TrajectoryPredictor.Prediction();
     private final Vector3 target = new Vector3();
     private final List<VolleyballPlayer> back = new ArrayList<>(3);
+    /** This step's block (one to three players) and each one's place along the net (+z, m). */
+    private final List<VolleyballPlayer> block = new ArrayList<>(3);
+    private final float[] blockOffsets = new float[3];
+    /** The extra blockers decided for the current set (decided once, so nobody leaves the block late). */
+    private final List<VolleyballPlayer> extraBlockers = new ArrayList<>(2);
+    private int extraDecidedFor = Integer.MIN_VALUE;
 
     // This step's reading of the attack (see read).
     private Difficulty difficulty = Difficulty.INTERMEDIATE;
@@ -76,6 +92,8 @@ final class TeamDefense {
     void newRally() {
         fooledByDecoy = -1;
         decoyCheckedFor = Integer.MIN_VALUE;
+        extraBlockers.clear();
+        extraDecidedFor = Integer.MIN_VALUE;
     }
 
     /**
@@ -110,6 +128,7 @@ final class TeamDefense {
         }
         if (middle != null && humans.contains(middle)) middle = null;
         if (wing != null && humans.contains(wing)) wing = null;
+        formBlock(court, rotation, humans, attackComing && opponentTouches >= 2);
         float readDelay = difficulty.readsPlay ? 0.05f : difficulty.meaningfulBlock ? 0.25f : 0.45f;
         blockReady = now - lastTouchAt >= readDelay;
         habit = habitOfHitter();
@@ -123,7 +142,12 @@ final class TeamDefense {
 
     /** {@code p} is in this step's block. */
     boolean blocks(VolleyballPlayer p) {
-        return opponentHas && (p == middle || p == wing) && p.role != PlayerRole.LIBERO;
+        return opponentHas && block.contains(p) && p.role != PlayerRole.LIBERO;
+    }
+
+    /** How many players block this step (0 to 3). */
+    int blockSize() {
+        return opponentHas ? block.size() : 0;
     }
 
     /** The blockers have read the set (before that they only step up to the net). */
@@ -132,20 +156,74 @@ final class TeamDefense {
     }
 
     /**
-     * Sets up a blocker's jump: where along the net (a double block closes towards the antenna
-     * with the middle inside the wing), the block style from scouting, and a decoy bite.
+     * Sets up a blocker's jump: where along the net (see {@link #formBlock}), the block style from
+     * scouting, and a decoy bite.
      */
     void prepareBlock(VolleyballPlayer p) {
-        TeamAI.Brain brain = brains.get(p.id);
-        if (wing != null) {
-            // Coordinated double block: the wing closes towards the antenna, the middle inside it.
-            float outward = Math.signum(setRead.descentPoint.z == 0f ? 1f : setRead.descentPoint.z);
-            brain.motor.setBlockOffset(p == wing ? outward * 0.3f : -outward * 0.4f);
-        } else {
-            brain.motor.setBlockOffset(0f);
-        }
+        int i = block.indexOf(p);
+        brains.get(p.id).motor.setBlockOffset(i < 0 ? 0f : blockOffsets[i]);
         applyBlockStyle(p);
         maybeFallForDecoy(p);
+    }
+
+    /**
+     * The block for this step and where each blocker stands along the net. A single blocker
+     * stands in front of the hit. A double block closes towards the antenna: the wing outside,
+     * the middle inside it. Professional teams add the remaining front-row players who can still
+     * get there on a slow ball - the far wing, or both wings against a high ball to the middle -
+     * making a wall of up to three, {@link #BLOCK_SPACING} apart.
+     */
+    private void formBlock(List<VolleyballPlayer> court, RotationManager rotation, Collection<VolleyballPlayer> humans,
+                           boolean attackOnItsWay) {
+        if (!attackOnItsWay) {
+            extraBlockers.clear();
+            extraDecidedFor = Integer.MIN_VALUE;
+        } else if (extraDecidedFor != world.ballHandling().lastToucherId()) {
+            extraDecidedFor = world.ballHandling().lastToucherId();
+            extraBlockers.clear();
+            if (difficulty == Difficulty.PROFESSIONAL && middle != null && setRead.timeToDescent >= TRIPLE_MIN_TIME) {
+                addIfInReach(frontRole(court, rotation, PlayerRole.OUTSIDE_HITTER), humans);
+                addIfInReach(rightSideBlocker(court, rotation), humans);
+            }
+        }
+        block.clear();
+        if (middle != null) block.add(middle);
+        if (wing != null) block.add(wing);
+        for (VolleyballPlayer p : extraBlockers) {
+            if (block.size() < 3 && !block.contains(p) && rotation.isFrontRow(side, p.id)) block.add(p);
+        }
+        float outward = Math.signum(setRead.descentPoint.z == 0f ? 1f : setRead.descentPoint.z);
+        if (block.size() <= 1) {
+            // Alone in front of the hit; a wing whose middle is played by a person still closes outside.
+            blockOffsets[0] = block.size() == 1 && block.get(0) == wing ? outward * 0.3f : 0f;
+            return;
+        }
+        if (wing != null && block.size() == 2) {
+            // Coordinated double block: the wing closes towards the antenna, the middle inside it.
+            blockOffsets[0] = -outward * 0.4f;
+            blockOffsets[1] = outward * 0.3f;
+            return;
+        }
+        if (wing != null) {
+            // Triple block on a side attack: from the antenna inwards, the wing, the middle, the far wing.
+            for (int i = 0; i < block.size(); i++) {
+                int fromOutside = block.get(i) == wing ? 0 : block.get(i) == middle ? 1 : 2;
+                blockOffsets[i] = outward * (0.3f - fromOutside * BLOCK_SPACING);
+            }
+            return;
+        }
+        // Against the middle: a wall centred on the hit, in the blockers' order along the net.
+        for (int i = 0; i < block.size(); i++) {
+            int rank = 0;
+            for (VolleyballPlayer o : block) if (o.position.z < block.get(i).position.z) rank++;
+            blockOffsets[i] = (rank - (block.size() - 1) / 2f) * BLOCK_SPACING;
+        }
+    }
+
+    /** Adds a front-row player to the coming block if they can get to the hitting spot in time. */
+    private void addIfInReach(VolleyballPlayer p, Collection<VolleyballPlayer> humans) {
+        if (p == null || p == middle || p == wing || humans.contains(p) || p.role == PlayerRole.LIBERO || !p.isUpright()) return;
+        if (Math.abs(p.position.z - setRead.descentPoint.z) <= TRIPLE_REACH) extraBlockers.add(p);
     }
 
     /**
@@ -199,7 +277,7 @@ final class TeamDefense {
         back.clear();
         for (VolleyballPlayer p : court) {
             if (humans.contains(p)) continue;
-            if (!formationActive || p == middle || p == wing || rotation.isFrontRow(side, p.id) && p.role != PlayerRole.LIBERO) {
+            if (!formationActive || block.contains(p) || rotation.isFrontRow(side, p.id) && p.role != PlayerRole.LIBERO) {
                 brains.get(p.id).motor.setDefenseSpot(Float.NaN, Float.NaN);
                 continue;
             }
