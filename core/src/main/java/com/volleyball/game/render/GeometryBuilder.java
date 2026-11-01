@@ -77,6 +77,82 @@ final class GeometryBuilder {
         return this;
     }
 
+    /** Ellipsoid with the given full sizes along x, y and z. */
+    GeometryBuilder ellipsoid(float x, float y, float z, float width, float height, float depth, Color color) {
+        ensureCapacity(15 * 13).setColor(color);
+        part.setVertexTransform(transform.setToTranslation(x, y, z));
+        SphereShapeBuilder.build(part, width, height, depth, 14, 12);
+        part.setVertexTransform(null);
+        return this;
+    }
+
+    private static final int FRUSTUM_SEGMENTS = 14;
+    private final MeshPartBuilder.VertexInfo vertex = new MeshPartBuilder.VertexInfo();
+
+    /**
+     * A vertical tapered segment with elliptical cross-sections (a limb, a trunk section) between
+     * {@code yTop} and {@code yBottom}, centred on (cx, cz): full sizes {@code topX × topZ} at the
+     * top and {@code bottomX × bottomZ} at the bottom, both ends capped. Smooth normals, so the
+     * segment reads as a rounded body part rather than a box.
+     */
+    GeometryBuilder frustum(float cx, float cz, float yTop, float yBottom, float topX, float topZ,
+                            float bottomX, float bottomZ, Color color) {
+        int n = FRUSTUM_SEGMENTS;
+        ensureCapacity(4 * (n + 1) + 2).setColor(color);
+        float height = Math.abs(yTop - yBottom);
+        float[] cos = new float[n + 1];
+        float[] sin = new float[n + 1];
+        for (int i = 0; i <= n; i++) {
+            double a = Math.PI * 2.0 * i / n;
+            cos[i] = (float) Math.cos(a);
+            sin[i] = (float) Math.sin(a);
+        }
+        short[] top = new short[n + 1];
+        short[] bottom = new short[n + 1];
+        for (int i = 0; i <= n; i++) {
+            float ta = topX / 2f;
+            float tb = topZ / 2f;
+            float ba = bottomX / 2f;
+            float bb = bottomZ / 2f;
+            // Outward normal of the ellipse, tilted by the taper (a narrowing segment faces a little up).
+            float nx = cos[i] / Math.max(1e-4f, (ta + ba) / 2f);
+            float nz = sin[i] / Math.max(1e-4f, (tb + bb) / 2f);
+            float radial = (float) Math.sqrt(nx * nx + nz * nz);
+            float slope = height < 1e-5f ? 0f : ((ba + bb) - (ta + tb)) / 2f / height;
+            vertex.setCol(null).setUV(null);
+            vertex.setNor(nx / radial, slope, nz / radial);
+            vertex.normal.nor();
+            vertex.setPos(cx + ta * cos[i], yTop, cz + tb * sin[i]);
+            top[i] = part.vertex(vertex);
+            vertex.setPos(cx + ba * cos[i], yBottom, cz + bb * sin[i]);
+            bottom[i] = part.vertex(vertex);
+        }
+        for (int i = 0; i < n; i++) {
+            part.triangle(bottom[i], top[i], top[i + 1]);
+            part.triangle(bottom[i], top[i + 1], bottom[i + 1]);
+        }
+        // Caps (flat; joints usually hide them).
+        cap(cx, yTop, cz, topX / 2f, topZ / 2f, cos, sin, true);
+        cap(cx, yBottom, cz, bottomX / 2f, bottomZ / 2f, cos, sin, false);
+        return this;
+    }
+
+    private void cap(float cx, float y, float cz, float a, float b, float[] cos, float[] sin, boolean up) {
+        int n = FRUSTUM_SEGMENTS;
+        vertex.setNor(0f, up ? 1f : -1f, 0f);
+        vertex.setPos(cx, y, cz);
+        short centre = part.vertex(vertex);
+        short[] ring = new short[n + 1];
+        for (int i = 0; i <= n; i++) {
+            vertex.setPos(cx + a * cos[i], y, cz + b * sin[i]);
+            ring[i] = part.vertex(vertex);
+        }
+        for (int i = 0; i < n; i++) {
+            if (up) part.triangle(centre, ring[i + 1], ring[i]);
+            else part.triangle(centre, ring[i], ring[i + 1]);
+        }
+    }
+
     private MeshPartBuilder ensureCapacity(int vertices) {
         if (part == null || partVertices + vertices > MAX_VERTICES_PER_PART) {
             part = modelBuilder.part(partPrefix + "-" + partCount++, GL20.GL_TRIANGLES, ATTRIBUTES, material);

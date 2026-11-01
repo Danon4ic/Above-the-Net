@@ -126,6 +126,8 @@ public class VolleyballGame extends Game {
     }
 
     private float dumpTimer;
+    /** Screenshots for checking animations ({@code --capture}), or null. */
+    private com.volleyball.game.debug.FrameCapture capture;
 
     /** Developer aid: writes the texts that had no Russian translation to the file in I18N_DUMP. */
     private static void dumpMissingTexts() {
@@ -162,6 +164,11 @@ public class VolleyballGame extends Game {
         }
         if (sound instanceof GdxSoundSink gdx) gdx.update();
         super.render();
+        if (capture == null && launchOptions.capture() != null) {
+            capture = new com.volleyball.game.debug.FrameCapture(launchOptions.capture(),
+                    com.volleyball.game.debug.FrameCapture.parseTimes(launchOptions.captureAt()));
+        }
+        if (capture != null) capture.afterFrame(Gdx.graphics.getDeltaTime());
     }
 
     /**
