@@ -210,12 +210,7 @@ public final class TooltipManager {
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
         shapes.begin(ShapeRenderer.ShapeType.Filled);
-        float r = 6f * k;
-        UiKit.shadow(shapes, x, y, w, h, r, a);
-        // The thin gold border, then the dark navy surface inside it.
-        Color border = new Color(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, 0.45f * a);
-        UiKit.roundedRect(shapes, x - 1f, y - 1f, w + 2f, h + 2f, r + 1f, border);
-        UiKit.roundedRect(shapes, x, y, w, h, r, new Color(0.04f, 0.055f, 0.11f, 0.97f * a), new Color(0.11f, 0.14f, 0.24f, 0.97f * a));
+        UiKit.popup(shapes, x, y, w, h, a);
         shapes.setColor(accent.r, accent.g, accent.b, a);
         shapes.rect(x + pad * 0.6f, y + pad * 0.8f, indicator, h - pad * 1.6f);
         float textX = x + pad + indicator + 6f * k;
@@ -233,7 +228,7 @@ public final class TooltipManager {
         }
         if (tip.note() != null) {
             UiKit.text(batch, bodyFont, noteText(), textX, cy, textW, Align.left, true,
-                    tip.kind() == Kind.LOCKED ? UiKit.RED : UiKit.MINT, a);
+                    tip.kind() == Kind.LOCKED ? UiKit.TEXT_DIM : UiKit.JADE, a);
         }
         if (tip.hotkey() != null) {
             float kw = UiKit.keycapLabel(batch, keyFont, tip.hotkey(), textX, keyY, keyH, false, a);
@@ -251,11 +246,9 @@ public final class TooltipManager {
 
     private Color indicatorColor() {
         return switch (tip.kind()) {
-            case ACTION -> UiKit.ACCENT;
+            case ACTION, SETTING, CONTEXT -> UiKit.ACCENT;
             case LOCKED -> UiKit.TEXT_FAINT;
-            case SETTING -> UiKit.JADE;
-            case CONTEXT -> UiKit.GOLD;
-            default -> UiKit.MINT;
+            default -> UiKit.TEXT_DIM;
         };
     }
 }

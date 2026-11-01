@@ -146,7 +146,6 @@ public final class MainMenuScreen extends ScreenAdapter {
     /** Leaving the menu (a match, a drill, the playbook): the screen fades to black, then this runs. */
     private Runnable pendingExit;
     private float exitTime = -1f;
-    private final float[][] motes = new float[44][5];
     private String techLine;
     private String toast;
     private float toastTime = -10f;
@@ -191,13 +190,6 @@ public final class MainMenuScreen extends ScreenAdapter {
         setupView = new MatchSetupView(fonts, tooltips, setup -> leaveMenu(() -> game.startGame(setup)));
         settingsView = new com.volleyball.game.ui.SettingsView(fonts, tooltips, this::applySettings,
                 com.volleyball.game.ui.SettingsView.resolutions(display.width, display.height, config.windowWidth, config.windowHeight));
-        for (float[] m : motes) {
-            m[0] = MathUtils.random();
-            m[1] = MathUtils.random();
-            m[2] = 0.006f + MathUtils.random() * 0.012f;
-            m[3] = MathUtils.random() * MathUtils.PI2;
-            m[4] = MathUtils.random();
-        }
         String gpu = Gdx.gl.glGetString(GL20.GL_RENDERER);
         if (gpu != null) {
             // "Intel(R) Arc(TM) 140T GPU (8GB)" -> "Intel Arc 140T GPU".
@@ -384,22 +376,22 @@ public final class MainMenuScreen extends ScreenAdapter {
 
     // ------------------------------------------------------------------ drawing
 
+    private static final Color MENU_SIDE = new Color(UiKit.NAVY.r, UiKit.NAVY.g, UiKit.NAVY.b, 0.9f);
+    private static final Color MENU_CLEAR = new Color(UiKit.NAVY.r, UiKit.NAVY.g, UiKit.NAVY.b, 0f);
+    private final Color rowColour = new Color();
+    private final Color numberColour = new Color();
+
     private void drawUi() {
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
         float intro = UiKit.ease(time / 1.2f);
         float leftW = 560f * s;
 
-        // Cinematic vignette: dark on the left (menu), fading into the arena; dark bars top and bottom.
+        // The menu side in the background colour, opening into the arena behind (the text stays
+        // readable; the match behind stays visible).
         beginShapes();
-        Color dark = new Color(0.02f, 0.03f, 0.07f, 0.92f);
-        Color clear = new Color(0.02f, 0.03f, 0.07f, 0f);
-        shapes.rect(0, 0, leftW, height, dark, dark, dark, dark);
-        shapes.rect(leftW, 0, leftW * 0.9f, height, dark, clear, clear, dark);
-        Color barDark = new Color(0f, 0f, 0f, 0.55f);
-        shapes.rect(0, height - 70f * s, width, 70f * s, clear, clear, barDark, barDark);
-        shapes.rect(0, 0, width, 90f * s, barDark, barDark, clear, clear);
-        drawMotes();
+        shapes.rect(0, 0, leftW, height, MENU_SIDE, MENU_SIDE, MENU_SIDE, MENU_SIDE);
+        shapes.rect(leftW, 0, leftW * 0.9f, height, MENU_SIDE, MENU_CLEAR, MENU_CLEAR, MENU_SIDE);
         shapes.end();
 
         float x = 80f * s;
@@ -421,32 +413,8 @@ public final class MainMenuScreen extends ScreenAdapter {
     }
 
     /**
-     * Dust in the arena light: a few faint motes drifting up slowly over the court side of the
-     * screen (off with the decorative animations).
-     */
-    private void drawMotes() {
-        if (!config.uiAnimations) return;
-        float delta = Gdx.graphics.getDeltaTime();
-        float left = 560f * s;
-        for (float[] m : motes) {
-            m[1] += m[2] * delta;
-            if (m[1] > 1.05f) {
-                m[1] = -0.05f;
-                m[0] = MathUtils.random();
-            }
-            float x = left + m[0] * (width - left) + MathUtils.sin(time * 0.4f + m[3]) * 14f * s;
-            float y = m[1] * height;
-            float fade = MathUtils.clamp(Math.min(m[1], 1f - m[1]) * 6f, 0f, 1f);
-            float a = (0.05f + m[4] * 0.13f) * fade * (0.7f + 0.3f * MathUtils.sin(time * 0.9f + m[3]));
-            Color c = m[4] > 0.6f ? UiKit.JADE : UiKit.TEXT;
-            shapes.setColor(c.r, c.g, c.b, a);
-            shapes.circle(x, y, (1.2f + m[4] * 1.8f) * s, 8);
-        }
-    }
-
-    /**
-     * The title as a TV broadcast bug: the name on a dark band with a gold edge and a slanted end,
-     * and under it the score strip of the demo match playing behind the menu.
+     * The title: the name in heavy type beside a thin blue edge, and under it the score strip of
+     * the demo match playing behind the menu (a flat surface with a border, team colour chips).
      */
     private void drawTitleBug(float x, float top, float alpha) {
         BitmapFont nameFont = fonts.get(UiFonts.Weight.BLACK, 44f * s);
@@ -462,9 +430,8 @@ public final class MainMenuScreen extends ScreenAdapter {
 
         float bandH = 68f * s;
         float stripH = 32f * s;
-        float edge = 7f * s;
+        float edge = 3f * s;
         float pad = 22f * s;
-        float slant = 26f * s;
         float nameW = UiKit.width(nameFont, name);
         float bandW = edge + pad + nameW + pad;
 
@@ -481,18 +448,12 @@ public final class MainMenuScreen extends ScreenAdapter {
         float stripTop = top - bandH;
 
         beginShapes();
-        // The name band in broadcast blue (lighter at the top) stands out of the dark menu side;
-        // the score strip under it is near black.
-        Color bandTop = new Color(0.15f, 0.25f, 0.55f, 0.97f * alpha);
-        Color bandBottom = new Color(0.08f, 0.13f, 0.33f, 0.97f * alpha);
-        Color stripColor = new Color(0.01f, 0.015f, 0.035f, 0.95f * alpha);
-        shapes.rect(x, stripTop, bandW, bandH, bandBottom, bandBottom, bandTop, bandTop);
-        shapes.triangle(x + bandW, stripTop, x + bandW, top, x + bandW + slant, top, bandBottom, bandTop, bandTop);
-        shapes.setColor(stripColor);
+        shapes.setColor(UiKit.BORDER.r, UiKit.BORDER.g, UiKit.BORDER.b, alpha);
         shapes.rect(x, stripTop - stripH, stripW, stripH);
-        shapes.triangle(x + stripW, stripTop - stripH, x + stripW, stripTop, x + stripW + stripH * 0.45f, stripTop);
-        shapes.setColor(UiKit.GOLD.r, UiKit.GOLD.g, UiKit.GOLD.b, alpha);
-        shapes.rect(x, stripTop - stripH, edge, bandH + stripH);
+        shapes.setColor(UiKit.SURFACE.r, UiKit.SURFACE.g, UiKit.SURFACE.b, alpha);
+        shapes.rect(x + 1f, stripTop - stripH + 1f, stripW - 2f, stripH - 2f);
+        shapes.setColor(UiKit.PRIMARY.r, UiKit.PRIMARY.g, UiKit.PRIMARY.b, alpha);
+        shapes.rect(x, stripTop - stripH, Math.max(2f, 3f * s), bandH + stripH);
         // Team colour chips beside the names.
         float cx = x + edge + pad * 0.6f;
         float chipY = stripTop - stripH + 7f * s;
@@ -507,11 +468,10 @@ public final class MainMenuScreen extends ScreenAdapter {
         float pointsX = cx + chip + gap * 0.6f + homeW + gap;
         float homePointsW = UiKit.width(scoreFont, String.valueOf(score.points(CourtSide.HOME)));
         float halfW = (homePointsW + UiKit.width(scoreFont, score.points(CourtSide.HOME) + "    ")) / 2f;
-        shapes.setColor(1f, 1f, 1f, 0.25f * alpha);
-        shapes.rect(pointsX + halfW, chipY, 1.5f * s, stripH - 14f * s);
-        // The pulsing red dot of a live broadcast before the set.
-        float pulse = config.uiAnimations ? 0.5f + 0.5f * MathUtils.sin(time * 4f) : 1f;
-        shapes.setColor(0.95f, 0.25f, 0.25f, (0.5f + 0.5f * pulse) * alpha);
+        shapes.setColor(UiKit.BORDER.r, UiKit.BORDER.g, UiKit.BORDER.b, alpha);
+        shapes.rect(pointsX + halfW, chipY, Math.max(1f, s), stripH - 14f * s);
+        // The red dot of a live broadcast: the match behind is being played.
+        shapes.setColor(UiKit.RED.r, UiKit.RED.g, UiKit.RED.b, alpha);
         shapes.circle(awayChipX + chip + gap * 1.6f + dot, stripTop - stripH / 2f, dot, 14);
         shapes.end();
 
@@ -528,9 +488,9 @@ public final class MainMenuScreen extends ScreenAdapter {
 
     /**
      * Draws a vertical list of rows and fills {@link #rowBounds} for the mouse. Every row has its
-     * states: normal, highlighted (under the mouse or selected with the keys: a gold glow and
-     * an accent bar slide in), pressed (it gives a little), locked (faint, "in development") and,
-     * after keyboard navigation, a focus ring. The states ease in and out with the frame time.
+     * states: normal, highlighted (under the mouse or selected with the keys: a raised surface and
+     * a blue bar), pressed (it gives a little), locked (faint, "soon") and, after keyboard
+     * navigation, a focus outline. The states ease in and out with the frame time.
      */
     private void drawList(float x, float topY, List<String> labels, List<String> values, List<Boolean> locked, float rowH,
                           float rowW) {
@@ -557,24 +517,20 @@ public final class MainMenuScreen extends ScreenAdapter {
             // Pressed: the row shrinks a little towards its centre.
             float shrink = press * 3f * s;
             if (h > 0.01f) {
-                Color glowColor = isLocked ? UiKit.TEXT_FAINT : UiKit.ACCENT;
-                Color glow = new Color(glowColor.r, glowColor.g, glowColor.b, (0.20f + 0.10f * press) * h);
-                Color none = new Color(glowColor.r, glowColor.g, glowColor.b, 0f);
-                shapes.rect(bx + shrink, by + shrink, rowW - 2f * shrink, bh - 2f * shrink, glow, none, none, glow);
-                // The accent bar slides in from the left.
-                Color bar = isLocked ? UiKit.TEXT_FAINT : UiKit.JADE;
+                // A raised surface, and the blue bar on the left (grey for a row that is not available).
+                shapes.setColor(UiKit.DEEP.r, UiKit.DEEP.g, UiKit.DEEP.b, (0.85f + 0.15f * press) * h);
+                shapes.rect(bx + shrink, by + shrink, rowW - 2f * shrink, bh - 2f * shrink);
+                Color bar = isLocked ? UiKit.TEXT_FAINT : UiKit.PRIMARY;
                 shapes.setColor(bar.r, bar.g, bar.b, h);
-                shapes.rect(bx + shrink - (1f - h) * 8f * s, by + shrink, (3f + press) * s, bh - 2f * shrink);
-                // A faint line under the row.
-                Color under = new Color(glowColor.r, glowColor.g, glowColor.b, 0.35f * h);
-                shapes.rect(bx + shrink, by + shrink, (rowW - 2f * shrink) * 0.7f, 1f, under, none, none, under);
+                shapes.rect(bx + shrink, by + shrink, 3f * s, bh - 2f * shrink);
             }
             if (keyboardFocus && i == selected && fade > 0.5f) {
-                // The focus ring: a thin gold outline.
-                shapes.setColor(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, 0.5f * fade);
+                // The keyboard focus: a 1 px accent outline round the row.
+                shapes.setColor(UiKit.ACCENT.r, UiKit.ACCENT.g, UiKit.ACCENT.b, 0.7f * fade);
                 float t = Math.max(1f, s);
                 shapes.rect(bx, by, rowW, t);
                 shapes.rect(bx, by + bh - t, rowW, t);
+                shapes.rect(bx, by, t, bh);
                 shapes.rect(bx + rowW - t, by, t, bh);
             }
         }
@@ -593,10 +549,10 @@ public final class MainMenuScreen extends ScreenAdapter {
             float dx = (1f - appear) * -24f * s;
             boolean sel = i == selected;
             boolean isLocked = locked != null && locked.get(i);
-            Color color = isLocked ? UiKit.TEXT_FAINT : lerp(UiKit.TEXT_DIM, UiKit.TEXT, h);
+            Color color = isLocked ? UiKit.TEXT_FAINT : rowColour.set(UiKit.TEXT_DIM).lerp(UiKit.TEXT, Math.min(1f, h));
             UiKit.text(batch, number, String.format(java.util.Locale.ROOT, "%02d", i + 1), x + dx, textY - 2f * s,
-                    isLocked ? UiKit.TEXT_FAINT : lerp(UiKit.TEXT_FAINT, UiKit.JADE, h), appear);
-            float labelX = x + 36f * s + dx + h * 8f * s;
+                    isLocked ? UiKit.TEXT_FAINT : numberColour.set(UiKit.TEXT_FAINT).lerp(UiKit.JADE, Math.min(1f, h)), appear);
+            float labelX = x + 36f * s + dx;
             String label = labels.get(i).toUpperCase(java.util.Locale.ROOT);
             // Label and value share the row: if they would touch, both get a smaller type.
             BitmapFont labelFont = font;
@@ -612,7 +568,7 @@ public final class MainMenuScreen extends ScreenAdapter {
             UiKit.text(batch, labelFont, label, labelX, textY + 4f * s, color, appear);
             if (isLocked) {
                 float w = UiKit.width(labelFont, label);
-                UiKit.text(batch, tag, "IN DEVELOPMENT", labelX + w + 12f * s, textY + 1f * s, UiKit.GOLD, appear * 0.85f);
+                UiKit.text(batch, tag, "SOON", labelX + w + 12f * s, textY + 1f * s, UiKit.TEXT_FAINT, appear);
             }
             if (values != null && values.get(i) != null) {
                 String value = values.get(i);
@@ -628,10 +584,6 @@ public final class MainMenuScreen extends ScreenAdapter {
 
     private static float approach(float value, float target, float step) {
         return value < target ? Math.min(target, value + step) : Math.max(target, value - step);
-    }
-
-    private static Color lerp(Color a, Color b, float t) {
-        return new Color(a).lerp(b, Math.max(0f, Math.min(1f, t)));
     }
 
     /** The tooltip of the row under the mouse (none while navigating with the keys). */
@@ -697,14 +649,14 @@ public final class MainMenuScreen extends ScreenAdapter {
         float cardH = pad * 2 + 50f * s + (subtitle != null ? 26f * s : 0f) + textH + 24f * s + bullets.size() * 30f * s;
 
         beginShapes();
-        UiKit.panel(shapes, cardX, cardTop - cardH, cardW, cardH, 0.92f * appear, 3f * s);
+        UiKit.panel(shapes, cardX, cardTop - cardH, cardW, cardH, 0.92f * appear, 0f);
         shapes.end();
         batch.begin();
         float y = cardTop - pad;
         UiKit.text(batch, titleFont, title.toUpperCase(java.util.Locale.ROOT), cardX + pad, y, UiKit.TEXT, appear);
         y -= 50f * s;
         if (subtitle != null) {
-            UiKit.text(batch, small, subtitle.toUpperCase(java.util.Locale.ROOT), cardX + pad, y, UiKit.JADE, appear);
+            UiKit.text(batch, small, subtitle.toUpperCase(java.util.Locale.ROOT), cardX + pad, y, UiKit.TEXT_FAINT, appear);
             y -= 26f * s;
         }
         UiKit.text(batch, body, text, cardX + pad, y, cardW - 2 * pad, Align.left, true, UiKit.TEXT_DIM, appear);
@@ -760,7 +712,7 @@ public final class MainMenuScreen extends ScreenAdapter {
         float x = (width - w) / 2f;
         float y = 110f * s;
         beginShapes();
-        UiKit.panel(shapes, x, y, w, h, a, 2f * s);
+        UiKit.panel(shapes, x, y, w, h, a, 0f);
         shapes.end();
         batch.begin();
         UiKit.text(batch, font, toast, x, y + h / 2f + font.getCapHeight() / 2f, w, Align.center, false, UiKit.TEXT, a);

@@ -111,10 +111,10 @@ public final class SubstitutionMenu implements Disposable {
             SubstitutionManager.Result result = match.requestSubstitution(team.side, out, in);
             if (result == SubstitutionManager.Result.OK) {
                 message = "#" + in.number + " " + in.name + " comes in for #" + out.number + " " + out.name + " before the next serve";
-                messageColor = UiKit.JADE;
+                messageColor = UiKit.GREEN;
             } else {
                 message = result.label;
-                messageColor = new Color(1f, 0.45f, 0.4f, 1f);
+                messageColor = UiKit.RED;
             }
         }
     }
@@ -145,7 +145,7 @@ public final class SubstitutionMenu implements Disposable {
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
         shapes.begin(ShapeRenderer.ShapeType.Filled);
         UiKit.dim(shapes, width, height, 0.55f);
-        UiKit.panel(shapes, x0, y0, panelW, panelH, 0.97f, 4f * s);
+        UiKit.panel(shapes, x0, y0, panelW, panelH, 0.97f, 0f);
         float selY = listTop - (courtIndex + 1) * rowH;
         shapes.setColor(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, 0.16f);
         shapes.rect(x0 + pad - 10f * s, selY + 4f * s, colW, rowH - 6f * s);
@@ -183,7 +183,7 @@ public final class SubstitutionMenu implements Disposable {
             UiKit.text(batch, small, traitsLine(out), bx, y - 92f * s, colW, com.badlogic.gdx.utils.Align.left, false, UiKit.TEXT_FAINT, 1f);
             boolean ok = check == SubstitutionManager.Result.OK;
             UiKit.text(batch, row, ok ? "Allowed - press ENTER" : check.label, bx, y - 128f * s, colW, com.badlogic.gdx.utils.Align.left, true,
-                    ok ? new Color(0.45f, 0.95f, 0.55f, 1f) : new Color(1f, 0.5f, 0.45f, 1f), 1f);
+                    ok ? UiKit.GREEN : UiKit.RED, 1f);
         }
         UiKit.text(batch, small, message, x0 + pad, y0 + 56f * s, messageColor, 1f);
         UiKit.text(batch, small, "ENTER  substitute      B / ESC  close      The libero replaces players by itself.",

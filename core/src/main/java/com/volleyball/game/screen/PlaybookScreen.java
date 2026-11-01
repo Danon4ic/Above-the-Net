@@ -34,6 +34,8 @@ import java.util.Locale;
  * saved to {@code playbook.json}; the computer teams use them in matches.
  */
 public final class PlaybookScreen extends ScreenAdapter {
+    /** Labels drawn on the wooden court. */
+    private static final Color COURT_INK = new Color(0.2f, 0.12f, 0.06f, 1f);
     private static final Color[] LANE_COLORS = {
             new Color(0.35f, 0.75f, 1f, 1f),   // outside
             new Color(1f, 0.78f, 0.3f, 1f),    // middle
@@ -421,8 +423,8 @@ public final class PlaybookScreen extends ScreenAdapter {
         batch.begin();
         BitmapFont small = fonts.get(UiFonts.Weight.SEMIBOLD, 12f * s);
         UiKit.text(batch, small, "NET", courtX + courtW / 2f - 14f * s, sy(0f) + 22f * s, UiKit.TEXT_DIM, 1f);
-        UiKit.text(batch, small, "3 m line", courtX + 6f * s, sy(3f) - 6f * s, new Color(0.2f, 0.12f, 0.06f, 1f), 1f);
-        UiKit.text(batch, small, "setter", sx(1f) + 12f * s, sy(1f) + 5f * s, new Color(0.2f, 0.12f, 0.06f, 1f), 1f);
+        UiKit.text(batch, small, "3 m line", courtX + 6f * s, sy(3f) - 6f * s, COURT_INK, 1f);
+        UiKit.text(batch, small, "setter", sx(1f) + 12f * s, sy(1f) + 5f * s, COURT_INK, 1f);
         batch.end();
     }
 
@@ -486,10 +488,10 @@ public final class PlaybookScreen extends ScreenAdapter {
 
         Gdx.gl.glEnable(GL20.GL_BLEND);
         shapes.begin(ShapeRenderer.ShapeType.Filled);
-        UiKit.panel(shapes, 25f * s, courtY, panelW, courtH, 0.9f, 3f * s);
+        UiKit.panel(shapes, 25f * s, courtY, panelW, courtH, 0.9f, 0f);
         float rightX = courtX + courtW + 25f * s;
         float rightW = Math.min(460f * s, width - rightX - 25f * s);
-        UiKit.panel(shapes, rightX, courtY, rightW, courtH, 0.9f, 3f * s);
+        UiKit.panel(shapes, rightX, courtY, rightW, courtH, 0.9f, 0f);
         float rowH = 26f * s;
         float listTop = courtY + courtH - 60f * s;
         shapes.setColor(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, 0.18f);
@@ -512,7 +514,7 @@ public final class PlaybookScreen extends ScreenAdapter {
         float textW = rightW - 36f * s;
         String name = renaming ? nameInput + "_" : draft.name;
         UiKit.text(batch, head, name.toUpperCase(Locale.ROOT) + (draft.builtIn ? "   (built-in)" : "   (custom)"), x, y,
-                renaming ? UiKit.MINT : UiKit.JADE, 1f);
+                renaming ? UiKit.TEXT : UiKit.JADE, 1f);
         y -= 26f * s;
         if (!draft.description.isEmpty()) {
             float h = UiKit.text(batch, body, draft.description, x, y, textW, Align.left, true, UiKit.TEXT_DIM, 1f);
@@ -541,7 +543,7 @@ public final class PlaybookScreen extends ScreenAdapter {
         for (int i = 0; i < draft.options.size(); i++) {
             OptionDraft o = draft.options.get(i);
             String label = (i == 0 ? "Plan:  " : "Then:  ") + (o.set == null ? "Setter dump" : o.set.label + "  ->  " + laneName(o.hitter));
-            UiKit.text(batch, item, label, x, y, i == selectedOption ? UiKit.MINT : UiKit.TEXT, 1f);
+            UiKit.text(batch, item, label, x, y, i == selectedOption ? UiKit.JADE : UiKit.TEXT, 1f);
             y -= rowH;
         }
         y -= rowH * 0.4f;
@@ -552,7 +554,7 @@ public final class PlaybookScreen extends ScreenAdapter {
         UiKit.text(batch, hints, "N new  ·  C copy as custom  ·  R rename  ·  Del delete play  ·  Ctrl+S save  ·  Esc back (saves)",
                 0f, 52f * s, width, Align.center, false, UiKit.TEXT_DIM, 1f);
         if (toastTime > 0f && toast != null) {
-            UiKit.text(batch, head, toast, 0f, 82f * s, width, Align.center, false, UiKit.MINT, Math.min(1f, toastTime));
+            UiKit.text(batch, head, toast, 0f, 82f * s, width, Align.center, false, UiKit.TEXT, Math.min(1f, toastTime));
         }
         batch.end();
     }

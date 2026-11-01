@@ -130,22 +130,19 @@ public final class DropdownMenu {
         float x = fieldX;
         float y = listY + slide;
         float w = fieldW;
-        float r = 6f * s;
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
         shapes.begin(ShapeRenderer.ShapeType.Filled);
-        UiKit.shadow(shapes, x, y, w, listH, r, a);
-        UiKit.roundedRect(shapes, x - 1f, y - 1f, w + 2f, listH + 2f, r + 1f, new Color(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, 0.35f * a));
-        UiKit.roundedRect(shapes, x, y, w, listH, r, new Color(0.035f, 0.05f, 0.1f, 0.98f * a), new Color(0.08f, 0.1f, 0.18f, 0.98f * a));
+        UiKit.popup(shapes, x, y, w, listH, a);
         for (int i = 0; i < items.size(); i++) {
             float iy = y + listH - pad - (i + 1) * itemH;
             if (i == highlighted) {
-                Color glow = new Color(UiKit.ACCENT.r, UiKit.ACCENT.g, UiKit.ACCENT.b, 0.28f * a);
-                UiKit.roundedRect(shapes, x + pad, iy + 1f, w - 2f * pad, itemH - 2f, 4f * s, glow);
+                shapes.setColor(UiKit.BORDER.r, UiKit.BORDER.g, UiKit.BORDER.b, a);
+                shapes.rect(x + pad, iy + 1f, w - 2f * pad, itemH - 2f);
             }
             if (i == selected) {
-                shapes.setColor(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, a);
-                shapes.rect(x + pad + 4f * s, iy + itemH * 0.3f, 3f * s, itemH * 0.4f);
+                shapes.setColor(UiKit.PRIMARY.r, UiKit.PRIMARY.g, UiKit.PRIMARY.b, a);
+                shapes.rect(x + pad, iy + 1f, 3f * s, itemH - 2f);
             }
         }
         shapes.end();

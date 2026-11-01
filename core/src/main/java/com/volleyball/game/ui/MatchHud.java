@@ -13,9 +13,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * The match HUD of the person's player: a card in the top-left corner (number, name and role,
- * stamina, the team's touches, the rally time, the server, the own rotation and the team
- * commands) and a row of key hints along the bottom-left edge.
+ * The match HUD of the person's player: a compact card in the top-left corner (number, name and
+ * role, stamina, the team's touches, the rally time, the server, the own rotation and the team
+ * commands) and the key hints in the bottom-left corner. Both stay at the edges, off the court.
  */
 public final class MatchHud implements Disposable {
     /** What the card shows (filled by the match screen every frame). */
@@ -44,8 +44,6 @@ public final class MatchHud implements Disposable {
         public String defense;
         public String serve;
         public int timeoutsLeft = -1;
-        /** A short line under the card (e.g. the last point), or null. */
-        public String footer;
     }
 
     private static final String[][] HINTS = {
@@ -94,123 +92,121 @@ public final class MatchHud implements Disposable {
 
     public void render(Model m, boolean showHints) {
         float s = UiFonts.uiScale(height);
-        BitmapFont modeFont = fonts.get(UiFonts.Weight.EXTRABOLD, 11.5f * s);
-        BitmapFont nameFont = fonts.get(UiFonts.Weight.EXTRABOLD, 19f * s);
-        BitmapFont roleFont = fonts.get(UiFonts.Weight.SEMIBOLD, 12.5f * s);
-        BitmapFont numberFont = fonts.get(UiFonts.Weight.BLACK, 22f * s);
-        BitmapFont small = fonts.get(UiFonts.Weight.BOLD, 11.5f * s);
-        BitmapFont chipFont = fonts.get(UiFonts.Weight.EXTRABOLD, 13f * s);
-        BitmapFont zoneFont = fonts.get(UiFonts.Weight.EXTRABOLD, 12f * s);
+        BitmapFont modeFont = fonts.get(UiFonts.Weight.SEMIBOLD, 10.5f * s);
+        BitmapFont nameFont = fonts.get(UiFonts.Weight.EXTRABOLD, 15f * s);
+        BitmapFont roleFont = fonts.get(UiFonts.Weight.SEMIBOLD, 11f * s);
+        BitmapFont numberFont = fonts.get(UiFonts.Weight.BLACK, 16f * s);
+        BitmapFont label = fonts.get(UiFonts.Weight.BOLD, 10f * s);
+        BitmapFont value = fonts.get(UiFonts.Weight.EXTRABOLD, 13f * s);
+        BitmapFont zoneFont = fonts.get(UiFonts.Weight.EXTRABOLD, 10.5f * s);
 
-        float pad = 16f * s;
-        float cardW = 330f * s;
-        boolean tactics = m.offense != null || m.defense != null || m.serve != null;
-        float cardH = 290f * s + (tactics ? 22f * s * countTactics(m) + 10f * s : 0f);
-        float x = 18f * s;
-        float top = height - 18f * s;
-        float y0 = top - cardH;
+        // Layout, top down: mode line, number + name + role, traits, stamina, the three values,
+        // the rotation and the team commands. Compact, so the card keeps clear of the court.
+        float pad = 12f * s;
+        float cardW = 252f * s;
+        float x = 16f * s;
+        float top = height - 16f * s;
+        float cy = top - pad;
+        float modeY = cy;
+        cy -= 18f * s;
+        float badge = 32f * s;
+        float by = cy - badge;
+        cy = by - 12f * s;
+        float traitsY = cy;
+        if (!m.traits.isEmpty()) cy -= 18f * s;
+        float staminaY = cy;
+        float barY = cy - 18f * s;
+        cy = barY - 12f * s;
+        float statsY = cy;
+        cy -= 34f * s;
+        float cell = 18f * s;
+        float gap = 3f * s;
+        float netY = cy - 2f * s;
+        float gridY = netY - 5f * s - 2f * cell - gap;
+        cy = gridY - 12f * s;
+        float tacticsY = cy;
+        cy -= 18f * s * countTactics(m);
+        float y0 = cy;
         cardBottom = y0;
+        float colW = (cardW - 2f * pad) / 3f;
 
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
         shapes.begin(ShapeRenderer.ShapeType.Filled);
-        UiKit.panel(shapes, x, y0, cardW, cardH, 0.9f, 3f * s);
-        // Number badge in the team colour.
-        float badge = 46f * s;
-        float by = top - 30f * s - badge;
-        Color dark = new Color(m.teamColor).mul(0.55f, 0.55f, 0.55f, 1f);
-        UiKit.roundedRect(shapes, x + pad, by, badge, badge, 8f * s, dark, m.teamColor);
-        // Stamina.
-        float barY = by - 54f * s;
+        UiKit.panel(shapes, x, y0, cardW, top - y0, 0.92f, 0f);
+        // Number badge: a flat square in the team colour.
+        UiKit.roundedRect(shapes, x + pad, by, badge, badge, 3f * s, m.teamColor);
         if (!Float.isNaN(m.stamina)) {
-            UiKit.bar(shapes, x + pad, barY, cardW - 2f * pad, 8f * s, m.stamina, staminaColor(m.stamina), 1f);
+            UiKit.bar(shapes, x + pad, barY, cardW - 2f * pad, 4f * s, m.stamina, staminaColor(m.stamina), 1f);
         }
-        // Chips: touches, rally time, server.
-        float chipY = barY - 58f * s;
-        float chipH = 30f * s;
-        float chipW = (cardW - 2f * pad - 2f * 8f * s) / 3f;
-        for (int i = 0; i < 3; i++) {
-            Color c = new Color(1f, 1f, 1f, 0.06f);
-            UiKit.roundedRect(shapes, x + pad + i * (chipW + 8f * s), chipY, chipW, chipH, 6f * s, c, new Color(1f, 1f, 1f, 0.1f));
-        }
-        // Rotation: front row 4 3 2 on top, back row 5 6 1 below.
-        float cell = 26f * s;
-        float gridX = x + pad;
-        float gridY = chipY - 18f * s - 2f * cell - 4f * s;
-        int[][] layout = {{4, 3, 2}, {5, 6, 1}};
+        // Rotation: front row 4 3 2 on top (under the net line), back row 5 6 1 below.
+        shapes.setColor(UiKit.TEXT_FAINT);
+        shapes.rect(x + pad, netY, 3f * cell + 2f * gap, Math.max(1f, s));
         for (int row = 0; row < 2; row++) {
             for (int col = 0; col < 3; col++) {
-                int zone = layout[row][col];
-                float cx = gridX + col * (cell + 4f * s);
-                float cy = gridY + (1 - row) * (cell + 4f * s);
-                boolean you = zone == m.yourZone;
-                Color fill = you ? new Color(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, 0.85f) : new Color(1f, 1f, 1f, 0.08f);
-                UiKit.roundedRect(shapes, cx, cy, cell, cell, 4f * s, fill, fill);
+                int zone = ROTATION_LAYOUT[row][col];
+                float zx = x + pad + col * (cell + gap);
+                float zy = gridY + (1 - row) * (cell + gap);
+                UiKit.roundedRect(shapes, zx, zy, cell, cell, 2f * s, zone == m.yourZone ? UiKit.PRIMARY : UiKit.DEEP);
                 if (zone == m.serverZone) {
-                    shapes.setColor(UiKit.MINT);
-                    shapes.circle(cx + cell - 4f * s, cy + cell - 4f * s, 3f * s, 10);
+                    shapes.setColor(UiKit.TEXT);
+                    shapes.circle(zx + cell - 3.5f * s, zy + cell - 3.5f * s, 2f * s, 8);
                 }
             }
         }
-        // The net above the grid.
-        shapes.setColor(1f, 1f, 1f, 0.35f);
-        shapes.rect(gridX - 3f * s, gridY + 2f * cell + 8f * s, 3f * cell + 14f * s, 2f * s);
         shapes.end();
 
         batch.begin();
-        UiKit.text(batch, modeFont, m.mode.toUpperCase(java.util.Locale.ROOT), x + pad, top - 12f * s, UiKit.JADE, 1f);
+        UiKit.text(batch, modeFont, m.mode, x + pad, modeY, cardW - 2f * pad, Align.left, false, UiKit.TEXT_FAINT, 1f);
         UiKit.text(batch, numberFont, String.valueOf(m.number), x + pad, by + badge / 2f + numberFont.getCapHeight() / 2f, badge,
-                Align.center, false, UiKit.TEXT, 1f);
-        float tx = x + pad + badge + 12f * s;
-        UiKit.text(batch, nameFont, m.name, tx, by + badge - 6f * s, UiKit.TEXT, 1f);
-        UiKit.text(batch, roleFont, m.role.toUpperCase(java.util.Locale.ROOT) + (m.youServe ? "   ·   YOUR SERVE" : ""), tx, by + 16f * s,
-                m.youServe ? UiKit.MINT : UiKit.TEXT_DIM, 1f);
+                Align.center, false, isLight(m.teamColor) ? UiKit.NAVY : UiKit.TEXT, 1f);
+        float tx = x + pad + badge + 10f * s;
+        UiKit.text(batch, nameFont, m.name, tx, by + badge - 1f * s, cardW - pad - (tx - x), Align.left, false, UiKit.TEXT, 1f);
+        UiKit.text(batch, roleFont, m.role.toUpperCase(java.util.Locale.ROOT) + (m.youServe ? "  ·  YOUR SERVE" : ""), tx,
+                by + roleFont.getCapHeight() + 1f * s, m.youServe ? UiKit.JADE : UiKit.TEXT_DIM, 1f);
         if (!m.traits.isEmpty()) {
-            UiKit.text(batch, roleFont, m.traits, x + pad, by - 12f * s, cardW - 2f * pad, Align.left, false, UiKit.JADE, 1f);
+            UiKit.text(batch, roleFont, m.traits, x + pad, traitsY, cardW - 2f * pad, Align.left, false, UiKit.TEXT_DIM, 1f);
         }
         if (!Float.isNaN(m.stamina)) {
-            UiKit.text(batch, small, "STAMINA", x + pad, barY + 22f * s, UiKit.TEXT_DIM, 1f);
+            UiKit.text(batch, label, "STAMINA", x + pad, staminaY, UiKit.TEXT_FAINT, 1f);
             String pct = Math.round(m.stamina * 100f) + "%";
-            UiKit.text(batch, small, pct, x + cardW - pad - UiKit.width(small, pct), barY + 22f * s, staminaColor(m.stamina), 1f);
+            UiKit.text(batch, label, pct, x + cardW - pad - UiKit.width(label, pct), staminaY, staminaColor(m.stamina), 1f);
         } else {
-            UiKit.text(batch, small, "FATIGUE OFF (ARCADE)", x + pad, barY + 18f * s, UiKit.TEXT_FAINT, 1f);
+            UiKit.text(batch, label, "FATIGUE OFF (ARCADE)", x + pad, staminaY, UiKit.TEXT_FAINT, 1f);
         }
-        String[] chipLabels = {"TOUCHES", "RALLY", "SERVE"};
         String rally = m.rallyTime < 0f ? "-" : String.format(java.util.Locale.ROOT, "%d:%02d", (int) m.rallyTime / 60, (int) m.rallyTime % 60);
-        String[] chipValues = {m.touches + " / 3", rally, m.server};
+        String[] values = {m.touches + " / 3", rally, m.server};
         for (int i = 0; i < 3; i++) {
-            float cx = x + pad + i * (chipW + 8f * s);
-            UiKit.text(batch, small, chipLabels[i], cx + 8f * s, chipY + chipH + 14f * s, UiKit.TEXT_FAINT, 1f);
-            UiKit.text(batch, chipFont, chipValues[i], cx, chipY + chipH / 2f + chipFont.getCapHeight() / 2f, chipW, Align.center,
-                    false, i == 0 && m.touches == 3 ? UiKit.RED : UiKit.TEXT, 1f);
+            float cx = x + pad + i * colW;
+            UiKit.text(batch, label, STAT_LABELS[i], cx, statsY, UiKit.TEXT_FAINT, 1f);
+            UiKit.text(batch, value, values[i], cx, statsY - 15f * s, i == 0 && m.touches == 3 ? UiKit.RED : UiKit.TEXT, 1f);
         }
-        UiKit.text(batch, small, "ROTATION", gridX + 3f * cell + 22f * s, gridY + 2f * cell, UiKit.TEXT_FAINT, 1f);
-        UiKit.text(batch, roleFont, m.timeoutsLeft >= 0 ? "Timeouts left: " + m.timeoutsLeft : "", gridX + 3f * cell + 22f * s,
-                gridY + cell + 6f * s, UiKit.TEXT_DIM, 1f);
-        UiKit.text(batch, roleFont, "Net at the top", gridX + 3f * cell + 22f * s, gridY + 10f * s, UiKit.TEXT_FAINT, 1f);
+        float infoX = x + pad + 3f * cell + 2f * gap + 14f * s;
+        UiKit.text(batch, label, "ROTATION", infoX, netY + 1f * s, UiKit.TEXT_FAINT, 1f);
+        if (m.timeoutsLeft >= 0) {
+            UiKit.text(batch, roleFont, "Timeouts left: " + m.timeoutsLeft, infoX, netY - 16f * s, UiKit.TEXT_DIM, 1f);
+        }
         for (int row = 0; row < 2; row++) {
             for (int col = 0; col < 3; col++) {
-                int zone = layout[row][col];
+                int zone = ROTATION_LAYOUT[row][col];
                 int number = m.rotation[zone - 1];
                 if (number <= 0) continue;
-                float cx = gridX + col * (cell + 4f * s);
-                float cy = gridY + (1 - row) * (cell + 4f * s);
-                UiKit.text(batch, zoneFont, String.valueOf(number), cx, cy + cell / 2f + zoneFont.getCapHeight() / 2f, cell,
-                        Align.center, false, zone == m.yourZone ? UiKit.NAVY : UiKit.TEXT, 1f);
+                float zx = x + pad + col * (cell + gap);
+                float zy = gridY + (1 - row) * (cell + gap);
+                UiKit.text(batch, zoneFont, String.valueOf(number), zx, zy + cell / 2f + zoneFont.getCapHeight() / 2f, cell,
+                        Align.center, false, UiKit.TEXT, 1f);
             }
         }
-        if (tactics) {
-            float ty = gridY - 16f * s;
-            for (String[] t : new String[][]{{"OFFENSE", m.offense}, {"DEFENSE", m.defense}, {"SERVE", m.serve}}) {
-                if (t[1] == null) continue;
-                UiKit.text(batch, small, t[0], x + pad, ty, UiKit.TEXT_FAINT, 1f);
-                UiKit.text(batch, roleFont, t[1], x + pad + 70f * s, ty, UiKit.JADE, 1f);
-                ty -= 22f * s;
-            }
+        float ty = tacticsY;
+        for (int i = 0; i < 3; i++) {
+            String command = i == 0 ? m.offense : i == 1 ? m.defense : m.serve;
+            if (command == null) continue;
+            UiKit.text(batch, label, TACTIC_LABELS[i], x + pad, ty, UiKit.TEXT_FAINT, 1f);
+            UiKit.text(batch, roleFont, command, x + pad + 70f * s, ty, UiKit.JADE, 1f);
+            ty -= 18f * s;
         }
         batch.end();
 
-        if (m.footer != null) drawFooter(m.footer, x, y0 - 10f * s, cardW, s);
         if (showHints) {
             hintsTime += Gdx.graphics.getDeltaTime();
             // At first the full hints, fading into the chip; later the chip unless J opened them.
@@ -220,19 +216,17 @@ public final class MatchHud implements Disposable {
         }
     }
 
+    private static final int[][] ROTATION_LAYOUT = {{4, 3, 2}, {5, 6, 1}};
+    private static final String[] STAT_LABELS = {"TOUCHES", "RALLY", "SERVE"};
+    private static final String[] TACTIC_LABELS = {"OFFENSE", "DEFENSE", "SERVE"};
+
     private static int countTactics(Model m) {
         return (m.offense != null ? 1 : 0) + (m.defense != null ? 1 : 0) + (m.serve != null ? 1 : 0);
     }
 
-    private void drawFooter(String text, float x, float top, float w, float s) {
-        BitmapFont f = fonts.get(UiFonts.Weight.MEDIUM, 12.5f * s);
-        float h = UiKit.wrappedHeight(f, text, w - 24f * s) + 18f * s;
-        shapes.begin(ShapeRenderer.ShapeType.Filled);
-        UiKit.panel(shapes, x, top - h, w, h, 0.7f, 0f);
-        shapes.end();
-        batch.begin();
-        UiKit.text(batch, f, text, x + 12f * s, top - 9f * s, w - 24f * s, Align.left, true, UiKit.TEXT_DIM, 1f);
-        batch.end();
+    /** A light team colour takes a dark number on the badge. */
+    private static boolean isLight(Color c) {
+        return 0.299f * c.r + 0.587f * c.g + 0.114f * c.b > 0.6f;
     }
 
     /** Key hints in the bottom-left corner: two short rows on a soft panel (clear of the shot bar in the middle). */
@@ -301,11 +295,11 @@ public final class MatchHud implements Disposable {
 
     private static Color staminaColor(float stamina) {
         if (stamina > 0.6f) return UiKit.GREEN;
-        if (stamina > 0.35f) return UiKit.JADE;
+        if (stamina > 0.35f) return UiKit.TEXT_DIM;
         return UiKit.RED;
     }
 
-    /** First-person mouse look: the aim in the centre of the view (gold over the court, pale elsewhere). */
+    /** First-person mouse look: the aim in the centre of the view (blue over the court, grey elsewhere). */
     public void renderCrosshair(boolean onCourt) {
         float s = UiFonts.uiScale(height);
         float cx = width / 2f;

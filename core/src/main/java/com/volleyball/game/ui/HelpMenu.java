@@ -2,7 +2,6 @@ package com.volleyball.game.ui;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
-import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
@@ -287,22 +286,17 @@ public final class HelpMenu implements Disposable {
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
         shapes.begin(ShapeRenderer.ShapeType.Filled);
         UiKit.dim(shapes, width, height, 0.62f * a);
-        UiKit.panel(shapes, x0, y0, panelW, panelH, 0.97f * a, 4f * s);
+        UiKit.panel(shapes, x0, y0, panelW, panelH, 0.97f * a, 0f);
         rowRects.clear();
         if (!roleOnly) {
             for (int i = 0; i < list.size(); i++) {
                 float ry = listTop - (i + 1) * rowH;
                 rowRects.add(new float[]{x0 + pad, ry, listW, rowH - 4f * s});
-                if (i != selected) continue;
-                Color glow = new Color(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, 0.2f * a);
-                Color none = new Color(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, 0f);
-                shapes.rect(x0 + pad, ry, listW, rowH - 4f * s, glow, none, none, glow);
-                shapes.setColor(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, a);
-                shapes.rect(x0 + pad, ry, 3f * s, rowH - 4f * s);
+                if (i == selected) UiKit.rowHighlight(shapes, x0 + pad, ry, listW, rowH - 4f * s, 1f, s, a);
             }
         }
-        UiKit.roundedRect(shapes, cardX, cardBottom, cardW, cardTop - cardBottom, 10f * s,
-                new Color(1f, 1f, 1f, 0.025f * a), new Color(1f, 1f, 1f, 0.06f * a));
+        shapes.setColor(UiKit.DEEP.r, UiKit.DEEP.g, UiKit.DEEP.b, a);
+        shapes.rect(cardX, cardBottom, cardW, cardTop - cardBottom);
         UiKit.divider(shapes, cardX + inner, dividerY, cardW - 2f * inner, a);
         for (int i = 0; i < topic.rows().size(); i++) {
             Row r = topic.rows().get(i);
@@ -315,7 +309,7 @@ public final class HelpMenu implements Disposable {
         batch.begin();
         UiKit.text(batch, title, roleOnly ? "ROLE GUIDE" : "CONTROLS AND HINTS", x0 + pad, top, UiKit.TEXT, a);
         String hint = roleOnly ? "F1 / ESC TO CLOSE" : "GAME PAUSED   ·   UP / DOWN: TOPIC   ·   F1 / ESC TO CLOSE";
-        UiKit.text(batch, small, hint, x0 + panelW - pad - UiKit.width(small, hint), top - 9f * s, UiKit.JADE, a);
+        UiKit.text(batch, small, hint, x0 + panelW - pad - UiKit.width(small, hint), top - 9f * s, UiKit.TEXT_FAINT, a);
         if (!roleOnly) {
             for (int i = 0; i < list.size(); i++) {
                 float ry = listTop - (i + 1) * rowH;
@@ -329,7 +323,7 @@ public final class HelpMenu implements Disposable {
         }
         UiKit.text(batch, cardTitle, topic.title().toUpperCase(java.util.Locale.ROOT), cardX + inner, cardTop - 24f * s, UiKit.TEXT, a);
         UiKit.text(batch, summary, topic.summary(), cardX + inner, cardTop - 62f * s, cardW - 2f * inner, Align.left, true,
-                UiKit.MINT, a);
+                UiKit.TEXT_DIM, a);
         for (int i = 0; i < topic.rows().size(); i++) {
             Row r = topic.rows().get(i);
             float y = rowY.get(i);

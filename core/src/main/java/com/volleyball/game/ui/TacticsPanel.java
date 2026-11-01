@@ -55,7 +55,7 @@ public final class TacticsPanel implements Disposable {
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
         shapes.begin(ShapeRenderer.ShapeType.Filled);
-        UiKit.panel(shapes, x, y, w, h, 0.92f * alpha, 4f * s);
+        UiKit.panel(shapes, x, y, w, h, 0.92f * alpha, 0f);
         float rowTop = y + h - pad - 34f * s;
         for (int i = 0; i < commands.size(); i++) {
             if (!tactics.is(commands.get(i))) continue;

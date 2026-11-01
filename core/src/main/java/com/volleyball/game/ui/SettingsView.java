@@ -763,11 +763,11 @@ public final class SettingsView {
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
         shapes.begin(ShapeRenderer.ShapeType.Filled);
-        UiKit.panel(shapes, panelX, bottom, panelW, panelH, 0.94f * alpha, 3f * s);
-        // Tab underline and the divider under the tabs.
-        shapes.setColor(UiKit.ACCENT.r, UiKit.ACCENT.g, UiKit.ACCENT.b, alpha);
-        shapes.rect(tabLineX, tabY - 24f * s, tabLineW, 3f * s);
+        UiKit.panel(shapes, panelX, bottom, panelW, panelH, 0.94f * alpha, 0f);
+        // The divider under the tabs and the active tab's blue underline on it.
         UiKit.divider(shapes, panelX + pad, tabY - 24f * s, panelW - 2f * pad, alpha);
+        shapes.setColor(UiKit.PRIMARY.r, UiKit.PRIMARY.g, UiKit.PRIMARY.b, alpha);
+        shapes.rect(tabLineX, tabY - 24f * s, tabLineW, 2f * s);
         for (int i = 0; i < rows.size(); i++) drawRowShapes(shapes, rows.get(i), i, alpha * appear, delta);
         UiKit.divider(shapes, panelX + pad, by + buttonH + 52f * s, panelW - 2f * pad, alpha);
         for (int i = 0; i < BUTTONS.length; i++) drawButtonShape(shapes, i, enabled(i, dirty), alpha);
@@ -777,7 +777,7 @@ public final class SettingsView {
         for (Category c : Category.values()) {
             float[] r = tabRects[c.ordinal()];
             String label = Lang.t(c.label).toUpperCase(java.util.Locale.forLanguageTag("ru"));
-            Color col = c == category ? UiKit.TEXT : c.ordinal() == hoverTab ? UiKit.MINT : UiKit.TEXT_DIM;
+            Color col = c == category ? UiKit.TEXT : c.ordinal() == hoverTab ? UiKit.TEXT : UiKit.TEXT_DIM;
             UiKit.text(batch, tabFont, label, r[0] + 8f * s, tabY, col, alpha);
         }
         for (int i = 0; i < rows.size(); i++) {
@@ -786,11 +786,11 @@ public final class SettingsView {
             float[] c = controlRects.get(i);
             float ty = r[1] + r[3] / 2f + labelFont.getCapHeight() / 2f;
             float h = rowHighlight[i];
-            float lx = r[0] + 22f * s + h * 4f * s;
+            float lx = r[0] + 22f * s;
             UiKit.text(batch, labelFont, st.label, lx, ty, h > 0.5f ? UiKit.TEXT : UiKit.TEXT_DIM, alpha * appear);
             float after = lx + UiKit.width(labelFont, st.label) + 10f * s;
             if (st.restart) {
-                UiKit.text(batch, tagFont, "RESTART", after, ty - 3f * s, UiKit.GOLD, alpha * appear);
+                UiKit.text(batch, tagFont, "RESTART", after, ty - 3f * s, UiKit.TEXT_FAINT, alpha * appear);
             }
             drawRowText(batch, st, i, c, valueFont, alpha * appear);
         }
@@ -804,14 +804,14 @@ public final class SettingsView {
         float age = time - statusTime;
         if (status != null && age < 3.5f) {
             float a = Math.min(1f, Math.min(age / 0.15f, (3.5f - age) / 0.4f));
-            UiKit.text(batch, helpFont, status, panelX + pad, by + buttonH + 16f * s, statusWarning ? UiKit.GOLD : UiKit.JADE, alpha * a);
+            UiKit.text(batch, helpFont, status, panelX + pad, by + buttonH + 16f * s, statusWarning ? UiKit.RED : UiKit.GREEN, alpha * a);
         } else if (dirty) {
-            UiKit.text(batch, helpFont, "Changes not applied yet", panelX + pad, by + buttonH + 16f * s, UiKit.MINT, alpha);
+            UiKit.text(batch, helpFont, "Changes not applied yet", panelX + pad, by + buttonH + 16f * s, UiKit.JADE, alpha);
         }
         for (int i = 0; i < BUTTONS.length; i++) {
             float[] r = buttonRects[i];
             boolean on = enabled(i, dirty);
-            Color col = !on ? UiKit.TEXT_FAINT : i == APPLY ? UiKit.NAVY : UiKit.TEXT;
+            Color col = UiKit.buttonText(on);
             float press = buttonPress[i] * 1.5f * s;
             UiKit.text(batch, buttonFont, Lang.t(BUTTONS[i]).toUpperCase(java.util.Locale.forLanguageTag("ru")), r[0],
                     r[1] + r[3] / 2f + buttonFont.getCapHeight() / 2f - press, r[2], Align.center, false, col, alpha);
@@ -867,21 +867,9 @@ public final class SettingsView {
         float[] r = rowRects.get(i);
         float[] c = controlRects.get(i);
         float h = rowHighlight[i];
-        if (h > 0.01f) {
-            Color glow = new Color(UiKit.ACCENT.r, UiKit.ACCENT.g, UiKit.ACCENT.b, 0.18f * h * a);
-            Color none = new Color(UiKit.ACCENT.r, UiKit.ACCENT.g, UiKit.ACCENT.b, 0f);
-            shapes.rect(r[0], r[1], r[2], r[3], glow, none, none, glow);
-            shapes.setColor(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, h * a);
-            shapes.rect(r[0] - (1f - h) * 6f * s, r[1], 3f * s, r[3]);
-            if (keyboard && i == focus) {
-                shapes.setColor(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, 0.45f * a);
-                float t = Math.max(1f, s);
-                shapes.rect(r[0], r[1], r[2], t);
-                shapes.rect(r[0], r[1] + r[3] - t, r[2], t);
-                shapes.rect(r[0] + r[2] - t, r[1], t, r[3]);
-            }
-        }
-        // A changed (not applied) value: a small gold dot before the label.
+        UiKit.rowHighlight(shapes, r[0], r[1], r[2], r[3], h, s, a);
+        if (keyboard && i == focus) UiKit.focusRing(shapes, r[0], r[1], r[2], r[3], s, a);
+        // A changed (not applied) value: a small blue dot before the label.
         int global = settings.indexOf(st);
         if (st.differs(draft, committed)) {
             shapes.setColor(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, a);
@@ -895,41 +883,18 @@ public final class SettingsView {
             float hh = 24f * s;
             float x = c[0] + c[2] - w;
             float y = c[1] + (c[3] - hh) / 2f;
-            Color off = new Color(0.17f, 0.21f, 0.33f, a);
-            Color onC = new Color(UiKit.ACCENT.r, UiKit.ACCENT.g, UiKit.ACCENT.b, a);
-            UiKit.roundedRect(shapes, x, y, w, hh, hh / 2f, new Color(off).lerp(onC, k));
-            shapes.setColor(k > 0.5f ? UiKit.TEXT.r : UiKit.TEXT_DIM.r, k > 0.5f ? UiKit.TEXT.g : UiKit.TEXT_DIM.g,
-                    k > 0.5f ? UiKit.TEXT.b : UiKit.TEXT_DIM.b, a);
-            shapes.circle(x + hh / 2f + k * (w - hh), y + hh / 2f, hh / 2f - 3f * s, 20);
+            UiKit.toggle(shapes, x, y, w, hh, k, a);
         } else if (st instanceof Slider sl) {
             float target = sl.fraction(draft);
             sliderShown[global] = dragging == sl ? target : approach(sliderShown[global], target, delta / 0.12f);
             float fr = sliderShown[global];
             float trackW = c[2] - 64f * s;
             float ty = c[1] + c[3] / 2f;
-            UiKit.roundedRect(shapes, c[0], ty - 2f * s, trackW, 4f * s, 2f * s, new Color(0.17f, 0.21f, 0.33f, a));
-            UiKit.roundedRect(shapes, c[0], ty - 2f * s, Math.max(4f * s, trackW * fr), 4f * s, 2f * s,
-                    new Color(UiKit.ACCENT.r, UiKit.ACCENT.g, UiKit.ACCENT.b, a));
-            boolean active = dragging == sl || i == hoverRow;
-            float kr = (active ? 9f : 7.5f) * s;
-            shapes.setColor(UiKit.ACCENT.r, UiKit.ACCENT.g, UiKit.ACCENT.b, 0.25f * a * (active ? 1f : 0f));
-            shapes.circle(c[0] + trackW * fr, ty, kr + 5f * s, 20);
-            shapes.setColor(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, a);
-            shapes.circle(c[0] + trackW * fr, ty, kr, 20);
+            UiKit.slider(shapes, c[0], ty, trackW, fr, dragging == sl || i == hoverRow, s, a);
         } else if (st instanceof Choice<?>) {
             boolean open = dropdown.isOpenFor(st);
-            float border = open || i == hoverRow || (keyboard && i == focus) ? 0.6f : 0.22f;
-            UiKit.roundedRect(shapes, c[0] - 1f, c[1] - 1f, c[2] + 2f, c[3] + 2f, 6f * s,
-                    new Color(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, border * a));
-            UiKit.roundedRect(shapes, c[0], c[1], c[2], c[3], 5f * s, new Color(0.04f, 0.055f, 0.11f, 0.96f * a),
-                    new Color(0.08f, 0.1f, 0.18f, 0.96f * a));
-            // The chevron: down when closed, up when open.
-            float cx = c[0] + c[2] - 18f * s;
-            float cy = c[1] + c[3] / 2f;
-            float w = 5f * s;
-            shapes.setColor(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, a);
-            if (open) shapes.triangle(cx - w, cy - w * 0.5f, cx + w, cy - w * 0.5f, cx, cy + w * 0.6f);
-            else shapes.triangle(cx - w, cy + w * 0.5f, cx + w, cy + w * 0.5f, cx, cy - w * 0.6f);
+            UiKit.field(shapes, c[0], c[1], c[2], c[3], i == hoverRow || (keyboard && i == focus) ? 1f : 0f, open, a);
+            UiKit.chevron(shapes, c[0] + c[2] - 18f * s, c[1] + c[3] / 2f, 5f * s, open, UiKit.TEXT_DIM, a);
         }
     }
 
@@ -957,27 +922,9 @@ public final class SettingsView {
         float y = r[1] + press;
         float w = r[2] - 2f * press;
         float hh = r[3] - 2f * press;
-        float rad = 6f * s;
-        if (i == APPLY) {
-            Color low = on ? new Color(UiKit.ACCENT).mul(0.8f + 0.2f * h, 0.8f + 0.2f * h, 0.8f + 0.2f * h, alpha)
-                    : new Color(0.12f, 0.14f, 0.22f, alpha);
-            Color high = on ? new Color(UiKit.JADE).lerp(UiKit.ACCENT, 0.5f - 0.3f * h).mul(1f, 1f, 1f, alpha)
-                    : new Color(0.15f, 0.18f, 0.28f, alpha);
-            if (on && h > 0.01f) {
-                UiKit.roundedRect(shapes, x - 4f * s, y - 4f * s, w + 8f * s, hh + 8f * s, rad + 4f * s,
-                        new Color(UiKit.ACCENT.r, UiKit.ACCENT.g, UiKit.ACCENT.b, 0.18f * h * alpha));
-            }
-            UiKit.roundedRect(shapes, x, y, w, hh, rad, low, high);
-        } else {
-            float border = on ? 0.3f + 0.4f * h : 0.12f;
-            UiKit.roundedRect(shapes, x - 1f, y - 1f, w + 2f, hh + 2f, rad + 1f, new Color(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, border * alpha));
-            Color fill = new Color(0.045f, 0.06f, 0.12f, alpha).lerp(new Color(UiKit.DEEP.r, UiKit.DEEP.g, UiKit.DEEP.b, alpha), h * 0.8f);
-            UiKit.roundedRect(shapes, x, y, w, hh, rad, fill);
-        }
+        UiKit.button(shapes, x, y, w, hh, i == APPLY, on, h, alpha);
         if (keyboard && focus - rowRects.size() == i) {
-            shapes.setColor(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, 0.7f * alpha);
-            float t = Math.max(1f, s);
-            shapes.rect(r[0] - 3f * s, r[1] - 3f * s - t, r[2] + 6f * s, t);
+            UiKit.focusRing(shapes, r[0] - 3f * s, r[1] - 3f * s, r[2] + 6f * s, r[3] + 6f * s, s, alpha);
         }
     }
 
@@ -994,17 +941,14 @@ public final class SettingsView {
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
         shapes.begin(ShapeRenderer.ShapeType.Filled);
         UiKit.dim(shapes, width, height, 0.55f * a);
-        UiKit.panel(shapes, x, y, w, h, a, 3f * s);
+        UiKit.panel(shapes, x, y, w, h, a, 0f);
         float bw = (w - 2f * 28f * s - 2f * 12f * s) / 3f;
         for (int i = 0; i < CONFIRM.length; i++) {
             float bx = x + 28f * s + i * (bw + 12f * s);
             confirmRects[i] = new float[]{bx, y + 26f * s, bw, 40f * s};
             boolean focused = i == confirmFocus;
-            Color fill = i == 0 ? new Color(UiKit.ACCENT.r, UiKit.ACCENT.g, UiKit.ACCENT.b, a)
-                    : new Color(0.045f, 0.06f, 0.12f, a).lerp(new Color(UiKit.DEEP.r, UiKit.DEEP.g, UiKit.DEEP.b, a), focused ? 0.8f : 0f);
-            UiKit.roundedRect(shapes, bx - 1f, y + 26f * s - 1f, bw + 2f, 40f * s + 2f, 7f * s,
-                    new Color(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, (focused ? 0.8f : 0.3f) * a));
-            UiKit.roundedRect(shapes, bx, y + 26f * s, bw, 40f * s, 6f * s, fill);
+            UiKit.button(shapes, bx, y + 26f * s, bw, 40f * s, i == 0, true, focused ? 1f : 0f, a);
+            if (focused) UiKit.focusRing(shapes, bx - 3f * s, y + 23f * s, bw + 6f * s, 46f * s, s, a);
         }
         shapes.end();
         batch.begin();
@@ -1014,7 +958,7 @@ public final class SettingsView {
         for (int i = 0; i < CONFIRM.length; i++) {
             float[] r = confirmRects[i];
             UiKit.text(batch, buttonFont, Lang.t(CONFIRM[i]).toUpperCase(java.util.Locale.forLanguageTag("ru")), r[0],
-                    r[1] + r[3] / 2f + buttonFont.getCapHeight() / 2f, r[2], Align.center, false, i == 0 ? UiKit.NAVY : UiKit.TEXT, a);
+                    r[1] + r[3] / 2f + buttonFont.getCapHeight() / 2f, r[2], Align.center, false, UiKit.TEXT, a);
         }
         batch.end();
     }

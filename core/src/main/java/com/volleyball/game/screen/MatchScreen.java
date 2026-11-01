@@ -48,7 +48,6 @@ import com.volleyball.game.match.SidelineCoaches;
 import com.volleyball.game.rules.MatchRules;
 import com.volleyball.game.rules.MatchScore;
 import com.volleyball.game.rules.RallyManager;
-import com.volleyball.game.rules.RallyOutcome;
 import com.volleyball.game.rules.RotationManager;
 import com.volleyball.game.world.CourtSide;
 import com.volleyball.game.training.AutoTrainee;
@@ -426,7 +425,6 @@ public final class MatchScreen extends ScreenAdapter {
         m.defense = d == null ? null : d.label;
         m.serve = sv == null ? null : sv.label;
         m.timeoutsLeft = match.timeoutsLeft(p.side);
-        m.footer = match.lastPoint() == null ? null : "Last point: " + describe(match.lastPoint());
         matchHud.render(m, true);
     }
 
@@ -1142,16 +1140,6 @@ public final class MatchScreen extends ScreenAdapter {
             text.append(zone).append(':').append(p == null ? "?" : p.number).append(zone < 6 ? " " : "");
         }
         return text.toString();
-    }
-
-    private String describe(MatchRules.PointSummary point) {
-        RallyOutcome outcome = point.outcome();
-        VolleyballPlayer who = outcome.playerId() >= 0 ? world.player(outcome.playerId()) : null;
-        String text = outcome.describe() + (who != null ? " (#" + who.number + " " + who.name + ")" : "");
-        if (point.matchWon()) text += "  ·  MATCH!";
-        else if (point.setWon()) text += "  ·  set won";
-        else if (point.sideOut()) text += "  ·  side-out, rotation";
-        return text;
     }
 
     private void updateScoreboard() {

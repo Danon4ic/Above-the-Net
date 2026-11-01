@@ -15,7 +15,6 @@ public final class ReplayOverlay implements Disposable {
     private final UiFonts fonts;
     private int width;
     private int height;
-    private float clock;
 
     public ReplayOverlay(UiFonts fonts) {
         this.fonts = fonts;
@@ -29,7 +28,6 @@ public final class ReplayOverlay implements Disposable {
     }
 
     public void render(float delta, float progress, String angle, boolean slowMotion) {
-        clock += delta;
         float s = UiFonts.uiScale(height);
         BitmapFont title = fonts.get(UiFonts.Weight.BLACK, 22f * s);
         BitmapFont small = fonts.get(UiFonts.Weight.SEMIBOLD, 12.5f * s);
@@ -40,11 +38,10 @@ public final class ReplayOverlay implements Disposable {
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
         shapes.begin(ShapeRenderer.ShapeType.Filled);
-        UiKit.panel(shapes, x, y, w, h, 0.92f, 3f * s);
-        float blink = 0.55f + 0.45f * (float) Math.sin(clock * 5.0);
-        shapes.setColor(UiKit.RED.r, UiKit.RED.g, UiKit.RED.b, blink);
+        UiKit.panel(shapes, x, y, w, h, 0.92f, 0f);
+        shapes.setColor(UiKit.RED);
         shapes.circle(x + 26f * s, y + h - 30f * s, 7f * s, 16);
-        UiKit.bar(shapes, x + 20f * s, y + 34f * s, w - 40f * s, 6f * s, progress, UiKit.JADE, 1f);
+        UiKit.bar(shapes, x + 20f * s, y + 34f * s, w - 40f * s, 6f * s, progress, UiKit.PRIMARY, 1f);
         shapes.end();
         batch.begin();
         UiKit.text(batch, title, "REPLAY", x + 42f * s, y + h - 20f * s, UiKit.TEXT, 1f);

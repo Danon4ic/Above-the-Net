@@ -389,30 +389,16 @@ final class MatchSetupView {
         }
 
         begin(shapes);
-        UiKit.panel(shapes, x, bottom, w, top - bottom, 0.94f * a, 3f * s);
+        UiKit.panel(shapes, x, bottom, w, top - bottom, 0.94f * a, 0f);
         for (int i = 0; i < LABELS.length; i++) {
             float[] r = rowRects[i];
             float[] c = controlRects[i];
             float h = rowHighlight[i];
-            if (h > 0.01f) {
-                Color glow = new Color(UiKit.ACCENT.r, UiKit.ACCENT.g, UiKit.ACCENT.b, 0.16f * h * a);
-                Color none = new Color(UiKit.ACCENT.r, UiKit.ACCENT.g, UiKit.ACCENT.b, 0f);
-                shapes.rect(r[0], r[1], r[2], r[3], glow, none, none, glow);
-                shapes.setColor(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, h * a);
-                shapes.rect(r[0] - (1f - h) * 6f * s, r[1], 3f * s, r[3]);
-            }
+            UiKit.rowHighlight(shapes, r[0], r[1], r[2], r[3], h, s, a);
+            if (keyboard && i == focus) UiKit.focusRing(shapes, r[0], r[1], r[2], r[3], s, a);
             boolean open = dropdown.isOpenFor(i);
-            float border = open || i == hoverRow || (keyboard && i == focus) ? 0.6f : 0.22f;
-            UiKit.roundedRect(shapes, c[0] - 1f, c[1] - 1f, c[2] + 2f, c[3] + 2f, 6f * s,
-                    new Color(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, border * a));
-            UiKit.roundedRect(shapes, c[0], c[1], c[2], c[3], 5f * s, new Color(0.04f, 0.055f, 0.11f, 0.96f * a),
-                    new Color(0.08f, 0.1f, 0.18f, 0.96f * a));
-            float cx = c[0] + c[2] - 16f * s;
-            float cy = c[1] + c[3] / 2f;
-            float tw = 5f * s;
-            shapes.setColor(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, a);
-            if (open) shapes.triangle(cx - tw, cy - tw * 0.5f, cx + tw, cy - tw * 0.5f, cx, cy + tw * 0.6f);
-            else shapes.triangle(cx - tw, cy + tw * 0.5f, cx + tw, cy + tw * 0.5f, cx, cy - tw * 0.6f);
+            UiKit.field(shapes, c[0], c[1], c[2], c[3], i == hoverRow || (keyboard && i == focus) ? 1f : 0f, open, a);
+            UiKit.chevron(shapes, c[0] + c[2] - 16f * s, c[1] + c[3] / 2f, 5f * s, open, UiKit.TEXT_DIM, a);
             // The team rows carry a chip in the club's colour.
             if (i == YOUR_TEAM || i == OPPONENT) {
                 int idx = i == YOUR_TEAM ? homeIndex : awayIndex;
@@ -431,7 +417,7 @@ final class MatchSetupView {
             float[] r = rowRects[i];
             float[] c = controlRects[i];
             float h = rowHighlight[i];
-            UiKit.text(batch, label, LABELS[i], r[0] + 18f * s + h * 4f * s, r[1] + r[3] / 2f + label.getCapHeight() / 2f,
+            UiKit.text(batch, label, LABELS[i], r[0] + 18f * s, r[1] + r[3] / 2f + label.getCapHeight() / 2f,
                     h > 0.5f ? UiKit.TEXT : UiKit.TEXT_DIM, a);
             boolean team = i == YOUR_TEAM || i == OPPONENT;
             float textX = c[0] + (team ? 20f : 12f) * s;
@@ -446,7 +432,7 @@ final class MatchSetupView {
             float press = buttonPress[i] * 1.5f * s;
             String t = Lang.t(BUTTONS[i]).toUpperCase(Locale.forLanguageTag("ru"));
             UiKit.text(batch, buttonFont, t, r[0], r[1] + r[3] / 2f + buttonFont.getCapHeight() / 2f - press, r[2], Align.center, false,
-                    i == 0 ? UiKit.NAVY : UiKit.TEXT, a);
+                    UiKit.TEXT, a);
         }
         batch.end();
     }
@@ -460,24 +446,9 @@ final class MatchSetupView {
             float y = r[1] + press;
             float w = r[2] - 2f * press;
             float bh = r[3] - 2f * press;
-            float rad = 7f * s;
-            if (i == 0) {
-                if (h > 0.01f) {
-                    UiKit.roundedRect(shapes, x - 5f * s, y - 5f * s, w + 10f * s, bh + 10f * s, rad + 5f * s,
-                            new Color(UiKit.ACCENT.r, UiKit.ACCENT.g, UiKit.ACCENT.b, 0.2f * h * a));
-                }
-                Color low = new Color(UiKit.ACCENT).mul(0.78f + 0.22f * h, 0.78f + 0.22f * h, 0.78f + 0.22f * h, a);
-                Color high = new Color(UiKit.ACCENT).lerp(Color.WHITE, 0.12f * h).mul(1f, 1f, 1f, a);
-                UiKit.roundedRect(shapes, x, y, w, bh, rad, low, high);
-            } else {
-                UiKit.roundedRect(shapes, x - 1f, y - 1f, w + 2f, bh + 2f, rad + 1f,
-                        new Color(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, (0.3f + 0.4f * h) * a));
-                UiKit.roundedRect(shapes, x, y, w, bh, rad, new Color(0.045f, 0.06f, 0.12f, a)
-                        .lerp(new Color(UiKit.DEEP.r, UiKit.DEEP.g, UiKit.DEEP.b, a), h * 0.8f));
-            }
+            UiKit.button(shapes, x, y, w, bh, i == 0, true, h, a);
             if (keyboard && focus == LABELS.length + i) {
-                shapes.setColor(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, 0.7f * a);
-                shapes.rect(r[0] - 3f * s, r[1] - 4f * s, r[2] + 6f * s, Math.max(1f, s));
+                UiKit.focusRing(shapes, r[0] - 3f * s, r[1] - 3f * s, r[2] + 6f * s, r[3] + 6f * s, s, a);
             }
         }
     }
@@ -490,7 +461,7 @@ final class MatchSetupView {
         drawTeamCard(shapes, batch, awayIndex, x + cardW + vsW, top, cardW, h, false, focus == OPPONENT, a);
         batch.begin();
         BitmapFont vs = fonts.get(UiFonts.Weight.BLACK, 26f * s);
-        UiKit.text(batch, vs, "VS", x + cardW, top - h / 2f + vs.getCapHeight() / 2f, vsW, Align.center, false, UiKit.GOLD, a);
+        UiKit.text(batch, vs, "VS", x + cardW, top - h / 2f + vs.getCapHeight() / 2f, vsW, Align.center, false, UiKit.TEXT_FAINT, a);
         batch.end();
     }
 
@@ -507,27 +478,26 @@ final class MatchSetupView {
         Color[] kit = entry == null ? null : kitOf(entry, yours);
 
         begin(shapes);
-        if (chosen) {
-            UiKit.roundedRect(shapes, x - 2f, y - 2f, w + 4f, h + 4f, 12f * s + 2f,
-                    new Color(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, 0.7f * a));
-        }
         UiKit.panel(shapes, x, y, w, h, 0.94f * a, 0f);
-        // The club's colour band along the top, fading into the card.
-        Color band = kit == null ? new Color(0.3f, 0.33f, 0.42f, a) : new Color(kit[0].r, kit[0].g, kit[0].b, 0.9f * a);
-        Color bandNone = new Color(band.r, band.g, band.b, 0f);
-        shapes.rect(x + 6f * s, top - 96f * s, w - 12f * s, 90f * s, bandNone, bandNone, band, band);
+        if (chosen) UiKit.focusRing(shapes, x - 2f, y - 2f, w + 4f, h + 4f, s, a);
+        // The club's colour as a flat strip along the top.
+        Color band = kit == null ? UiKit.TEXT_FAINT : kit[0];
+        shapes.setColor(band.r, band.g, band.b, a);
+        shapes.rect(x + 1f, top - 1f - 4f * s, w - 2f, 4f * s);
         if (entry != null) {
             // Kit swatches and the strength bar.
             float swY = y + pad + 58f * s;
-            UiKit.roundedRect(shapes, x + pad, swY, 30f * s, 20f * s, 4f * s, new Color(kit[0].r, kit[0].g, kit[0].b, a));
-            UiKit.roundedRect(shapes, x + pad + 36f * s, swY, 20f * s, 20f * s, 4f * s, new Color(kit[1].r, kit[1].g, kit[1].b, a));
-            UiKit.bar(shapes, x + pad, y + pad + 14f * s, w - 2f * pad, 6f * s, (entry.strength() + 8) / 16f, UiKit.ACCENT, a);
+            shapes.setColor(kit[0].r, kit[0].g, kit[0].b, a);
+            shapes.rect(x + pad, swY, 30f * s, 20f * s);
+            shapes.setColor(kit[1].r, kit[1].g, kit[1].b, a);
+            shapes.rect(x + pad + 36f * s, swY, 20f * s, 20f * s);
+            UiKit.bar(shapes, x + pad, y + pad + 14f * s, w - 2f * pad, 6f * s, (entry.strength() + 8) / 16f, UiKit.PRIMARY, a);
         }
         shapes.end();
 
         batch.begin();
         float ty = top - 18f * s;
-        UiKit.text(batch, tag, yours ? "YOUR TEAM" : "OPPONENT", x + pad, ty, UiKit.TEXT, a);
+        UiKit.text(batch, tag, yours ? "YOUR TEAM" : "OPPONENT", x + pad, ty, UiKit.TEXT_DIM, a);
         if (entry == null) {
             UiKit.text(batch, big, "?", x + pad, ty - 30f * s, UiKit.TEXT, a);
             UiKit.text(batch, name, "Random club", x + pad, ty - 98f * s, w - 2f * pad, Align.left, false, UiKit.TEXT, a);
@@ -539,7 +509,7 @@ final class MatchSetupView {
         UiKit.text(batch, big, entry.shortName(), x + pad, ty - 30f * s, UiKit.TEXT, a);
         UiKit.text(batch, name, entry.name().toUpperCase(Locale.ROOT), x + pad, ty - 98f * s, w - 2f * pad, Align.left, false, UiKit.TEXT, a);
         float yy = ty - 126f * s;
-        yy -= UiKit.text(batch, body, entry.style(), x + pad, yy, w - 2f * pad, Align.left, true, UiKit.MINT, a) + 10f * s;
+        yy -= UiKit.text(batch, body, entry.style(), x + pad, yy, w - 2f * pad, Align.left, true, UiKit.TEXT_DIM, a) + 10f * s;
         UiKit.text(batch, body, Lang.f("Head coach: %s", entry.coach()), x + pad, yy, w - 2f * pad, Align.left, false, UiKit.TEXT_DIM, a);
         yy -= 24f * s;
         Team team = teamPreviews.computeIfAbsent(entry.id(), id -> TeamFactory.build(entry, CourtSide.HOME, 0, entry));
@@ -550,7 +520,7 @@ final class MatchSetupView {
             String traits = p.traitLabel();
             if (traits == null || traits.isBlank()) continue;
             UiKit.text(batch, small, "#" + p.number + " " + p.name, x + pad, yy, UiKit.TEXT, a);
-            UiKit.text(batch, small, traits, x + pad + 120f * s, yy, w - 2f * pad - 120f * s, Align.left, false, UiKit.JADE, a);
+            UiKit.text(batch, small, traits, x + pad + 120f * s, yy, w - 2f * pad - 120f * s, Align.left, false, UiKit.TEXT_DIM, a);
             yy -= 20f * s;
         }
         UiKit.text(batch, small, awayKit && yours ? "AWAY KIT" : kitLabel(entry, yours), x + pad + 66f * s, y + pad + 73f * s,
@@ -584,31 +554,31 @@ final class MatchSetupView {
         BitmapFont topic = fonts.get(UiFonts.Weight.BOLD, 13f * s);
         BitmapFont body = fonts.get(UiFonts.Weight.MEDIUM, 13.5f * s);
         begin(shapes);
-        UiKit.panel(shapes, x, top - h, w, h, 0.94f * a, 3f * s);
+        UiKit.panel(shapes, x, top - h, w, h, 0.94f * a, 0f);
         for (int i = 0; i < RoleGuide.ORDER.size(); i++) {
-            shapes.setColor(i == roleIndex ? UiKit.GOLD : new Color(1f, 1f, 1f, 0.12f));
+            shapes.setColor(i == roleIndex ? UiKit.PRIMARY : UiKit.BORDER);
             shapes.rect(x + pad + i * 26f * s, top - h + pad * 0.6f, 18f * s, 4f * s);
         }
         shapes.end();
         batch.begin();
         float y = top - pad;
-        UiKit.text(batch, label, "ROLE GUIDE  ·  " + (roleIndex + 1) + " / " + RoleGuide.ORDER.size(), x + pad, y, UiKit.JADE, a);
+        UiKit.text(batch, label, "ROLE GUIDE  ·  " + (roleIndex + 1) + " / " + RoleGuide.ORDER.size(), x + pad, y, UiKit.TEXT_DIM, a);
         y -= 24f * s;
         UiKit.text(batch, titleFont, guide.title().toUpperCase(Locale.ROOT), x + pad, y, UiKit.TEXT, a);
         y -= 46f * s;
-        UiKit.text(batch, motto, guide.motto(), x + pad, y, UiKit.MINT, a);
+        UiKit.text(batch, motto, guide.motto(), x + pad, y, UiKit.TEXT_DIM, a);
         y -= 34f * s;
         float textW = w - 2f * pad - 110f * s;
         for (RoleGuide.Item item : guide.items()) {
             if (y < top - h + pad + 20f * s) break;
-            UiKit.text(batch, topic, item.topic().toUpperCase(Locale.ROOT), x + pad, y, UiKit.JADE, a);
+            UiKit.text(batch, topic, item.topic().toUpperCase(Locale.ROOT), x + pad, y, UiKit.TEXT_FAINT, a);
             float th = UiKit.text(batch, body, item.text(), x + pad + 110f * s, y, textW, Align.left, true, UiKit.TEXT, a);
             y -= Math.max(20f * s, th) + 12f * s;
         }
         batch.end();
     }
 
-    /** What will be played, in a few lines; it flashes softly when something changes. */
+    /** What will be played, in a few lines; its outline lights up briefly when something changes. */
     private void drawSummary(ShapeRenderer shapes, SpriteBatch batch, float x, float y, float w, float h, float a) {
         float pad = 24f * s;
         float flash = Math.max(0f, 1f - (time - changedAt) / 0.4f);
@@ -616,9 +586,9 @@ final class MatchSetupView {
         BitmapFont match = fonts.get(UiFonts.Weight.BOLD, 19f * s);
         BitmapFont line = fonts.get(UiFonts.Weight.MEDIUM, 14.5f * s);
         begin(shapes);
-        UiKit.panel(shapes, x, y, w, h, 0.94f * a, 3f * s);
+        UiKit.panel(shapes, x, y, w, h, 0.94f * a, 0f);
         if (flash > 0f) {
-            UiKit.roundedRect(shapes, x, y, w, h, 12f * s, new Color(UiKit.ACCENT.r, UiKit.ACCENT.g, UiKit.ACCENT.b, 0.07f * flash * a));
+            UiKit.focusRing(shapes, x, y, w, h, s, flash * a);
         }
         shapes.end();
         batch.begin();

@@ -129,7 +129,7 @@ public final class StatsPanel implements Disposable {
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
         shapes.begin(ShapeRenderer.ShapeType.Filled);
         UiKit.dim(shapes, width, height, 0.65f * a);
-        UiKit.panel(shapes, x0, y0, panelW, panelH, 0.97f * a, 4f * s);
+        UiKit.panel(shapes, x0, y0, panelW, panelH, 0.97f * a, 0f);
         // Team colour strips beside the names.
         shapes.setColor(homeColor.r, homeColor.g, homeColor.b, a);
         shapes.rect(midX - barW - 60f * s, compareTop + 18f * s, 4f * s, 22f * s);
@@ -138,8 +138,7 @@ public final class StatsPanel implements Disposable {
         for (int i = 0; i < rows.length; i++) {
             float ry = compareTop - (i + 1) * rowH;
             if (i % 2 == 0) {
-                Color band = new Color(1f, 1f, 1f, 0.03f * a);
-                shapes.setColor(band);
+                shapes.setColor(UiKit.DEEP.r, UiKit.DEEP.g, UiKit.DEEP.b, a);
                 shapes.rect(x0 + pad, ry + 2f * s, panelW - 2f * pad, rowH - 2f * s);
             }
             float total = bars[i][0] + bars[i][1];
@@ -148,15 +147,17 @@ public final class StatsPanel implements Disposable {
             float by = ry + rowH / 2f - 3f * s;
             // Bars grow outwards from the centre labels.
             UiKit.bar(shapes, midX - 120f * s - barW, by, barW, 6f * s, 0f, homeColor, a);
-            if (fh > 0f) UiKit.roundedRect(shapes, midX - 120f * s - barW * fh, by, barW * fh, 6f * s, 3f * s,
-                    new Color(homeColor.r, homeColor.g, homeColor.b, a));
+            if (fh > 0f) {
+                shapes.setColor(homeColor.r, homeColor.g, homeColor.b, a);
+                shapes.rect(midX - 120f * s - barW * fh, by, barW * fh, 6f * s);
+            }
             UiKit.bar(shapes, midX + 120f * s, by, barW, 6f * s, fa, awayColor, a);
         }
         UiKit.divider(shapes, x0 + pad, tableTop + 30f * s, panelW - 2f * pad, a);
         for (int i = 0; i < players.size(); i++) {
             float ry = tableTop - (i + 1) * tRowH - 6f * s;
             if (i % 2 == 0) {
-                shapes.setColor(1f, 1f, 1f, 0.035f * a);
+                shapes.setColor(UiKit.DEEP.r, UiKit.DEEP.g, UiKit.DEEP.b, a);
                 shapes.rect(tableX, ry, tableW, tRowH);
             }
         }

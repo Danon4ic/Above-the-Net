@@ -28,7 +28,7 @@ import java.util.List;
  * <ul>
  *   <li>the score bug in the top-right corner: team colours and names (your team marked), the
  *       serving team's ball, sets won and the points in big type — a new point rolls in with a
- *       short gold flash; the set number and the finished sets above; the set point / match
+ *       short blue flash; the set number and the finished sets above; the set point / match
  *       point tag and the serve clock below;</li>
  *   <li>a caption after each point (who scored and why), substitutions and timeouts;</li>
  *   <li>the set result between sets: who won it, its score, the table of all sets and the
@@ -59,7 +59,8 @@ public final class ScoreOverlay implements MatchListener, Disposable {
     // Caption.
     private String bannerTitle;
     private String bannerText;
-    private Color bannerColor = Color.WHITE;
+    private Color bannerColor = UiKit.TEXT;
+    private final Color cellColor = new Color();
     private float bannerStart = -10f;
     private float bannerDuration;
     private boolean bannerBig;
@@ -122,14 +123,14 @@ public final class ScoreOverlay implements MatchListener, Disposable {
     public void onChangeOfEnds(boolean swapped) {
         // After a set the set result says enough; in the deciding set the change at 8 gets its own.
         if (clock - setResultAt < MatchController.SET_BREAK) return;
-        banner("CHANGE OF ENDS", "Half of the deciding set: the teams switch sides", Color.LIGHT_GRAY, BANNER_TIME, false);
+        banner("CHANGE OF ENDS", "Half of the deciding set: the teams switch sides", UiKit.TEXT_DIM, BANNER_TIME, false);
     }
 
     @Override
     public void onPoint(MatchRules.PointSummary point, MatchScore score) {
         RallyOutcome outcome = point.outcome();
         if (outcome.isReplay()) {
-            banner("NO POINT", outcome.reason().label, Color.LIGHT_GRAY, BANNER_TIME, false);
+            banner("NO POINT", outcome.reason().label, UiKit.TEXT_DIM, BANNER_TIME, false);
             return;
         }
         Team winner = team(outcome.winner());
@@ -225,7 +226,7 @@ public final class ScoreOverlay implements MatchListener, Disposable {
         float bugH = headerH + 2f * rowH + pad;
 
         begin();
-        UiKit.panel(shapes, x0, top - bugH, bugW, bugH, 0.94f, 2f * s);
+        UiKit.panel(shapes, x0, top - bugH, bugW, bugH, 0.94f, 0f);
         float pointsX = x0 + pad + stripe + nameW + serveW + setsW;
         for (CourtSide side : CourtSide.values()) {
             int i = side.ordinal();
@@ -233,37 +234,27 @@ public final class ScoreOverlay implements MatchListener, Disposable {
             Team team = team(side);
             shapes.setColor(team.shirtColor);
             shapes.rect(x0 + pad, rowY + 5f * s, stripe, rowH - 10f * s);
-            // The points cell: the team colour darkened, flashing gold when a point is won.
+            // The points cell: a raised surface, briefly blue when a point is won.
             float flash = Math.max(0f, 1f - (clock - changedAt[i]) / FLASH_TIME);
-            Color cell = new Color(team.shirtColor).mul(0.45f, 0.45f, 0.45f, 1f).add(0.04f, 0.05f, 0.08f, 0f);
-            cell.lerp(UiKit.GOLD, flash * 0.85f);
-            UiKit.roundedRect(shapes, pointsX, rowY + 3f * s, pointsW, rowH - 6f * s, 6f * s, cell);
+            Color cell = cellColor.set(UiKit.DEEP).lerp(UiKit.PRIMARY, flash);
+            UiKit.roundedRect(shapes, pointsX, rowY + 3f * s, pointsW, rowH - 6f * s, UiKit.RADIUS * s, cell);
             // Touches of the current possession: three dots under the name.
             int touches = rally.touches(side);
             for (int k = 0; k < 3; k++) {
-                shapes.setColor(k < touches ? UiKit.GOLD : new Color(1f, 1f, 1f, 0.16f));
+                shapes.setColor(k < touches ? UiKit.ACCENT : UiKit.BORDER);
                 shapes.circle(x0 + pad + stripe + 10f * s + k * 9f * s, rowY + 7f * s, 2.6f * s, 10);
             }
             if (side == serving && !score.isMatchOver()) {
                 float cx = x0 + pad + stripe + nameW + serveW / 2f;
-                shapes.setColor(Color.WHITE);
-                shapes.circle(cx, rowY + rowH / 2f, 6f * s, 18);
-                shapes.setColor(UiKit.GOLD);
-                shapes.circle(cx, rowY + rowH / 2f, 2.8f * s, 12);
-            }
-            // Your team: a gold marker on the left edge of the bug.
-            if (side == yourSide) {
-                shapes.setColor(UiKit.GOLD);
-                shapes.triangle(x0 - 9f * s, rowY + rowH / 2f + 7f * s, x0 - 9f * s, rowY + rowH / 2f - 7f * s, x0 - 1f * s, rowY + rowH / 2f);
+                shapes.setColor(UiKit.TEXT);
+                shapes.circle(cx, rowY + rowH / 2f, 4.5f * s, 16);
             }
         }
-        shapes.setColor(1f, 1f, 1f, 0.08f);
+        shapes.setColor(UiKit.BORDER);
         shapes.rect(x0 + pad, rowsTop - rowH, bugW - 2f * pad, 1f);
         float below = top - bugH - 6f * s;
         if (setPoint != null && !score.isMatchOver()) {
-            float pulse = 0.85f + 0.15f * (float) Math.sin(clock * 4.0);
-            UiKit.roundedRect(shapes, x0, below - 24f * s, bugW, 24f * s, 6f * s,
-                    new Color(UiKit.GOLD.r, UiKit.GOLD.g, UiKit.GOLD.b, pulse));
+            UiKit.roundedRect(shapes, x0, below - 24f * s, bugW, 24f * s, UiKit.RADIUS * s, UiKit.PRIMARY);
             below -= 30f * s;
         }
         if (waitingServe) {
@@ -281,7 +272,7 @@ public final class ScoreOverlay implements MatchListener, Disposable {
         BitmapFont points = fonts.get(UiFonts.Weight.BLACK, 30f * s);
         BitmapFont you = fonts.get(UiFonts.Weight.EXTRABOLD, 9f * s);
         String title = score.isMatchOver() ? "FINAL" : "SET " + score.setNumber();
-        UiKit.text(batch, header, title, x0 + pad + 2f * s, top - 8f * s, UiKit.GOLD, 1f);
+        UiKit.text(batch, header, title, x0 + pad + 2f * s, top - 8f * s, UiKit.TEXT_DIM, 1f);
         String hist = setHistory(score);
         if (!hist.isEmpty()) {
             float w = UiKit.width(history, hist);
@@ -295,7 +286,7 @@ public final class ScoreOverlay implements MatchListener, Disposable {
             UiKit.text(batch, name, team.shortName, nameX, rowY + rowH - 9f * s, UiKit.TEXT, 1f);
             if (side == yourSide) {
                 float w = UiKit.width(name, team.shortName);
-                UiKit.text(batch, you, "YOU", nameX + w + 5f * s, rowY + rowH - 11f * s, UiKit.GOLD, 1f);
+                UiKit.text(batch, you, "YOU", nameX + w + 5f * s, rowY + rowH - 11f * s, UiKit.JADE, 1f);
             }
             UiKit.text(batch, sets, String.valueOf(score.sets(side)), x0 + pad + stripe + nameW + serveW,
                     rowY + rowH / 2f + sets.getCapHeight() / 2f, setsW, Align.center, false, UiKit.TEXT_DIM, 1f);
@@ -303,8 +294,7 @@ public final class ScoreOverlay implements MatchListener, Disposable {
             float t = UiKit.ease((clock - changedAt[i]) / ROLL_TIME);
             float cy = rowY + rowH / 2f + points.getCapHeight() / 2f;
             float travel = rowH * 0.45f;
-            boolean flashing = clock - changedAt[i] < FLASH_TIME * 0.6f;
-            Color numberColor = flashing ? UiKit.NAVY : UiKit.TEXT;
+            Color numberColor = UiKit.TEXT;
             if (t < 1f) {
                 UiKit.text(batch, points, String.valueOf(previousPoints[i]), pointsX, cy + t * travel, pointsW, Align.center, false,
                         numberColor, 1f - t);
@@ -315,7 +305,7 @@ public final class ScoreOverlay implements MatchListener, Disposable {
         if (setPoint != null && !score.isMatchOver()) {
             boolean matchPoint = score.sets(setPoint) == score.format().setsToWin() - 1;
             UiKit.text(batch, header, (matchPoint ? "MATCH POINT " : "SET POINT ") + team(setPoint).shortName, x0,
-                    top - bugH - 6f * s - 12f * s + header.getCapHeight() / 2f, bugW, Align.center, false, UiKit.NAVY, 1f);
+                    top - bugH - 6f * s - 12f * s + header.getCapHeight() / 2f, bugW, Align.center, false, UiKit.TEXT, 1f);
         }
         batch.end();
     }
@@ -336,7 +326,7 @@ public final class ScoreOverlay implements MatchListener, Disposable {
         begin();
         UiKit.panel(shapes, x, y, panelW, panelH, 0.94f * alpha, 0f);
         shapes.setColor(bannerColor.r, bannerColor.g, bannerColor.b, alpha);
-        shapes.rect(x + 10f * s, y + panelH - 5f * s, panelW - 20f * s, 4f * s);
+        shapes.rect(x + 1f, y + panelH - 3f * s, panelW - 2f, 2f * s);
         shapes.end();
 
         batch.begin();
@@ -379,28 +369,30 @@ public final class ScoreOverlay implements MatchListener, Disposable {
 
         begin();
         UiKit.dim(shapes, width, height, 0.35f * a);
-        UiKit.panel(shapes, x, y, w, h, 0.96f * a, 4f * s);
+        UiKit.panel(shapes, x, y, w, h, 0.96f * a, 0f);
         shapes.setColor(winner.shirtColor.r, winner.shirtColor.g, winner.shirtColor.b, a);
-        shapes.rect(x + 14f * s, y + h - 9f * s, w - 28f * s, 4f * s);
+        shapes.rect(x + 1f, y + h - 3f * s, w - 2f, 2f * s);
         // Table rows: the team colour chips.
         for (CourtSide side : CourtSide.values()) {
             float ry = tableTop - (side.ordinal() + 2) * rowH;
             Team t = team(side);
             shapes.setColor(t.shirtColor.r, t.shirtColor.g, t.shirtColor.b, a);
             shapes.rect(tableX, ry + 7f * s, 4f * s, rowH - 14f * s);
-            shapes.setColor(1f, 1f, 1f, 0.04f * a * (side == CourtSide.HOME ? 1f : 0f));
-            shapes.rect(tableX, ry, tableW, rowH);
+            if (side == CourtSide.HOME) {
+                shapes.setColor(UiKit.DEEP.r, UiKit.DEEP.g, UiKit.DEEP.b, a);
+                shapes.rect(tableX + 4f * s, ry, tableW - 4f * s, rowH);
+            }
         }
         shapes.end();
 
         batch.begin();
         float ty = y + h - 26f * s;
-        UiKit.text(batch, label, "SET " + setResult.setNumber(), x, ty, w, Align.center, false, UiKit.GOLD, a);
+        UiKit.text(batch, label, "SET " + setResult.setNumber(), x, ty, w, Align.center, false, UiKit.TEXT_DIM, a);
         ty -= 26f * s;
         UiKit.text(batch, title, Lang.f("%s win the set", winner.name.toUpperCase(java.util.Locale.ROOT)), x, ty, w, Align.center, false, UiKit.TEXT, a);
         ty -= 42f * s;
         String scoreText = setResult.home() + " : " + setResult.away();
-        UiKit.text(batch, big, scoreText, x, ty, w, Align.center, false, UiKit.GOLD, a);
+        UiKit.text(batch, big, scoreText, x, ty, w, Align.center, false, UiKit.TEXT, a);
         // The table: sets as columns.
         float headY = tableTop - rowH + rowH / 2f + small.getCapHeight() / 2f;
         for (int c = 0; c < columns; c++) {
@@ -411,7 +403,7 @@ public final class ScoreOverlay implements MatchListener, Disposable {
             float ry = tableTop - (side.ordinal() + 2) * rowH;
             float cy = ry + rowH / 2f + cell.getCapHeight() / 2f;
             Team t = team(side);
-            UiKit.text(batch, cell, t.shortName, tableX + 14f * s, cy, side == yourSide ? UiKit.GOLD : UiKit.TEXT, a);
+            UiKit.text(batch, cell, t.shortName, tableX + 14f * s, cy, side == yourSide ? UiKit.JADE : UiKit.TEXT, a);
             for (int c = 0; c < columns; c++) {
                 MatchScore.SetResult r = setsSoFar.get(c);
                 int pts = side == CourtSide.HOME ? r.home() : r.away();
@@ -421,7 +413,7 @@ public final class ScoreOverlay implements MatchListener, Disposable {
             }
             int setsWon = side == CourtSide.HOME ? setsHome : setsAway;
             UiKit.text(batch, cell, String.valueOf(setsWon), tableX + nameW + columns * cellW, cy, 70f * s, Align.center, false,
-                    UiKit.GOLD, a);
+                    UiKit.JADE, a);
         }
         int left = Math.max(1, (int) Math.ceil(duration - age));
         UiKit.text(batch, small, Lang.f("Next set in %d", left), x, y + 22f * s, w, Align.center, false, UiKit.TEXT_DIM, a);
@@ -450,8 +442,8 @@ public final class ScoreOverlay implements MatchListener, Disposable {
         float y = height * 0.1f + 90f * s;
         begin();
         UiKit.panel(shapes, x, y, w, h, 0.88f * a, 0f);
-        shapes.setColor(UiKit.GOLD.r, UiKit.GOLD.g, UiKit.GOLD.b, a);
-        shapes.rect(x, y + 6f * s, 3f * s, h - 12f * s);
+        shapes.setColor(UiKit.PRIMARY.r, UiKit.PRIMARY.g, UiKit.PRIMARY.b, a);
+        shapes.rect(x, y, 3f * s, h);
         float kx = (width - keysW) / 2f;
         float ky = y + 8f * s;
         for (String[] k : contextKeys) {
@@ -462,7 +454,7 @@ public final class ScoreOverlay implements MatchListener, Disposable {
         shapes.end();
         batch.begin();
         if (contextTitle != null) {
-            UiKit.text(batch, titleFont, contextTitle, x, y + h - 10f * s, w, Align.center, false, UiKit.GOLD, a);
+            UiKit.text(batch, titleFont, contextTitle, x, y + h - 10f * s, w, Align.center, false, UiKit.JADE, a);
         }
         kx = (width - keysW) / 2f;
         for (String[] k : contextKeys) {

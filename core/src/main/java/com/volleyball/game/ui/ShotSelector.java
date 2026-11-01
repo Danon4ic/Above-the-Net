@@ -14,8 +14,8 @@ import java.util.List;
  * The play caller: a row of options at the bottom of the screen for the decision at hand — the
  * serve, the set (with the hitter each set goes to), the attack shot or the block — each with
  * its number key. "0 Auto" leaves the choice to the game, which picks from the situation (the
- * recommended option, marked with a cyan dot, is what Auto would play). Options without a hitter are
- * dimmed. While the decision is close (the ball is coming) the bar lights up.
+ * recommended option, marked with a blue dot, is what Auto would play). Options without a hitter are
+ * dimmed. While the decision is close (the ball is coming) the bar comes up to full opacity.
  */
 public final class ShotSelector implements Disposable {
     /** One option of the bar. */
@@ -39,13 +39,15 @@ public final class ShotSelector implements Disposable {
     }
 
 
+    /** Width kept free at the bottom-left for the folded key hints (px at the design size). */
+    private static final float HINTS_RESERVE = 230f;
+
     private final SpriteBatch batch = new SpriteBatch();
     private final ShapeRenderer shapes = new ShapeRenderer();
     private final UiFonts fonts;
     private final List<float[]> chips = new ArrayList<>();
     private int width;
     private int height;
-    private float clock;
 
     public ShotSelector(UiFonts fonts) {
         this.fonts = fonts;
@@ -68,7 +70,6 @@ public final class ShotSelector implements Disposable {
      */
     public void render(float delta, String title, String hint, List<Option> options, boolean hot) {
         if (options.isEmpty()) return;
-        clock += delta;
         float s = UiFonts.uiScale(height);
         float labelSize = 15f * s;
         BitmapFont label;
@@ -100,7 +101,12 @@ public final class ShotSelector implements Disposable {
         float titleW = UiKit.width(fonts.get(UiFonts.Weight.EXTRABOLD, 13f * s), title) + 22f * s;
         float x0 = (width - total - titleW) / 2f + titleW;
         float y = height * 0.025f;
-        float pulse = hot ? 0.75f + 0.25f * (float) Math.sin(clock * 6.0) : 0f;
+        // Keep clear of the folded key hints in the bottom-left corner: move right, or else up.
+        float reserved = HINTS_RESERVE * s;
+        if (x0 - titleW < reserved) {
+            if (reserved + titleW + total <= width - 16f * s) x0 = reserved + titleW;
+            else y = Math.max(y, 46f * s);
+        }
 
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
@@ -112,13 +118,18 @@ public final class ShotSelector implements Disposable {
             float alpha = o.enabled ? (hot ? 0.95f : 0.82f) : 0.45f;
             UiKit.panel(shapes, x, y, w, chipH, alpha, 0f);
             if (o.selected) {
-                shapes.setColor(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, hot ? 0.55f + 0.45f * pulse : 0.9f);
+                // The selected option: a 1 px accent outline and a blue base line.
+                float t = Math.max(1f, s);
+                shapes.setColor(UiKit.ACCENT.r, UiKit.ACCENT.g, UiKit.ACCENT.b, alpha);
+                shapes.rect(x, y + chipH - t, w, t);
+                shapes.rect(x, y, t, chipH);
+                shapes.rect(x + w - t, y, t, chipH);
+                shapes.setColor(UiKit.PRIMARY.r, UiKit.PRIMARY.g, UiKit.PRIMARY.b, alpha);
                 shapes.rect(x, y, w, 3f * s);
-                shapes.rect(x, y + chipH - 2f * s, w, 2f * s);
             }
             if (o.recommended) {
-                // The recommended option (what Auto plays): a cyan dot in the corner.
-                shapes.setColor(UiKit.MINT);
+                // The recommended option (what Auto plays): a blue dot in the corner.
+                shapes.setColor(UiKit.ACCENT);
                 shapes.circle(x + w - 7f * s, y + chipH - 7f * s, 3.5f * s, 12);
             }
             UiKit.keycap(shapes, x + pad * 0.6f, y + (chipH - keyW) / 2f, keyW, keyW, o.selected, o.enabled ? 1f : 0.5f);
@@ -136,10 +147,10 @@ public final class ShotSelector implements Disposable {
             float a = o.enabled ? 1f : 0.45f;
             float kx = x + pad * 0.6f;
             UiKit.text(batch, keyFont, o.key, kx, y + chipH / 2f + keyFont.getCapHeight() / 2f, keyW,
-                    com.badlogic.gdx.utils.Align.center, false, o.selected ? UiKit.NAVY : UiKit.TEXT, a);
+                    com.badlogic.gdx.utils.Align.center, false, UiKit.TEXT, a);
             float tx = kx + keyW + 8f * s;
             float labelY = o.detail == null ? y + chipH / 2f + label.getCapHeight() / 2f : y + chipH * 0.66f + label.getCapHeight() / 2f;
-            UiKit.text(batch, label, o.label, tx, labelY, o.selected ? UiKit.JADE : UiKit.TEXT, a);
+            UiKit.text(batch, label, o.label, tx, labelY, UiKit.TEXT, a);
             if (o.detail != null) UiKit.text(batch, small, o.detail, tx, y + chipH * 0.3f + small.getCapHeight() / 2f, UiKit.TEXT_DIM, a);
             x += w + gap;
         }

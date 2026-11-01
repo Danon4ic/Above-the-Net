@@ -2,7 +2,6 @@ package com.volleyball.game.ui;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
-import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
@@ -110,7 +109,7 @@ public final class PauseMenu implements Disposable {
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
         shapes.begin(ShapeRenderer.ShapeType.Filled);
         UiKit.dim(shapes, width, height, 0.6f * appear);
-        UiKit.panel(shapes, x0, y0, panelW, panelH, 0.97f * appear, 4f * s);
+        UiKit.panel(shapes, x0, y0, panelW, panelH, 0.97f * appear, 0f);
         float listTop = top - 120f * s;
         for (int i = 0; i < actions.size(); i++) {
             float rowY = listTop - (i + 1) * rowH;
@@ -118,19 +117,13 @@ public final class PauseMenu implements Disposable {
             rows[i][1] = rowY + 4f * s;
             rows[i][2] = panelW - 48f * s;
             rows[i][3] = rowH - 8f * s;
-            if (i == selected) {
-                Color glow = new Color(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, 0.18f * appear);
-                Color none = new Color(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, 0f);
-                shapes.rect(rows[i][0], rows[i][1], rows[i][2], rows[i][3], glow, none, none, glow);
-                shapes.setColor(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, appear);
-                shapes.rect(rows[i][0], rows[i][1], 3f * s, rows[i][3]);
-            }
+            if (i == selected) UiKit.rowHighlight(shapes, rows[i][0], rows[i][1], rows[i][2], rows[i][3], 1f, s, appear);
         }
         shapes.end();
 
         batch.begin();
         UiKit.text(batch, title, "PAUSED", x0, top, panelW, Align.center, false, UiKit.TEXT, appear);
-        UiKit.text(batch, small, subtitle.toUpperCase(java.util.Locale.ROOT), x0, top - 56f * s, panelW, Align.center, false, UiKit.JADE, appear);
+        UiKit.text(batch, small, subtitle.toUpperCase(java.util.Locale.ROOT), x0, top - 56f * s, panelW, Align.center, false, UiKit.TEXT_DIM, appear);
         for (int i = 0; i < actions.size(); i++) {
             float rowY = listTop - (i + 1) * rowH;
             boolean sel = i == selected;

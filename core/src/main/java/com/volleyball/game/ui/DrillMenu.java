@@ -1,7 +1,6 @@
 package com.volleyball.game.ui;
 
 import com.badlogic.gdx.Gdx;
-import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
@@ -82,31 +81,26 @@ public final class DrillMenu implements Disposable {
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
         shapes.begin(ShapeRenderer.ShapeType.Filled);
         UiKit.dim(shapes, width, height, 0.5f);
-        UiKit.panel(shapes, x0, y0, panelW, panelH, 0.97f, 4f * s);
+        UiKit.panel(shapes, x0, y0, panelW, panelH, 0.97f, 0f);
         for (int i = 0; i < drills.length; i++) {
             float rowTop = top - 60f * s - i * rowH;
             if (drills[i] == current) {
-                Color glow = new Color(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, 0.15f);
-                Color none = new Color(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, 0f);
-                shapes.rect(x0 + 12f * s, rowTop - rowH + 6f * s, panelW - 24f * s, rowH - 6f * s, glow, none, none, glow);
-                shapes.setColor(UiKit.JADE);
-                shapes.rect(x0 + 12f * s, rowTop - rowH + 6f * s, 3f * s, rowH - 6f * s);
+                UiKit.rowHighlight(shapes, x0 + 12f * s, rowTop - rowH + 6f * s, panelW - 24f * s, rowH - 6f * s, 1f, s, 1f);
             }
         }
         float optionsTop = top - 60f * s - drills.length * rowH - 14f * s;
-        shapes.setColor(1f, 1f, 1f, 0.07f);
-        shapes.rect(x0 + pad, optionsTop + 4f * s, panelW - 2 * pad, 1f);
+        UiKit.divider(shapes, x0 + pad, optionsTop + 4f * s, panelW - 2 * pad, 1f);
         shapes.end();
 
         batch.begin();
         UiKit.text(batch, title, "DRILLS AND MATCH", x0 + pad, top, UiKit.TEXT, 1f);
         String hint = "PRESS A NUMBER  ·  M / ESC TO CLOSE";
-        UiKit.text(batch, small, hint, x0 + panelW - pad - UiKit.width(small, hint), top - 5f * s, UiKit.JADE, 1f);
+        UiKit.text(batch, small, hint, x0 + panelW - pad - UiKit.width(small, hint), top - 5f * s, UiKit.TEXT_FAINT, 1f);
         for (int i = 0; i < drills.length; i++) {
             Drill drill = drills[i];
             float rowTop = top - 60f * s - i * rowH;
             boolean cur = drill == current;
-            UiKit.text(batch, number, String.valueOf(i + 1), x0 + pad, rowTop - 9f * s, cur ? UiKit.JADE : UiKit.MINT, 1f);
+            UiKit.text(batch, number, String.valueOf(i + 1), x0 + pad, rowTop - 9f * s, cur ? UiKit.JADE : UiKit.TEXT_FAINT, 1f);
             UiKit.text(batch, name, drill.label + (cur ? "   ·   current" : ""), x0 + pad + 34f * s, rowTop - 7f * s,
                     cur ? UiKit.TEXT : UiKit.TEXT, 1f);
             UiKit.text(batch, body, drill.instructions, x0 + pad + 34f * s, rowTop - 29f * s, panelW - 2 * pad - 34f * s,
@@ -125,7 +119,7 @@ public final class DrillMenu implements Disposable {
             UiKit.text(batch, body, "Player 2: arrows move, Right Ctrl jump, / play, . overhead or tip, , low stance, ' switch player",
                     x0 + pad, y, UiKit.TEXT_DIM, 1f);
         } else {
-            UiKit.text(batch, body, RoleGuide.of(role).motto(), x0 + pad, y, UiKit.MINT, 1f);
+            UiKit.text(batch, body, RoleGuide.of(role).motto(), x0 + pad, y, UiKit.TEXT_DIM, 1f);
         }
         batch.end();
     }
