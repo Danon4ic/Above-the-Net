@@ -1,0 +1,26 @@
+plugins { id 'java-library' }
+
+java { toolchain { languageVersion = JavaLanguageVersion.of(25) } }
+
+dependencies {
+    api "com.badlogicgames.gdx:gdx:${gdxVersion}"
+    // TrueType fonts (Montserrat, SIL OFL) rendered sharply at any size.
+    api "com.badlogicgames.gdx:gdx-freetype:${gdxVersion}"
+
+    testImplementation "org.junit.jupiter:junit-jupiter:${junitVersion}"
+    // Gradle 9 no longer puts the JUnit Platform launcher on the test classpath automatically.
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    // Some libGDX math (Matrix4 projection, used by cameras) is native; tests load it via GdxNativesLoader.
+    testRuntimeOnly "com.badlogicgames.gdx:gdx-platform:${gdxVersion}:natives-desktop"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.compilerArgs += ['-Xlint:unchecked', '-Xlint:deprecation']
+}
+
+test {
+    useJUnitPlatform()
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
+    testLogging { events 'failed'; exceptionFormat = 'full' }
+}

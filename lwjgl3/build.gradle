@@ -1,0 +1,126 @@
+plugins { id 'application' }
+
+java { toolchain { languageVersion = JavaLanguageVersion.of(25) } }
+
+dependencies {
+    implementation project(':core')
+    implementation "com.badlogicgames.gdx:gdx-backend-lwjgl3:${gdxVersion}"
+    runtimeOnly "com.badlogicgames.gdx:gdx-platform:${gdxVersion}:natives-desktop"
+    runtimeOnly "com.badlogicgames.gdx:gdx-freetype-platform:${gdxVersion}:natives-desktop"
+}
+
+tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
+
+def launcherClass = 'com.volleyball.lwjgl3.Lwjgl3Launcher'
+// LWJGL calls native code; Java 22+ warns about it unless native access is enabled explicitly.
+def launcherJvmArgs = ['--enable-native-access=ALL-UNNAMED']
+
+application {
+    mainClass = launcherClass
+    applicationDefaultJvmArgs = launcherJvmArgs
+}
+
+tasks.named('run', JavaExec) {
+    workingDir = rootProject.projectDir
+    jvmArgs launcherJvmArgs
+}
+
+// Single runnable jar: java -jar lwjgl3/build/libs/VolleyballSimulator3D-<version>.jar
+tasks.register('dist', Jar) {
+    group = 'distribution'
+    description = 'Builds a self-contained runnable jar with all dependencies and natives.'
+    archiveBaseName = 'VolleyballSimulator3D'
+    archiveVersion = project.findProperty('gameVersion') ?: '0.1.0'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest {
+        attributes 'Main-Class': launcherClass, 'Enable-Native-Access': 'ALL-UNNAMED'
+    }
+    dependsOn configurations.runtimeClasspath
+    from { configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) } }
+    with tasks.jar
+    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
+}
+
+// The generated Windows script lists every jar and exceeds cmd.exe's line limit; use a wildcard instead.
+tasks.named('startScripts', CreateStartScripts) {
+    doLast {
+        def quote = java.util.regex.Matcher.&quoteReplacement
+        windowsScript.text = windowsScript.text.replaceAll(/(?m)^set CLASSPATH=.*$/, quote('set CLASSPATH=%APP_HOME%\\lib\\*'))
+        unixScript.text = unixScript.text.replaceAll(/(?m)^CLASSPATH=.*$/, quote('CLASSPATH="$APP_HOME/lib/*"'))
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Native application packaging with jpackage (part of the JDK).
+//
+//   gradle :lwjgl3:packageApp        -> lwjgl3/build/app/VolleyballSimulator3D/VolleyballSimulator3D.exe
+//                                       (portable folder with a bundled, trimmed Java runtime)
+//   gradle :lwjgl3:packageZip        -> lwjgl3/build/distributions/VolleyballSimulator3D-<version>-<os>.zip
+//   gradle :lwjgl3:packageInstaller  -> Windows .exe installer (needs WiX Toolset on PATH),
+//                                       Linux .deb (needs dpkg-deb). Use -PinstallerType=msi|rpm to change.
+// ---------------------------------------------------------------------------------------------
+def appName = 'VolleyballSimulator3D'
+def appVersion = project.findProperty('gameVersion') ?: '0.17.0'
+def isWindows = System.getProperty('os.name').toLowerCase().contains('windows')
+// LWJGL needs jdk.unsupported (sun.misc.Unsafe); the rest is what libGDX's desktop backend uses.
+def runtimeModules = 'java.base,java.desktop,java.logging,jdk.unsupported'
+def jpackageTool = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(25) }
+        .map { it.metadata.installationPath.file(isWindows ? 'bin/jpackage.exe' : 'bin/jpackage').asFile }
+
+def commonJpackageArgs = { File destination ->
+    def args = ['--name', appName,
+                '--app-version', appVersion,
+                '--vendor', 'Volleyball Simulator 3D',
+                '--description', '3D indoor volleyball simulator',
+                '--input', layout.buildDirectory.dir('install/lwjgl3/lib').get().asFile.absolutePath,
+                '--main-jar', 'lwjgl3.jar',
+                '--main-class', launcherClass,
+                '--java-options', '--enable-native-access=ALL-UNNAMED',
+                '--add-modules', runtimeModules,
+                '--jlink-options', '--strip-debug --no-man-pages --no-header-files',
+                '--dest', destination.absolutePath]
+    args += ['--icon', file(isWindows ? 'icons/app.ico' : 'icons/app.png').absolutePath]
+    return args
+}
+
+tasks.register('packageApp', Exec) {
+    group = 'distribution'
+    description = 'Builds a native application folder with an executable and a bundled Java runtime.'
+    dependsOn 'installDist'
+    def destination = layout.buildDirectory.dir('app').get().asFile
+    inputs.dir(layout.buildDirectory.dir('install/lwjgl3/lib'))
+    outputs.dir(destination)
+    doFirst {
+        // jpackage refuses to overwrite an existing application image.
+        delete destination
+        executable = jpackageTool.get()
+        args = ['--type', 'app-image'] + commonJpackageArgs(destination)
+    }
+}
+
+tasks.register('packageZip', Zip) {
+    group = 'distribution'
+    description = 'Zips the native application folder for distribution.'
+    dependsOn 'packageApp'
+    archiveBaseName = appName
+    archiveVersion = appVersion
+    archiveClassifier = isWindows ? 'windows' : 'linux'
+    from(layout.buildDirectory.dir('app'))
+    destinationDirectory = layout.buildDirectory.dir('distributions')
+}
+
+tasks.register('packageInstaller', Exec) {
+    group = 'distribution'
+    description = 'Builds an OS installer (Windows: exe/msi via WiX; Linux: deb/rpm).'
+    dependsOn 'installDist'
+    def destination = layout.buildDirectory.dir('installer').get().asFile
+    doFirst {
+        delete destination
+        def type = project.findProperty('installerType') ?: (isWindows ? 'exe' : 'deb')
+        def extra = isWindows
+                ? ['--win-menu', '--win-shortcut', '--win-dir-chooser', '--win-per-user-install']
+                : ['--linux-shortcut']
+        executable = jpackageTool.get()
+        args = ['--type', type] + commonJpackageArgs(destination) + extra
+    }
+}

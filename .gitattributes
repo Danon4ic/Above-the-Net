@@ -1,0 +1,8 @@
+# Line endings in the repository are LF; Windows scripts keep CRLF.
+* text=auto
+*.bat text eol=crlf
+gradlew text eol=lf
+*.jar binary
+*.png binary
+*.ico binary
+*.ttf binary
