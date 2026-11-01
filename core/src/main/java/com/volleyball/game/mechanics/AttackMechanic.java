@@ -14,7 +14,8 @@ import java.util.Random;
  * hitter who contacts the ball too low (late jump, poor set) will drive it into the net, and a
  * mistimed contact (low quality) sprays the ball long or wide. Soft shots (tip, roll) are lobs
  * that pass over the net with a margin; the cut shot curves to the sharp angle; the tool is a
- * hard, flat drive at the block's outside hand.
+ * hard, flat drive at the block's outside hand and the wipe one at its fingertips; the feint is a
+ * flatter, quicker push than the tip (it comes out of a full swing).
  */
 public final class AttackMechanic {
     /** A tip (and a setter's dump) never lands closer than this behind the net. */
@@ -70,6 +71,19 @@ public final class AttackMechanic {
                 topspin = 10f;
                 solver.solve(c.ballPosition, c.target.x, c.target.z, speed, topspin, 0f, out);
                 sigma = 2.2f * (1.6f - q) * (1.4f - accuracy);
+            }
+            case OFF_THE_TOP -> {
+                // Nearly flat, at the fingertips: a long target puts the line through the top of the hands.
+                float speed = powerSpeed(a) * (0.82f + 0.18f * q);
+                topspin = 8f;
+                solver.solve(c.ballPosition, c.target.x, c.target.z, speed, topspin, 0f, out);
+                sigma = 2.0f * (1.6f - q) * (1.4f - accuracy);
+            }
+            case FEINT -> {
+                // Out of a full swing the push is flatter and a little quicker than a tip.
+                topspin = 4f;
+                lob(c, 0.3f, topspin, out);
+                sigma = 1.4f * (1.6f - q) * (1.4f - accuracy);
             }
             default -> {
                 float speed = powerSpeed(a) * (0.65f + 0.35f * q);

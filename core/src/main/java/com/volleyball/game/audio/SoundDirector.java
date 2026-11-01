@@ -126,7 +126,8 @@ public final class SoundDirector implements BallTouchListener, BallContactListen
                 rallyTime = 0f;
             }
             case ATTACK -> {
-                boolean soft = speed < 13f || AttackType.TIP.label.equals(touch.variant()) || AttackType.ROLL_SHOT.label.equals(touch.variant());
+                boolean soft = speed < 13f || AttackType.TIP.label.equals(touch.variant()) || AttackType.ROLL_SHOT.label.equals(touch.variant())
+                        || AttackType.FEINT.label.equals(touch.variant());
                 if (soft) {
                     playAt(SoundId.SPIKE_SOFT, at, 0.55f, variedPitch(0.06f));
                 } else {
@@ -137,7 +138,7 @@ public final class SoundDirector implements BallTouchListener, BallContactListen
             case BLOCK -> playAt(SoundId.BLOCK, at, 0.6f + 0.4f * clamp01(speed / 20f), variedPitch(0.05f));
             case DIVE, ONE_ARM -> playAt(SoundId.DIG, at, 0.7f, variedPitch(0.06f));
             case FOREARM_PASS -> playAt(SoundId.FOREARM_PASS, at, 0.45f + 0.4f * clamp01(speed / 14f), variedPitch(0.07f));
-            case OVERHEAD_PASS -> playAt(SoundId.OVERHEAD_SET, at, 0.45f, variedPitch(0.07f));
+            case OVERHEAD_PASS, ONE_HAND_SET -> playAt(SoundId.OVERHEAD_SET, at, 0.45f, variedPitch(0.07f));
         }
     }
 

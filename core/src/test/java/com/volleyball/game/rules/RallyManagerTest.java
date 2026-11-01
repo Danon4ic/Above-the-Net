@@ -426,6 +426,18 @@ class RallyManagerTest {
     }
 
     @Test
+    void aThrownOneHandSetIsAHeldBallToo() {
+        RallyManager r = rally(MatchFormat.official());
+        r.onBallTouch(touch(0, ContactType.SERVE, 3f, 0.9f));
+        r.onBallTouch(touch(10, ContactType.FOREARM_PASS));
+        time += 0.6;
+        VolleyballPlayer p = player(9);
+        r.onBallTouch(new BallTouch(9, p.side, ContactType.ONE_HAND_SET, ContactPurpose.SET, 0.1f, null, Float.NaN,
+                new Vector3(p.position.x, 2.6f, p.position.z), p.position.cpy(), false, 2, new Vector3(), "High set to zone 4", time));
+        assertFault(r, HOME, Fault.HELD_BALL);
+    }
+
+    @Test
     void theSetterIsCalledForAHeldBallOnlyWhenItIsReallyThrown() {
         assertEquals(PlayerRole.SETTER, player(6).role);
         // A sloppy fast set (a bic) by the setter: play on.

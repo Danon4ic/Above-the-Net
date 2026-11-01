@@ -58,6 +58,9 @@ public final class AutoPlayer {
     private double holdingSince = -1;
     private int seenToucher = Integer.MIN_VALUE;
     private double toucherSeenAt;
+    /** Extra reaction time (s) for the next ball: the defender was set for a different shot (a feint). */
+    private float pendingSurprise;
+    private float surprise;
     /** Sideways offset (m, along the net) of this player's block from the expected hitting spot. */
     private float blockOffset;
     /** Base defense: extra depth (m, + = deeper) and sideways shift (m, +z) of the reading position. */
@@ -83,6 +86,16 @@ public final class AutoPlayer {
     /** Forgets the last rally's ball, so the serve is a new ball to react to even from the same server. */
     public void newRally() {
         seenToucher = Integer.MIN_VALUE;
+        pendingSurprise = 0f;
+        surprise = 0f;
+    }
+
+    /**
+     * The ball just hit is not the one the player read (a feint out of a full swing): reacting to
+     * it takes {@code seconds} longer.
+     */
+    public void surprise(float seconds) {
+        pendingSurprise = seconds;
     }
 
     public void setBackRow(boolean backRow) {
@@ -170,6 +183,8 @@ public final class AutoPlayer {
         if (handling.lastToucherId() == seenToucher) return;
         seenToucher = handling.lastToucherId();
         toucherSeenAt = now;
+        surprise = pendingSurprise;
+        pendingSurprise = 0f;
         float error = skill.readError();
         readOffset.set((float) random.nextGaussian() * error * 0.7f, (float) random.nextGaussian() * error * 0.7f);
     }
@@ -360,7 +375,7 @@ public final class AutoPlayer {
             readHitter(p, intent);
             return;
         }
-        if (now - toucherSeenAt < skill.defenseReaction()) {
+        if (now - toucherSeenAt < skill.defenseReaction() + surprise) {
             intent.crouch = true;
             return;
         }

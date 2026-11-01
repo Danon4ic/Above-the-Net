@@ -87,7 +87,8 @@ public final class MatchMemory {
 
     /** An attack played soft: a tip (or anything slower than a real swing). */
     static boolean isTip(BallTouch attack) {
-        return AttackType.TIP.label.equals(attack.variant()) || attack.outgoingVelocity().len() < 12f;
+        return AttackType.TIP.label.equals(attack.variant()) || AttackType.FEINT.label.equals(attack.variant())
+                || attack.outgoingVelocity().len() < 12f;
     }
 
     /** A cross-court attack: the ball travels towards the other half of the court's width. */

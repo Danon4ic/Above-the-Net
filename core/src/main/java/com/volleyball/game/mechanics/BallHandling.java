@@ -465,6 +465,9 @@ public final class BallHandling {
         return approach > 0f && distance - approach * dt * 2f < BODY_GUARD;
     }
 
+    /** The techniques of a set, in order of preference: both hands, then one hand at full stretch. */
+    private static final List<ContactType> SETS = List.of(ContactType.OVERHEAD_PASS, ContactType.ONE_HAND_SET);
+
     private List<ContactType> candidates(VolleyballPlayer p, ActionKind kind) {
         if (p == server && servePhase == ServePhase.TOSSED) {
             return ball.velocity.y <= SERVE_MAX_RISING_SPEED ? List.of(ContactType.SERVE) : List.of();
@@ -479,7 +482,7 @@ public final class BallHandling {
         if (p.isAirborne()) {
             // A setter in the air on the second touch sets (a jump set) with the primary action;
             // the secondary action is the dump.
-            if (p.role == PlayerRole.SETTER && kind == ActionKind.PRIMARY && teamTouches(p.side) == 1) return List.of(ContactType.OVERHEAD_PASS);
+            if (p.role == PlayerRole.SETTER && kind == ActionKind.PRIMARY && teamTouches(p.side) == 1) return SETS;
             return List.of(ContactType.ATTACK);
         }
         // On the ground the technique is fixed when the request is made, so the contact never
@@ -488,7 +491,9 @@ public final class BallHandling {
         // The libero's primary action stays a forearm pass on the second touch (a bump set): an
         // overhead set by the libero in the front zone would forbid the attack above the net.
         boolean liberoBump = p.role == PlayerRole.LIBERO && kind == ActionKind.PRIMARY;
-        if (kind == ActionKind.SECONDARY || (teamTouches(p.side) == 1 && !liberoBump)) return List.of(ContactType.OVERHEAD_PASS);
+        // On the second touch a ball beyond both hands can still be set with one hand.
+        if (teamTouches(p.side) == 1 && !liberoBump) return SETS;
+        if (kind == ActionKind.SECONDARY) return List.of(ContactType.OVERHEAD_PASS);
         // A ball arriving above the forearms (a flat serve at shoulder height) is taken overhead.
         if (liberoBump) return List.of(ContactType.FOREARM_PASS, ContactType.ONE_ARM);
         return List.of(ContactType.FOREARM_PASS, ContactType.ONE_ARM, ContactType.OVERHEAD_PASS);
@@ -498,15 +503,20 @@ public final class BallHandling {
         return p == server ? serveType : null;
     }
 
-    /** The arm action of an attack type (see {@link SwingStyle}). */
+    /** The arm action of an attack type at the contact (see {@link SwingStyle}). */
     static SwingStyle swingFor(AttackType type) {
         return switch (type) {
-            case POWER -> SwingStyle.POWER;
+            case POWER, OFF_THE_TOP -> SwingStyle.POWER;
             case CUT -> SwingStyle.CUT;
             case ROLL_SHOT -> SwingStyle.ROLL;
-            case TIP -> SwingStyle.TIP;
+            case TIP, FEINT -> SwingStyle.TIP;
             case TOOL -> SwingStyle.TOOL;
         };
+    }
+
+    /** The arm action shown in the wind-up: a feint looks like a power spike until the contact. */
+    static SwingStyle windUpFor(AttackType type) {
+        return type == AttackType.FEINT ? SwingStyle.POWER : swingFor(type);
     }
 
     static SwingStyle swingFor(ServeType type) {
@@ -520,7 +530,7 @@ public final class BallHandling {
             PlayerState s = states[p.id];
             if (p == server && servePhase != ServePhase.NONE) p.setSwingStyle(swingFor(serveType));
             else if (p.isAirborne() && p.actionPose() != ActionPose.SWING) {
-                p.setSwingStyle(swingFor(s.kind == ActionKind.SECONDARY && s.armed ? AttackType.TIP : s.attackType));
+                p.setSwingStyle(windUpFor(s.kind == ActionKind.SECONDARY && s.armed ? AttackType.TIP : s.attackType));
             }
         }
     }
@@ -528,7 +538,7 @@ public final class BallHandling {
     private static ActionPose poseFor(ContactType type) {
         return switch (type) {
             case FOREARM_PASS, ONE_ARM, DIVE -> ActionPose.PLATFORM;
-            case OVERHEAD_PASS -> ActionPose.OVERHEAD;
+            case OVERHEAD_PASS, ONE_HAND_SET -> ActionPose.OVERHEAD;
             case ATTACK, SERVE -> ActionPose.SWING;
             case BLOCK -> ActionPose.BLOCK;
         };
@@ -565,6 +575,7 @@ public final class BallHandling {
             c.purpose = ContactPurpose.ATTACK;
             aimOrDefault(p, s, c.target);
             if (c.attackType == AttackType.TOOL) toolTarget(p, c.target);
+            else if (c.attackType == AttackType.OFF_THE_TOP) offTheTopTarget(p, c.target);
             attackMechanic.attack(c, random, solution);
             variant = c.attackType.label;
         } else if (previousTouches == 0) {
@@ -598,7 +609,7 @@ public final class BallHandling {
                 if (c.setType.fast()) c.apex += Math.min(1.2f, 0.4f * (fromNet - 1.5f));
             }
             variant = c.setType.label;
-            if (type == ContactType.OVERHEAD_PASS) setMechanic.set(c, random, solution);
+            if (type.fingerSet()) setMechanic.set(c, random, solution);
             else receiveMechanic.pass(c, random, solution); // bump set
         } else {
             c.purpose = ContactPurpose.SEND_OVER;
@@ -706,6 +717,39 @@ public final class BallHandling {
         lastToucherId = p.id;
         lastTouchTime = now;
     }
+
+    /**
+     * Off the top of the block: if opponents are up in the block in front of the hitter, drive the
+     * ball through the middle of their hands towards a spot well beyond the end line. The line is
+     * nearly flat, so it meets the fingertips and the ball flies on, long and out. With no block
+     * the aimed spot stays (and the drive is usually out).
+     */
+    void offTheTopTarget(VolleyballPlayer hitter, Vector3 out) {
+        float blockZ = 0f;
+        float blockX = 0f;
+        int blockers = 0;
+        for (VolleyballPlayer o : players) {
+            if (o.side == hitter.side || !o.isAirborne() || Math.abs(o.position.x) > BlockMechanic.MAX_NET_DISTANCE + 0.3f) continue;
+            if (Math.abs(o.position.z - ball.position.z) > 1.6f) continue;
+            blockZ += o.position.z;
+            blockX += o.position.x;
+            blockers++;
+        }
+        if (blockers == 0) return;
+        blockZ /= blockers;
+        blockX /= blockers;
+        float hx = ball.position.x;
+        float hz = ball.position.z;
+        float towardsBlock = blockX - hx;
+        if (Math.abs(towardsBlock) < 0.05f) return;
+        // Extend the line from the contact through the block to well beyond the opponent's end line.
+        float farX = hitter.side.opposite().sign() * (CourtDimensions.HALF_LENGTH + OFF_THE_TOP_BEYOND);
+        float t = (farX - hx) / towardsBlock;
+        out.set(farX, 0f, hz + (blockZ - hz) * t);
+    }
+
+    /** How far beyond the end line (m) a shot off the top of the block is aimed. */
+    static final float OFF_THE_TOP_BEYOND = 2.5f;
 
     private VolleyballPlayer player(int id) {
         for (VolleyballPlayer p : players) if (p.id == id) return p;

@@ -14,11 +14,18 @@ public enum ContactType {
     /** Low dig at full stretch at the end of a dive or sideways fall. */
     DIVE("Dive dig"),
     /** Emergency save with one arm / forearm, when the ball is just out of normal reach. */
-    ONE_ARM("One-arm save");
+    ONE_ARM("One-arm save"),
+    /** Set with the fingers of one hand, reaching high or wide (a tight pass, a jump at the net). */
+    ONE_HAND_SET("One-hand set");
 
     public final String label;
 
     ContactType(String label) {
         this.label = label;
+    }
+
+    /** A finger contact above the head (two hands or one): the held-ball and libero set rules apply. */
+    public boolean fingerSet() {
+        return this == OVERHEAD_PASS || this == ONE_HAND_SET;
     }
 }

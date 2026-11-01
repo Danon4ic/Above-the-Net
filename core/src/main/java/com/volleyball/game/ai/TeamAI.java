@@ -394,7 +394,17 @@ public final class TeamAI implements BallTouchListener {
         }
         receivingServe = touch.type() == ContactType.SERVE && touch.side() != side;
         if (receivingServe) receptionLanes.clear();
+        if (touch.side() != side && touch.type() == ContactType.ATTACK && AttackType.FEINT.label.equals(touch.variant())) {
+            // The defence was set for the full swing: the soft ball is picked up late (readers less so).
+            for (VolleyballPlayer p : team.squad()) {
+                float late = FEINT_SURPRISE * (difficulty.readsPlay ? 0.6f : 1f) * (p.has(PlayerTrait.READER) ? 0.5f : 1f);
+                brain(p).motor.surprise(late);
+            }
+        }
     }
+
+    /** Extra reaction time (s) of defenders against a feint out of a full swing. */
+    static final float FEINT_SURPRISE = 0.18f;
 
     /** After a rally: remember what worked (adaptive tactics) and start celebrating or regrouping. */
     public void rallyFinished(boolean won, double now) {
@@ -1184,6 +1194,7 @@ public final class TeamAI implements BallTouchListener {
                 shotWeights.put(AttackType.TIP, style.tip() * 0.4f);
                 shotWeights.put(AttackType.ROLL_SHOT, style.roll() * 0.5f);
                 shotWeights.put(AttackType.CUT, style.cut() * 0.3f);
+                if (blockers >= 1) shotWeights.put(AttackType.FEINT, style.tip() * 0.15f);
                 shotWeights.merge(advised, advised == AttackType.TIP ? 0.5f : 1.2f, Float::sum);
             }
             case PROFESSIONAL -> {
@@ -1192,6 +1203,10 @@ public final class TeamAI implements BallTouchListener {
                 shotWeights.put(AttackType.ROLL_SHOT, style.roll() * 0.4f);
                 shotWeights.put(AttackType.CUT, style.cut() * (blockers >= 1 ? 0.4f : 0.15f));
                 if (blockers >= 2 && Math.abs(a.position.z) > CourtDimensions.HALF_WIDTH - 1.2f) shotWeights.put(AttackType.TOOL, 0.2f);
+                // A block in front: fake the swing and push it behind the block, or wipe it off a tall
+                // block's fingertips (from the middle of the net, where a tool is no option).
+                if (blockers >= 1) shotWeights.put(AttackType.FEINT, style.tip() * 0.3f);
+                if (blockers >= 2 && Math.abs(a.position.z) <= CourtDimensions.HALF_WIDTH - 1.2f) shotWeights.put(AttackType.OFF_THE_TOP, 0.15f);
                 shotWeights.merge(advised, advised == AttackType.TIP ? 0.5f : 1.2f, Float::sum);
                 // Against defenders who read this hitter's tips, tip less.
                 if (memory.habit(a.id) != null && memory.habit(a.id).tipShare() > 0.35f) shotWeights.computeIfPresent(AttackType.TIP, (k, v) -> v * 0.4f);
@@ -1205,9 +1220,10 @@ public final class TeamAI implements BallTouchListener {
         float depth;
         float lateral;
         switch (type) {
-            case TIP -> {
+            case TIP, FEINT -> {
                 // Just behind the block, where nobody stands (professionals look; others guess).
-                depth = 1.6f + random.nextFloat() * 1.0f;
+                // The feint comes out of a full swing, so it goes a little deeper than a tip.
+                depth = (type == AttackType.FEINT ? 2.2f : 1.6f) + random.nextFloat() * 1.0f;
                 lateral = hitterLateral + (random.nextFloat() - 0.5f) * 2f;
                 if (difficulty.readsPlay) {
                     float bestGap = -1f;
@@ -1233,6 +1249,11 @@ public final class TeamAI implements BallTouchListener {
                 // The mechanic aims at the block's outside hand; this is only the fallback.
                 depth = maxDepth;
                 lateral = Math.signum(hitterLateral == 0f ? 1f : hitterLateral) * (CourtDimensions.HALF_WIDTH + 0.8f);
+            }
+            case OFF_THE_TOP -> {
+                // The mechanic aims through the block's fingertips; this is only the fallback.
+                depth = CourtDimensions.HALF_LENGTH + 2f;
+                lateral = blockers > 0 ? blockLateral : hitterLateral;
             }
             default -> {
                 if (cautious) {
@@ -1260,7 +1281,7 @@ public final class TeamAI implements BallTouchListener {
                 }
             }
         }
-        if (type != AttackType.TOOL) {
+        if (type != AttackType.TOOL && type != AttackType.OFF_THE_TOP) {
             lateral = Math.max(-maxLateral, Math.min(maxLateral, lateral));
             depth = Math.max(1.4f, Math.min(maxDepth, depth));
         }

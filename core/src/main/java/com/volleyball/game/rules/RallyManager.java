@@ -227,11 +227,11 @@ public final class RallyManager implements BallTouchListener, BallContactListene
         // A held / thrown ball: a very poor overhead contact. The setter, whose craft it is (fast sets such
         // as the bic included), is only called for a really thrown ball.
         float heldBelow = p.role == PlayerRole.SETTER ? SETTER_HELD_QUALITY : HELD_QUALITY;
-        if (official && touch.type() == ContactType.OVERHEAD_PASS && touch.teamTouchNumber() > 1 && touch.quality() < heldBelow) {
+        if (official && touch.type().fingerSet() && touch.teamTouchNumber() > 1 && touch.quality() < heldBelow) {
             end(p.side.opposite(), Fault.HELD_BALL, p.id, now);
             return;
         }
-        liberoFrontZoneSet = official && p.role == PlayerRole.LIBERO && touch.type() == ContactType.OVERHEAD_PASS
+        liberoFrontZoneSet = official && p.role == PlayerRole.LIBERO && touch.type().fingerSet()
                 && ViolationDetector.inFrontZone(p);
     }
 

@@ -35,6 +35,12 @@ public final class ContactZone {
                 right = 0f;
                 height = h + 0.10f;
             }
+            case ONE_HAND_SET -> {
+                // One arm stretched up and out: higher and wider than both hands above the forehead.
+                forward = 0.15f;
+                right = 0.28f;
+                height = p.standingReach() - 0.10f;
+            }
             case ATTACK -> {
                 forward = 0.35f;
                 right = 0.18f;
@@ -54,7 +60,7 @@ public final class ContactZone {
             default -> throw new IllegalStateException();
         }
         // A left-hander meets the ball on the left.
-        if (type == ContactType.ATTACK || type == ContactType.SERVE) right *= p.handSign();
+        if (type == ContactType.ATTACK || type == ContactType.SERVE || type == ContactType.ONE_HAND_SET) right *= p.handSign();
         float fx = p.facingX();
         float fz = p.facingZ();
         // Right-hand direction on the floor: facing × up = (-fz, 0, fx).
@@ -85,6 +91,7 @@ public final class ContactZone {
             case SERVE -> 0.45f;
             case DIVE -> 1.0f;
             case ONE_ARM -> 1.05f;
+            case ONE_HAND_SET -> 0.70f;
         };
     }
 
@@ -94,6 +101,7 @@ public final class ContactZone {
             case OVERHEAD_PASS, ATTACK, BLOCK, SERVE -> 0.40f;
             case DIVE -> 0.60f;
             case ONE_ARM -> 0.65f;
+            case ONE_HAND_SET -> 0.50f;
         };
     }
 
@@ -104,6 +112,7 @@ public final class ContactZone {
     public static float qualityCap(ContactType type) {
         return switch (type) {
             case DIVE -> 0.6f;
+            case ONE_HAND_SET -> 0.6f;
             case ONE_ARM -> 0.45f;
             default -> 1f;
         };
@@ -143,8 +152,8 @@ public final class ContactZone {
         float moving = Math.max(0f, Math.min(4f, p.groundSpeed() - 2f));
         float factor = 1f - 0.12f * moving;
         // In the air a pass is hard to control; a setter's jump set is a skill of its own.
-        boolean jumpSet = type == ContactType.OVERHEAD_PASS && p.role == com.volleyball.game.entities.PlayerRole.SETTER;
-        if (p.isAirborne() && (type == ContactType.FOREARM_PASS || type == ContactType.OVERHEAD_PASS)) factor *= jumpSet ? 0.92f : 0.6f;
+        boolean jumpSet = type.fingerSet() && p.role == com.volleyball.game.entities.PlayerRole.SETTER;
+        if (p.isAirborne() && (type == ContactType.FOREARM_PASS || type.fingerSet())) factor *= jumpSet ? 0.92f : 0.6f;
         if (p.recoveryTime() > 0f) factor *= 0.8f;
         // Tiredness costs a little control (at most 10 %).
         factor *= p.fatigueFactor(0.1f);
