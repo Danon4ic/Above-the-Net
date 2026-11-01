@@ -191,19 +191,31 @@ public final class MatchScreen extends ScreenAdapter {
         drills.start(setup.drill());
     }
 
+    /** The camera to start with: the one given for this run ({@code --camera}), else the saved one. */
+    private com.volleyball.game.render.CameraMode launchCamera() {
+        String name = game.launchOptions().camera();
+        if (name != null) {
+            for (com.volleyball.game.render.CameraMode m : com.volleyball.game.render.CameraMode.values()) {
+                if (m.name().equals(name)) return m;
+            }
+        }
+        return config.defaultCamera();
+    }
+
     @Override
     public void show() {
         scene = new ArenaScene(court, config.venue(), config.courtTheme(), config.lighting(), config.graphicsQuality(),
                 ArenaScene.Matchup.of(world.home(), world.away()));
         scene.setShadowMapSize(config.shadowMapSize);
         playerRenderer = new PlayerRenderer(List.of(world.home(), world.away()));
+        playerRenderer.setBall(world.ball());
         playerRenderer.addCoach(coaches.coaches().get(0), world.home());
         playerRenderer.addCoach(coaches.coaches().get(1), world.away());
         playerRenderer.addReferee(referee.figure());
         ballRenderer = new BallRenderer();
         cameraController = new CameraController(config.fieldOfView, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         cameraController.setSensitivity(config.mouseSensitivity);
-        cameraController.setMode(config.defaultCamera(), true);
+        cameraController.setMode(launchCamera(), true);
         input = new InputController(new GdxKeyState(config.keyBindings()));
         input2 = new InputController(new GdxKeyState(config.keyBindingsPlayer2()));
         sound = game.sound();

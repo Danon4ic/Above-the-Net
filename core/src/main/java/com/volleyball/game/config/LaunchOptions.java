@@ -20,11 +20,12 @@ import java.util.Locale;
  * @param seed        seed of a match or drill ({@code --seed=123}), to replay the same random choices, or null for a fresh one
  * @param capture     developer aid: directory to save screenshots to ({@code --capture=DIR}), or null
  * @param captureAt   when to save them, seconds after the start ({@code --capture-at=1.5,2,2.5}), or null
+ * @param camera      camera a match starts with for this run ({@code --camera=sideline}, a {@code CameraMode} name), or null
  */
 public record LaunchOptions(String drill, boolean autoplay, boolean poseGallery, String difficulty, String players, String role,
                             int poseFocus, String venue, boolean playbook, String home, String away, String language, Long seed,
-                            String capture, String captureAt) {
-    public static final LaunchOptions DEFAULT = new LaunchOptions(null, false, false, null, null, null, -1, null, false, null, null, null, null, null, null);
+                            String capture, String captureAt, String camera) {
+    public static final LaunchOptions DEFAULT = new LaunchOptions(null, false, false, null, null, null, -1, null, false, null, null, null, null, null, null, null);
 
     public static LaunchOptions parse(String[] args) {
         String drill = null;
@@ -42,6 +43,7 @@ public record LaunchOptions(String drill, boolean autoplay, boolean poseGallery,
         Long seed = null;
         String capture = null;
         String captureAt = null;
+        String camera = null;
         if (args != null) {
             for (String arg : args) {
                 if (arg == null) continue;
@@ -69,6 +71,7 @@ public record LaunchOptions(String drill, boolean autoplay, boolean poseGallery,
                     }
                 }
                 else if (a.startsWith("--capture-at=")) captureAt = a.substring("--capture-at=".length());
+                else if (a.startsWith("--camera=")) camera = a.substring("--camera=".length()).toUpperCase(Locale.ROOT);
                 else if (a.startsWith("--venue=")) venue = a.substring("--venue=".length()).toUpperCase(Locale.ROOT);
                 else if (a.startsWith("--pose-focus=")) {
                     poseGallery = true;
@@ -80,6 +83,6 @@ public record LaunchOptions(String drill, boolean autoplay, boolean poseGallery,
                 }
             }
         }
-        return new LaunchOptions(drill, autoplay, poseGallery, difficulty, players, role, poseFocus, venue, playbook, home, away, language, seed, capture, captureAt);
+        return new LaunchOptions(drill, autoplay, poseGallery, difficulty, players, role, poseFocus, venue, playbook, home, away, language, seed, capture, captureAt, camera);
     }
 }

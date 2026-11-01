@@ -17,7 +17,12 @@ import com.volleyball.game.entities.PlayerRole;
 import com.volleyball.game.entities.SwingStyle;
 import com.volleyball.game.entities.Team;
 import com.volleyball.game.entities.VolleyballPlayer;
+import com.volleyball.game.mechanics.ContactType;
+import com.volleyball.game.mechanics.ContactZone;
+import com.volleyball.game.mechanics.ServeType;
 import com.volleyball.game.physics.PlayerLocomotion;
+import com.volleyball.game.entities.Ball;
+import com.volleyball.game.render.anim.ArmIK;
 import com.volleyball.game.render.anim.PlayerAnimState;
 import com.volleyball.game.render.anim.Spring;
 
@@ -108,6 +113,13 @@ public final class PlayerRenderer implements Disposable {
         float landedAt = -10f;
         float landingImpact;
         PlayerAnimState state = PlayerAnimState.IDLE;
+        /** Where the hands were drawn last frame (world), for timing a strike against the ball. */
+        final Vector3[] hand = {new Vector3(), new Vector3()};
+        boolean handsKnown;
+        /** The ball action was armed (waiting for the ball) last frame: the next unarmed frame is the contact. */
+        boolean wasHeld;
+        /** The ball as drawn last frame (with the hands of that frame: the last picture before the contact). */
+        final Vector3 lastBall = new Vector3();
 
         /** Moves the drawn pose towards the target, each value on its spring. */
         void blend(ArmPose l, ArmPose r, float targetLean, float targetTwist, float targetRoll, float targetDrop,
@@ -188,6 +200,17 @@ public final class PlayerRenderer implements Disposable {
 
     private final PlayerModelFactory factory = new PlayerModelFactory();
 
+    /** The match ball (null: none): hands reach for it and strikes are timed against it. */
+    private Ball ball;
+    /** The ball where it is drawn this frame (interpolated like the players). */
+    private final Vector3 drawnBall = new Vector3();
+    private boolean ballLive;
+
+    /** The ball the players play: their hands meet it at the contact and their swings are timed against it. */
+    public void setBall(Ball ball) {
+        this.ball = ball;
+    }
+
     public PlayerRenderer(List<Team> teams) {
         for (Team team : teams) {
             for (VolleyballPlayer player : team.squad()) {
@@ -226,6 +249,8 @@ public final class PlayerRenderer implements Disposable {
     public void render(ModelBatch batch, Environment environment, List<VolleyballPlayer> players, float alpha,
                        VolleyballPlayer controlled, VolleyballPlayer second, Vector3 lookAt) {
         if (!appending) drawn.clear();
+        ballLive = ball != null && ball.isActive();
+        if (ballLive) drawnBall.set(ball.previousPosition).lerp(ball.position, alpha);
         for (VolleyballPlayer player : players) {
             Figure figure = figures.get(player.id);
             if (figure == null) continue;
@@ -235,11 +260,11 @@ public final class PlayerRenderer implements Disposable {
             float yaw = lerpAngle(player.previousFacingYaw, player.facingYaw, alpha);
             // Seen from inside (first person): everything but the head, which the eyes are in.
             figure.head.scale.set(ownBody ? 0.0001f : 1f, ownBody ? 0.0001f : 1f, ownBody ? 0.0001f : 1f);
-            pose(figure, player, yaw, lookAt);
             float scale = player.height / PlayerModelFactory.MODEL_HEIGHT;
             figure.instance.transform.setToTranslation(position).rotateRad(Vector3.Y, yaw);
             applyTilt(figure, player, yaw);
             figure.instance.transform.scale(scale, scale, scale);
+            pose(figure, player, yaw, lookAt);
             batch.render(figure.instance, environment);
             drawn.add(figure.instance);
             if (!blobShadows) {
@@ -508,13 +533,27 @@ public final class PlayerRenderer implements Disposable {
                 split = 0.12f;
             }
             case SWING -> {
-                // Attack or serve: the arm action depends on the shot (see SwingStyle).
+                // Attack or serve: the arm action depends on the shot (see SwingStyle). Armed, the arm
+                // is cocked and whips through as the ball arrives, so the hand meets the ball at the
+                // contact; after it the swing follows through.
+                SwingStyle style = player.swingStyle();
                 if (held) {
-                    windUp(player.swingStyle());
-                    twist = player.swingStyle() == SwingStyle.TIP ? -0.2f : -0.55f;
-                    lean = player.swingStyle() == SwingStyle.TIP ? 0.05f : 0.2f;
+                    windUp(style);
+                    twist = style == SwingStyle.TIP ? -0.2f : -0.55f;
+                    lean = style == SwingStyle.TIP ? 0.05f : 0.2f;
+                    float whip = whipProgress(f, player);
+                    if (whip > 0f) {
+                        float fromTwist = twist;
+                        float fromLean = lean;
+                        holdArms();
+                        swing(style, contactAt(style));
+                        blendFromHeld(whip);
+                        twist = MathUtils.lerp(fromTwist, trunkTwist, whip);
+                        lean = MathUtils.lerp(fromLean, trunkLean, whip);
+                    }
                 } else {
-                    swing(player.swingStyle(), progress);
+                    float c = contactAt(style);
+                    swing(style, c + (1f - c) * progress);
                     twist = trunkTwist;
                     lean = trunkLean;
                 }
@@ -537,6 +576,17 @@ public final class PlayerRenderer implements Disposable {
                 twist = -0.45f * t;
                 lean = 0.15f * t;
                 split = 0.22f;
+                // The ball coming down to the hand: the swing starts so that the hand meets it.
+                float whip = whipProgress(f, player);
+                if (whip > 0f) {
+                    float fromTwist = twist;
+                    float fromLean = lean;
+                    holdArms();
+                    swing(player.swingStyle(), contactAt(player.swingStyle()));
+                    blendFromHeld(whip);
+                    twist = MathUtils.lerp(fromTwist, trunkTwist, whip);
+                    lean = MathUtils.lerp(fromLean, trunkLean, whip);
+                }
             }
             case HOLD_BALL -> {
                 if (player.swingStyle() == SwingStyle.UNDERHAND_SERVE) {
@@ -697,6 +747,279 @@ public final class PlayerRenderer implements Disposable {
                 .mul(tmpQuat.setFromAxisRad(0f, 0f, 1f, nod))
                 .mul(tmpQuat.setFromAxisRad(1f, 0f, 0f, -f.roll * 0.7f));
         f.instance.calculateTransforms();
+        reachForBall(f, player, action, held);
+    }
+
+    // ------------------------------------------------------------------ contact with the ball
+
+    /** The arm: shoulder to elbow, and the palm in the forearm's frame (see {@link #hands}). */
+    private final ArmIK armIK = new ArmIK(PlayerModelFactory.UPPER_ARM_LENGTH, 0.03f, -0.31f);
+    private final ArmPose heldLeft = new ArmPose();
+    private final ArmPose heldRight = new ArmPose();
+    private final com.badlogic.gdx.math.Matrix4 torsoWorld = new com.badlogic.gdx.math.Matrix4();
+    private final Vector3[] targets = {new Vector3(), new Vector3()};
+    private final Vector3 shoulderPoint = new Vector3();
+    private final Vector3 reachAxis = new Vector3();
+    private final Vector3 relative = new Vector3();
+    private final Vector3 midHands = new Vector3();
+
+    /**
+     * Developer switches ({@code -Danim.contactLog=true}, {@code -Danim.noReach=true}): measure how
+     * far the drawn hands are from the drawn ball at each contact, and turn the reaching and the
+     * timed swing off (to compare against).
+     */
+    private static final boolean CONTACT_LOG = Boolean.getBoolean("anim.contactLog");
+    private static final boolean NO_REACH = Boolean.getBoolean("anim.noReach");
+    /** Contact gaps (m) by action: count, sum, max, and every value for the median. */
+    private final Map<ActionPose, com.badlogic.gdx.utils.FloatArray> contactGaps = new java.util.EnumMap<>(ActionPose.class);
+
+    /**
+     * The first frame after an armed action became the contact: how far the hands were from the
+     * ball in the last picture before it (the platform and the set: the middle of the hands; a
+     * strike: the hitting hand).
+     */
+    private void measureContact(Figure f, VolleyballPlayer player, ActionPose action, boolean held) {
+        boolean contact = f.wasHeld && !held && ballLive && f.handsKnown;
+        f.wasHeld = held;
+        if (!CONTACT_LOG || !contact) return;
+        if (action != ActionPose.PLATFORM && action != ActionPose.OVERHEAD && action != ActionPose.SWING) return;
+        float gap = action == ActionPose.SWING
+                ? f.hand[player.isLeftHanded() ? 0 : 1].dst(f.lastBall)
+                : midHands.set(f.hand[0]).add(f.hand[1]).scl(0.5f).dst(f.lastBall);
+        contactGaps.computeIfAbsent(action, a -> new com.badlogic.gdx.utils.FloatArray()).add(gap);
+    }
+
+    private void logContactGaps() {
+        for (Map.Entry<ActionPose, com.badlogic.gdx.utils.FloatArray> e : contactGaps.entrySet()) {
+            float[] v = e.getValue().toArray();
+            java.util.Arrays.sort(v);
+            float sum = 0f;
+            for (float x : v) sum += x;
+            Gdx.app.log("Contact", String.format(java.util.Locale.ROOT, "%s: %d contacts, gap mean %.2f m, median %.2f m, max %.2f m%s",
+                    e.getKey(), v.length, sum / v.length, v[v.length / 2], v[v.length - 1], NO_REACH ? " (no reach)" : ""));
+        }
+    }
+
+    /** A strike's swing takes this long from the cocked arm to the contact, s. */
+    static final float WHIP_TIME = 0.13f;
+    /** Hands reach for the ball over this time before the contact, s. */
+    static final float REACH_TIME = 0.22f;
+    /** A ball passing farther than this (m) from the contact point is not reached for (fading over 0.5 m more). */
+    static final float REACH_RANGE = 0.75f;
+
+    // Closest approach of the ball to the contact point (written by approach).
+    private float closestTime;
+    private float closestDistance;
+    private final Vector3 contactPoint = new Vector3();
+
+    /**
+     * When and how close the ball passes the point where the simulation makes this contact
+     * ({@link ContactZone#idealPoint}): the simulation plays the ball as it passes nearest to that
+     * point, so the time to the closest approach is the time to the contact. Relative straight-line
+     * motion; false if there is no ball or no contact point for the action.
+     */
+    private boolean approach(VolleyballPlayer player, ActionPose action) {
+        if (!ballLive) return false;
+        ContactType type;
+        ServeType serve = null;
+        switch (action) {
+            case PLATFORM -> type = ContactType.FOREARM_PASS;
+            case OVERHEAD -> type = ContactType.OVERHEAD_PASS;
+            case TOSS -> {
+                type = ContactType.SERVE;
+                serve = player.swingStyle() == SwingStyle.UNDERHAND_SERVE ? ServeType.UNDERHAND : ServeType.FLOAT;
+            }
+            case SWING -> {
+                if (player.isAirborne()) {
+                    type = ContactType.ATTACK;
+                } else {
+                    type = ContactType.SERVE;
+                    serve = player.swingStyle() == SwingStyle.UNDERHAND_SERVE ? ServeType.UNDERHAND : ServeType.FLOAT;
+                }
+            }
+            default -> {
+                return false;
+            }
+        }
+        ContactZone.idealPoint(player, type, serve, contactPoint);
+        float rx = drawnBall.x - contactPoint.x;
+        float ry = drawnBall.y - contactPoint.y;
+        float rz = drawnBall.z - contactPoint.z;
+        float vx = ball.velocity.x - player.velocity.x;
+        float vy = ball.velocity.y - player.velocity.y;
+        float vz = ball.velocity.z - player.velocity.z;
+        float v2 = vx * vx + vy * vy + vz * vz;
+        closestTime = v2 < 1e-6f ? 0f : Math.max(0f, -(rx * vx + ry * vy + rz * vz) / v2);
+        float cx = rx + vx * closestTime;
+        float cy = ry + vy * closestTime;
+        float cz = rz + vz * closestTime;
+        closestDistance = (float) Math.sqrt(cx * cx + cy * cy + cz * cz);
+        return true;
+    }
+
+    /**
+     * How much of the way from the action's own pose to the ball the hands should be (0..1): it
+     * grows over the last {@code lead} seconds before the ball passes the contact point, and only
+     * for a ball that really comes within reach.
+     */
+    private float closingWeight(VolleyballPlayer player, ActionPose action, float lead) {
+        if (NO_REACH || !approach(player, action)) return 0f;
+        float near = 1f - smooth((closestDistance - REACH_RANGE) / 0.5f);
+        return (1f - smooth(closestTime / lead)) * near;
+    }
+
+    /** How far through the swing towards the contact the hitting arm should be (0 cocked, 1 at the ball). */
+    private float whipProgress(Figure f, VolleyballPlayer player) {
+        return closingWeight(player, player.isAirborne() ? ActionPose.SWING : player.actionPose(), WHIP_TIME);
+    }
+
+    /** Arm length, shoulder to palm. */
+    private static final float ARM_REACH = PlayerModelFactory.UPPER_ARM_LENGTH + 0.31f;
+    /** The trunk leans at most this far (rad) to bring a hand to a ball out of the arm's reach. */
+    static final float MAX_TRUNK_REACH = 0.4f;
+    /** How far (m) a shoulder rises with the arm reaching overhead. */
+    static final float SHOULDER_LIFT = 0.06f;
+
+    /**
+     * A ball beyond the arm's reach: the whole body goes for it - the trunk tips from the waist
+     * towards it (forwards, sideways or arching back) just as far as needed to bring the shoulder
+     * (the hitting one, or the middle of both for a platform or a set) within an arm's length,
+     * up to {@link #MAX_TRUNK_REACH}. Rotating the shoulder by the angle between where it is and
+     * where it must be, about the axis between the two directions (law of cosines).
+     */
+    private void leanTowards(Figure f, boolean both, int hitting, float w) {
+        if (both) {
+            relative.set(targets[0]).add(targets[1]).scl(0.5f).mul(torsoWorld);
+            shoulderPoint.set(0f, PlayerModelFactory.SHOULDER_HEIGHT, 0f);
+        } else {
+            relative.set(targets[hitting]).mul(torsoWorld);
+            shoulderPoint.set(0f, PlayerModelFactory.SHOULDER_HEIGHT + SHOULDER_LIFT,
+                    (hitting == 0 ? -1f : 1f) * PlayerModelFactory.SHOULDER_WIDTH);
+        }
+        float reach = ARM_REACH * 0.97f;
+        if (relative.dst(shoulderPoint) <= reach) return;
+        float t = relative.len();
+        float sh = shoulderPoint.len();
+        // Angle between the shoulder and the target as seen from the waist, and the angle the
+        // shoulder may stay away from the target and still be within reach of it.
+        float between = (float) Math.acos(MathUtils.clamp(relative.dot(shoulderPoint) / Math.max(1e-4f, t * sh), -1f, 1f));
+        float allowed = (float) Math.acos(MathUtils.clamp((t * t + sh * sh - reach * reach) / (2f * t * sh), -1f, 1f));
+        float angle = Math.min(MAX_TRUNK_REACH, Math.max(0f, between - allowed)) * w;
+        if (angle < 1e-3f) return;
+        reachAxis.set(shoulderPoint).crs(relative);
+        if (reachAxis.len2() < 1e-8f) return;
+        reachAxis.nor();
+        f.torso.rotation.mul(tmpQuat.setFromAxisRad(reachAxis, angle));
+        f.instance.calculateTransforms();
+    }
+
+    /** Where in the swing's progress (0..1) the hand meets the ball, by shot. */
+    private static float contactAt(SwingStyle style) {
+        return switch (style) {
+            case TIP -> 0.4f;
+            case ROLL -> 0.45f;
+            case FLOAT_SERVE -> 0.25f;
+            case UNDERHAND_SERVE -> 0.5f;
+            default -> 0.3f;
+        };
+    }
+
+    /** Keeps the current arm targets (to blend from them to another pose). */
+    private void holdArms() {
+        heldLeft.set(leftArm.raise, leftArm.spread, leftArm.elbow);
+        heldRight.set(rightArm.raise, rightArm.spread, rightArm.elbow);
+    }
+
+    /** Arm targets: from the held pose a fraction {@code w} of the way to the current one. */
+    private void blendFromHeld(float w) {
+        leftArm.set(MathUtils.lerp(heldLeft.raise, leftArm.raise, w), MathUtils.lerp(heldLeft.spread, leftArm.spread, w),
+                MathUtils.lerp(heldLeft.elbow, leftArm.elbow, w));
+        rightArm.set(MathUtils.lerp(heldRight.raise, rightArm.raise, w), MathUtils.lerp(heldRight.spread, rightArm.spread, w),
+                MathUtils.lerp(heldRight.elbow, rightArm.elbow, w));
+    }
+
+    /**
+     * The hands meet the ball: while a ball action is armed and the ball comes close, the arms
+     * are bent (two-bone IK) so the platform, the setting hands or the hitting hand are where the
+     * ball is drawn at the contact - the ball never changes direction away from the hands. The
+     * reach grows with the ball's approach, so it blends in without a jump, and the springs take
+     * the reached pose over, so the action continues smoothly from it after the contact.
+     */
+    private void reachForBall(Figure f, VolleyballPlayer player, ActionPose action, boolean held) {
+        measureContact(f, player, action, held);
+        float w = 0f;
+        boolean both = false;
+        int hitting = player.isLeftHanded() ? 0 : 1;
+        float fx = player.facingX();
+        float fz = player.facingZ();
+        switch (action) {
+            case PLATFORM, OVERHEAD -> {
+                if (held) {
+                    w = closingWeight(player, action, REACH_TIME);
+                    both = true;
+                }
+            }
+            case SWING, TOSS -> {
+                if (held || action == ActionPose.TOSS) w = whipProgress(f, player);
+            }
+            default -> {
+            }
+        }
+        // Shoulders back in place (a reach may have lifted them last frame).
+        boolean dirty = false;
+        for (int i = 0; i < 2; i++) {
+            if (f.upperArm[i].translation.y != PlayerModelFactory.SHOULDER_HEIGHT) {
+                f.upperArm[i].translation.y = PlayerModelFactory.SHOULDER_HEIGHT;
+                dirty = true;
+            }
+        }
+        if (w > 0.01f) {
+            // The targets, world space: the platform, both setting hands, or the hitting hand.
+            for (int i = 0; i < 2; i++) {
+                float side = i == 0 ? -1f : 1f;
+                // Right side of the body on the floor: facing × up = (-fz, 0, fx).
+                float rx = -fz * side;
+                float rz = fx * side;
+                switch (action) {
+                    // The ball meets the joined forearms; the hands are a little beyond it, below its centre.
+                    case PLATFORM -> targets[i].set(drawnBall).add(fx * 0.12f + rx * 0.04f, -0.12f, fz * 0.12f + rz * 0.04f);
+                    // Both hands round the ball, the fingers on its back half.
+                    case OVERHEAD -> targets[i].set(drawnBall).add(-fx * 0.05f + rx * 0.09f, -0.03f, -fz * 0.05f + rz * 0.09f);
+                    // The palm on the back and top of the ball.
+                    default -> targets[i].set(drawnBall).add(-fx * 0.07f, 0.04f, -fz * 0.07f);
+                }
+            }
+            torsoWorld.set(f.instance.transform).mul(f.torso.globalTransform).inv();
+            leanTowards(f, both, hitting, w);
+            torsoWorld.set(f.instance.transform).mul(f.torso.globalTransform).inv();
+            for (int i = 0; i < 2; i++) {
+                if (!both && i != hitting) continue;
+                float side = i == 0 ? -1f : 1f;
+                relative.set(targets[i]).mul(torsoWorld);
+                // An arm reaching above the head lifts its shoulder a little (the shoulder blade turns up).
+                float lift = SHOULDER_LIFT * w * smooth((relative.y - PlayerModelFactory.SHOULDER_HEIGHT - 0.1f) / 0.3f);
+                f.upperArm[i].translation.y = PlayerModelFactory.SHOULDER_HEIGHT + lift;
+                relative.sub(0f, PlayerModelFactory.SHOULDER_HEIGHT + lift, side * PlayerModelFactory.SHOULDER_WIDTH);
+                // The solver's outward direction is -z (the left arm's); the right arm is mirrored.
+                if (!armIK.solve(relative.x, relative.y, i == 0 ? relative.z : -relative.z)) continue;
+                ArmPose arm = i == 0 ? f.left : f.right;
+                arm.set(MathUtils.lerp(arm.raise, armIK.raise, w), MathUtils.lerp(arm.spread, armIK.spread, w),
+                        MathUtils.lerp(arm.elbow, armIK.elbow, w));
+                // The springs carry on from the reached pose (no snap back after the contact).
+                f.springs[i * 3].snap(arm.raise);
+                f.springs[i * 3 + 1].snap(arm.spread);
+                f.springs[i * 3 + 2].snap(arm.elbow);
+                applyArm(f, i, arm);
+            }
+            dirty = true;
+        }
+        if (dirty) f.instance.calculateTransforms();
+        for (int i = 0; i < 2; i++) {
+            handMatrix.set(f.instance.transform).mul(f.forearm[i].globalTransform);
+            f.hand[i].set(0.03f, -0.31f, 0f).mul(handMatrix);
+        }
+        f.handsKnown = true;
+        if (ballLive) f.lastBall.set(drawnBall);
     }
 
     /** Time (s) in which a pose closes half the way to its target: strikes, in the air, everything else. */
@@ -1279,6 +1602,7 @@ public final class PlayerRenderer implements Disposable {
 
     @Override
     public void dispose() {
+        if (CONTACT_LOG && Gdx.app != null) logContactGaps();
         for (Model model : models) model.dispose();
         shadowModel.dispose();
         markerModel.dispose();

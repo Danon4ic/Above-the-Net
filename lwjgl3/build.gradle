@@ -23,6 +23,8 @@ application {
 tasks.named('run', JavaExec) {
     workingDir = rootProject.projectDir
     jvmArgs launcherJvmArgs
+    // Developer switches for the animation work (-Danim.contactLog=true etc.) reach the game.
+    systemProperties System.getProperties().findAll { it.key.toString().startsWith('anim.') }
 }
 
 // Single runnable jar: java -jar lwjgl3/build/libs/VolleyballSimulator3D-<version>.jar

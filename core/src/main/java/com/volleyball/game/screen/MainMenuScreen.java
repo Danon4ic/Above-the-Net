@@ -174,6 +174,7 @@ public final class MainMenuScreen extends ScreenAdapter {
                 ArenaScene.Matchup.of(world.home(), world.away()));
         scene.setShadowMapSize(config.shadowMapSize);
         playerRenderer = new PlayerRenderer(List.of(world.home(), world.away()));
+        playerRenderer.setBall(world.ball());
         playerRenderer.addCoach(coaches.coaches().get(0), world.home());
         playerRenderer.addCoach(coaches.coaches().get(1), world.away());
         playerRenderer.addReferee(referee.figure());

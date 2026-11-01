@@ -11,7 +11,8 @@ import java.util.Locale;
  * Developer aid ({@code --capture=DIR --capture-at=1.5,2,2.5}): saves the screen as PNG files at
  * the given times after the start (seconds of real time) and then closes the game, so poses and
  * animations can be checked frame by frame without sitting at the screen. Frames are scaled down
- * to at most {@link #MAX_WIDTH} pixels wide.
+ * to at most {@link #MAX_WIDTH} pixels wide and written on a background thread, so a dense series
+ * does not stall the game between its frames.
  */
 public final class FrameCapture {
     static final int MAX_WIDTH = 1280;
@@ -20,6 +21,11 @@ public final class FrameCapture {
     private final float[] times;
     private int next;
     private float clock;
+    private final java.util.concurrent.ExecutorService writer = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "frame-capture");
+        t.setDaemon(true);
+        return t;
+    });
 
     public FrameCapture(String directory, float[] times) {
         this.directory = Gdx.files.absolute(directory);
@@ -48,25 +54,37 @@ public final class FrameCapture {
         if (clock < times[next]) return;
         save(String.format(Locale.ROOT, "frame_%02d_%05.2fs.png", next, clock));
         next++;
-        if (next >= times.length) Gdx.app.exit();
+        if (next >= times.length) {
+            writer.shutdown();
+            try {
+                writer.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            Gdx.app.exit();
+        }
     }
 
     private void save(String name) {
         int w = Gdx.graphics.getBackBufferWidth();
         int h = Gdx.graphics.getBackBufferHeight();
+        // Reading the pixels is quick; scaling and encoding happen on the writer thread.
         Pixmap frame = Pixmap.createFromFrameBuffer(0, 0, w, h);
-        Pixmap out = frame;
-        if (w > MAX_WIDTH) {
-            int sw = MAX_WIDTH;
-            int sh = Math.round(h * (MAX_WIDTH / (float) w));
-            out = new Pixmap(sw, sh, Pixmap.Format.RGBA8888);
-            out.setFilter(Pixmap.Filter.BiLinear);
-            out.drawPixmap(frame, 0, 0, w, h, 0, 0, sw, sh);
-            frame.dispose();
-        }
-        // The frame buffer's first row is the bottom of the screen.
-        PixmapIO.writePNG(directory.child(name), out, java.util.zip.Deflater.DEFAULT_COMPRESSION, true);
-        out.dispose();
-        Gdx.app.log("Capture", "saved " + name);
+        FileHandle file = directory.child(name);
+        writer.execute(() -> {
+            Pixmap out = frame;
+            if (w > MAX_WIDTH) {
+                int sw = MAX_WIDTH;
+                int sh = Math.round(h * (MAX_WIDTH / (float) w));
+                out = new Pixmap(sw, sh, Pixmap.Format.RGBA8888);
+                out.setFilter(Pixmap.Filter.BiLinear);
+                out.drawPixmap(frame, 0, 0, w, h, 0, 0, sw, sh);
+                frame.dispose();
+            }
+            // The frame buffer's first row is the bottom of the screen.
+            PixmapIO.writePNG(file, out, java.util.zip.Deflater.BEST_SPEED, true);
+            out.dispose();
+        });
+        Gdx.app.log("Capture", "frame " + name);
     }
 }
