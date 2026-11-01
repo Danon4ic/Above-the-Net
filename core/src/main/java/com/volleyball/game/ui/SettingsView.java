@@ -221,7 +221,7 @@ public final class SettingsView {
         list.add(volume("Music", "The music of the menu.", c -> c.musicVolume, (c, v) -> c.musicVolume = v));
         // Controls
         list.add(new Slider(Category.CONTROLS, "Mouse sensitivity", c -> "How fast the mouse turns your player and the cameras.",
-                0.2f, 5f, 0.1f, v -> String.format("%.1f", v), c -> c.mouseSensitivity, (c, v) -> c.mouseSensitivity = v));
+                0.2f, 5f, 0.1f, v -> String.format(java.util.Locale.ROOT, "%.1f", v), c -> c.mouseSensitivity, (c, v) -> c.mouseSensitivity = v));
         list.add(new Toggle(Category.CONTROLS, "Invert mouse Y", c -> "Dragging the camera up looks down.", false,
                 c -> c.invertMouseY, (c, v) -> c.invertMouseY = v));
         list.add(new Toggle(Category.CONTROLS, "Face the mouse", c -> "Your player faces the mouse cursor and moves sideways; off: "
@@ -754,7 +754,7 @@ public final class SettingsView {
         float bx = panelX + pad;
         boolean dirty = isDirty();
         for (int i = 0; i < BUTTONS.length; i++) {
-            float bw = Math.max(120f * s, UiKit.width(buttonFont, Lang.t(BUTTONS[i]).toUpperCase()) + 40f * s);
+            float bw = Math.max(120f * s, UiKit.width(buttonFont, Lang.t(BUTTONS[i]).toUpperCase(java.util.Locale.ROOT)) + 40f * s);
             if (i == BACK) bx = panelX + panelW - pad - bw;
             buttonRects[i] = new float[]{bx, by, bw, buttonH};
             bx += bw + 12f * s;

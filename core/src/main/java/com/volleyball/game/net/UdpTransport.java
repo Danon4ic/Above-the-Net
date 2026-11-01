@@ -8,9 +8,10 @@ import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
 
 /**
- * UDP transport (non-blocking). The host binds a port and answers whoever wrote to it last;
- * the client sends to the host's address. Prepared for the network stage: no encryption,
- * NAT traversal or reliability layer yet.
+ * UDP transport (non-blocking). The host binds a port and talks to the first address that writes
+ * to it until {@link #releasePeer} (datagrams from anyone else are dropped, so a stray packet
+ * cannot take the session over); the client sends to the host's address. Prepared for the network
+ * stage: no encryption, NAT traversal or reliability layer yet.
  */
 public final class UdpTransport implements Transport {
     public static final int DEFAULT_PORT = 27960;
@@ -19,10 +20,12 @@ public final class UdpTransport implements Transport {
     private final DatagramChannel channel;
     private final ByteBuffer receiveBuffer = ByteBuffer.allocate(MAX_DATAGRAM);
     private SocketAddress peer;
+    private final boolean hosting;
 
     private UdpTransport(DatagramChannel channel, SocketAddress peer) {
         this.channel = channel;
         this.peer = peer;
+        this.hosting = peer == null;
     }
 
     /** Host side: listens on {@code port} (0 = any free port). */
@@ -72,17 +75,26 @@ public final class UdpTransport implements Transport {
     @Override
     public byte[] poll() {
         try {
-            receiveBuffer.clear();
-            SocketAddress from = channel.receive(receiveBuffer);
-            if (from == null) return null;
-            peer = from;
-            receiveBuffer.flip();
-            byte[] message = new byte[receiveBuffer.remaining()];
-            receiveBuffer.get(message);
-            return message;
+            while (true) {
+                receiveBuffer.clear();
+                SocketAddress from = channel.receive(receiveBuffer);
+                if (from == null) return null;
+                if (peer == null && hosting) peer = from;
+                // Only the peer is listened to (the host's client, or the host for a client).
+                if (!from.equals(peer)) continue;
+                receiveBuffer.flip();
+                byte[] message = new byte[receiveBuffer.remaining()];
+                receiveBuffer.get(message);
+                return message;
+            }
         } catch (IOException e) {
             return null;
         }
+    }
+
+    @Override
+    public void releasePeer() {
+        if (hosting) peer = null;
     }
 
     @Override

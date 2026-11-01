@@ -32,4 +32,31 @@ class LangTest {
         Lang.set(Lang.Language.EN);
         assertEquals("Quick match", Lang.t("Quick match"));
     }
+
+    @Test
+    void theVideoReplayAndARallyReplayedAreDifferentWords() {
+        Lang.set(Lang.Language.RU);
+        assertEquals("Повтор", Lang.t("Replay"));
+        assertEquals("ПОВТОР", Lang.t("REPLAY"));
+        assertEquals("Переигровка", Lang.t(com.volleyball.game.rules.Fault.REPLAY.label));
+        assertEquals("ОТВЛЕКАЮЩИЙ РАЗБЕГ", Lang.t("DECOY"), "capitals come from the label, not a phrase fragment");
+    }
+
+    @Test
+    void everyEnglishTextHasOneTranslation() throws java.io.IOException {
+        java.util.Map<String, String> seen = new java.util.HashMap<>();
+        java.util.List<String> conflicts = new java.util.ArrayList<>();
+        try (var in = LangTest.class.getResourceAsStream("/i18n/ru.txt")) {
+            assertNotNull(in);
+            for (String line : new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).split("\\R")) {
+                int arrow = line.indexOf(" => ");
+                if (arrow <= 0) continue;
+                String en = line.substring(0, arrow);
+                String ru = line.substring(arrow + 4).strip();
+                String before = seen.putIfAbsent(en, ru);
+                if (before != null && !before.equals(ru)) conflicts.add(en + ": " + before + " / " + ru);
+            }
+        }
+        assertTrue(conflicts.isEmpty(), "the same English text translated differently: " + conflicts);
+    }
 }

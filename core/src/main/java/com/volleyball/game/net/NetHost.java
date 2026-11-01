@@ -19,6 +19,8 @@ import java.nio.BufferUnderflowException;
 public final class NetHost {
     /** Snapshots go out every this many simulation steps (120 Hz / 3 = 40 per second). */
     public static final int SNAPSHOT_INTERVAL = 3;
+    /** A command this many ticks older than the newest one means the client started again (10 s). */
+    static final int RESTART_TICKS = 1200;
 
     private final Transport transport;
     private final GameWorld world;
@@ -46,8 +48,11 @@ public final class NetHost {
             try {
                 switch (message.type()) {
                     case HELLO -> {
-                        clientJoined = true;
-                        transport.send(NetProtocol.welcome(remoteSlot()));
+                        int remote = remoteSlot();
+                        clientJoined = remote >= 0;
+                        // A new client: it counts its ticks from the start again.
+                        java.util.Arrays.fill(latest, null);
+                        transport.send(NetProtocol.welcome(remote));
                     }
                     case INPUT -> {
                         InputCommand command = InputCommand.read(message.payload());
@@ -55,14 +60,21 @@ public final class NetHost {
                         MatchSession.Slot s = session.slot(slot);
                         // Only remote slots can be driven from outside, and only with newer commands.
                         if (s == null || s.controller != ControllerKind.REMOTE) continue;
-                        if (latest[slot] == null || command.tick() > latest[slot].tick()) latest[slot] = command;
+                        InputCommand last = latest[slot];
+                        if (last == null || command.tick() > last.tick() || last.tick() - command.tick() > RESTART_TICKS) {
+                            latest[slot] = command;
+                        }
                     }
-                    case BYE -> clientJoined = false;
+                    case BYE -> {
+                        clientJoined = false;
+                        java.util.Arrays.fill(latest, null);
+                        transport.releasePeer();
+                    }
                     default -> {
                     }
                 }
-            } catch (BufferUnderflowException malformed) {
-                // ignore truncated messages
+            } catch (BufferUnderflowException | IndexOutOfBoundsException malformed) {
+                // ignore truncated or corrupted messages
             }
         }
     }
@@ -77,7 +89,7 @@ public final class NetHost {
             if (command.has(InputCommand.SWITCH_PLAYER)) session.switchPlayer(i);
             VolleyballPlayer p = slot.player();
             command.applyTo(world.intent(p));
-            if (command.has(InputCommand.AIM)) handling.setAim(p, command.aimX(), command.aimZ());
+            if (command.has(InputCommand.AIM) && command.validAim()) handling.setAim(p, command.aimX(), command.aimZ());
             if (command.has(InputCommand.PRIMARY)) handling.arm(p, ActionKind.PRIMARY, now);
             else if (command.has(InputCommand.SECONDARY)) handling.arm(p, ActionKind.SECONDARY, now);
             if (command.has(InputCommand.VARIANT_NEXT)) handling.cycleVariant(p, 1);

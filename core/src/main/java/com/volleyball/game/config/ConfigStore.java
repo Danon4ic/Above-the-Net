@@ -2,7 +2,6 @@ package com.volleyball.game.config;
 
 import com.badlogic.gdx.utils.Json;
 import com.badlogic.gdx.utils.JsonWriter;
-import com.badlogic.gdx.utils.SerializationException;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -105,7 +104,8 @@ public final class ConfigStore {
             if (text.isBlank()) return null;
             GameConfig config = json.fromJson(GameConfig.class, text);
             return config == null ? null : config.sanitize();
-        } catch (IOException | SerializationException | IllegalArgumentException e) {
+        } catch (IOException | RuntimeException e) {
+            // RuntimeException: SerializationException and anything else a hand-edited file can provoke.
             LOG.log(Level.WARNING, "Invalid settings file " + file + ": " + e.getMessage());
             return null;
         }

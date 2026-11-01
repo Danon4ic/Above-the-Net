@@ -124,14 +124,14 @@ public final class BallLab implements BallContactListener {
             boolean in = CourtDimensions.isInsideCourt(at.x, at.z, CONTACT_PATCH_RADIUS);
             String deviation;
             if (deflectedBy != null) deviation = " | after touching " + deflectedBy;
-            else if (forecastLands) deviation = String.format(" | forecast miss %.0f cm", floorDistance(at, forecastLanding) * 100f);
+            else if (forecastLands) deviation = String.format(java.util.Locale.ROOT, " | forecast miss %.0f cm", floorDistance(at, forecastLanding) * 100f);
             else deviation = "";
-            report = String.format("%s landed %s at (%.2f, %.2f)%s",
+            report = String.format(java.util.Locale.ROOT, "%s landed %s at (%.2f, %.2f)%s",
                     lastPreset.name(), in ? "IN" : "OUT", at.x, at.z, deviation);
         } else {
             // Any touch (net, antenna, body...) changes the flight; the landing report follows.
             deflectedBy = contact.kind() == ColliderKind.PLAYER_BODY ? "a player" : contact.kind().name();
-            report = lastPreset.name() + " touched " + deflectedBy + String.format(" at %.1f m/s", contact.impactSpeed());
+            report = lastPreset.name() + " touched " + deflectedBy + String.format(java.util.Locale.ROOT, " at %.1f m/s", contact.impactSpeed());
         }
     }
 

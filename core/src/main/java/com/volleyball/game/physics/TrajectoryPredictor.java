@@ -57,7 +57,49 @@ public final class TrajectoryPredictor {
             else path.add(p.cpy());
             pathSize++;
         }
+
+        /** Copies every result (the watch height included) from {@code other}. */
+        void set(Prediction other) {
+            lands = other.lands;
+            landing.set(other.landing);
+            timeToLanding = other.timeToLanding;
+            apex.set(other.apex);
+            timeToApex = other.timeToApex;
+            crossesNetPlane = other.crossesNetPlane;
+            netCrossing.set(other.netCrossing);
+            timeToNetCrossing = other.timeToNetCrossing;
+            watchHeight = other.watchHeight;
+            reachesWatchHeight = other.reachesWatchHeight;
+            descentPoint.set(other.descentPoint);
+            timeToDescent = other.timeToDescent;
+            pathSize = 0;
+            for (int i = 0; i < other.pathSize; i++) addSample(other.path.get(i));
+        }
     }
+
+    /**
+     * A forecast of the live ball, remembered with the state it was made from. Within one
+     * simulation step every player and the team AI ask about the same ball (often with the same
+     * watched height): those repeats are copied instead of flown again.
+     */
+    private static final class Memo {
+        final Prediction result = new Prediction();
+        final Vector3 position = new Vector3();
+        final Vector3 velocity = new Vector3();
+        final Vector3 spin = new Vector3();
+        float maxTime = Float.NaN;
+        boolean air;
+
+        boolean matches(Ball ball, float maxTime, float watchHeight, boolean air) {
+            return this.maxTime == maxTime && this.air == air && position.equals(ball.position)
+                    && velocity.equals(ball.velocity) && spin.equals(ball.spin)
+                    && Float.compare(result.watchHeight, watchHeight) == 0;
+        }
+    }
+
+    private static final int MEMO_SIZE = 8;
+    private final Memo[] memos = new Memo[MEMO_SIZE];
+    private int nextMemo;
 
     public static final float STEP = 1f / 120f;
     public static final float SAMPLE_INTERVAL = 0.05f;
@@ -71,6 +113,7 @@ public final class TrajectoryPredictor {
 
     public TrajectoryPredictor(Aerodynamics aerodynamics) {
         this.aerodynamics = aerodynamics;
+        for (int i = 0; i < MEMO_SIZE; i++) memos[i] = new Memo();
     }
 
     /** Forecast for a ball currently in the given observable state. */
@@ -143,8 +186,27 @@ public final class TrajectoryPredictor {
         p.timeToDescent = p.timeToNetCrossing;
     }
 
-    /** Convenience overload for a live ball. Reads only observable state. */
+    /**
+     * Forecast for a live ball. Reads only observable state. Repeated questions about the same
+     * ball state (same horizon and watched height) are answered from a small memo.
+     */
     public Prediction predict(Ball ball, float maxTime, Prediction out) {
-        return predict(ball.position, ball.velocity, ball.spin, maxTime, out);
+        boolean air = aerodynamics.airEnabled();
+        for (Memo memo : memos) {
+            if (memo.matches(ball, maxTime, out.watchHeight, air)) {
+                out.set(memo.result);
+                return out;
+            }
+        }
+        predict(ball.position, ball.velocity, ball.spin, maxTime, out);
+        Memo memo = memos[nextMemo];
+        nextMemo = (nextMemo + 1) % MEMO_SIZE;
+        memo.position.set(ball.position);
+        memo.velocity.set(ball.velocity);
+        memo.spin.set(ball.spin);
+        memo.maxTime = maxTime;
+        memo.air = air;
+        memo.result.set(out);
+        return out;
     }
 }

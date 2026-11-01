@@ -119,6 +119,43 @@ class NetProtocolTest {
     }
 
     @Test
+    void malformedOrHostileInputCannotCrashOrCheatTheHost() {
+        GameWorld world = GameWorld.withDefaultTeams(new VolleyballCourt(NetCategory.MEN), 1);
+        MatchSession session = MatchSession.create(SessionMode.ONLINE_VERSUS, world);
+        LoopbackTransport[] pair = LoopbackTransport.pair();
+        NetHost host = new NetHost(pair[0], world, session);
+        // Slot byte 0xFF: no such slot (it once decoded as -1 and threw).
+        byte[] bad = NetProtocol.input(new InputCommand(1, 255, 1f, 0f, 0, 1f, 0f, 0f));
+        pair[1].send(bad);
+        assertDoesNotThrow(host::receive);
+        // NaN movement and a giant jump from the remote slot are clamped.
+        pair[1].send(NetProtocol.input(new InputCommand(2, 1, Float.NaN, 0f, InputCommand.JUMP, 50f, Float.NaN, 1e9f)));
+        host.receive();
+        host.applyRemoteInput(0);
+        MoveIntent intent = world.intent(session.slot(1).player());
+        assertEquals(0f, intent.direction.x);
+        assertEquals(1f, intent.jumpHeightFactor);
+    }
+
+    @Test
+    void aRestartedClientIsHeardAgain() {
+        GameWorld world = GameWorld.withDefaultTeams(new VolleyballCourt(NetCategory.MEN), 1);
+        MatchSession session = MatchSession.create(SessionMode.ONLINE_VERSUS, world);
+        LoopbackTransport[] pair = LoopbackTransport.pair();
+        NetHost host = new NetHost(pair[0], world, session);
+        MoveIntent intent = new MoveIntent();
+        pair[1].send(NetProtocol.input(InputCommand.of(Integer.MAX_VALUE, 1, intent, 0, 0f, 0f)));
+        host.receive();
+        host.applyRemoteInput(0);
+        // The client starts again from tick 1 (a new HELLO, or simply far older ticks).
+        intent.direction.set(1f, 0f);
+        pair[1].send(NetProtocol.input(InputCommand.of(1, 1, intent, 0, 0f, 0f)));
+        host.receive();
+        host.applyRemoteInput(0);
+        assertEquals(1f, world.intent(session.slot(1).player()).direction.x, 1e-6f);
+    }
+
+    @Test
     void udpTransportDeliversOnLocalhost() throws Exception {
         try (UdpTransport hostSide = UdpTransport.host(0);
              UdpTransport clientSide = UdpTransport.connect("127.0.0.1", hostSide.localPort())) {

@@ -165,7 +165,7 @@ public final class MatchSession {
     }
 
     public Slot slot(int index) {
-        return index < slots.size() ? slots.get(index) : null;
+        return index >= 0 && index < slots.size() ? slots.get(index) : null;
     }
 
     /** Players controlled by people right now (automatic slots excluded). */

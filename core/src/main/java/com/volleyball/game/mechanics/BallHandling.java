@@ -118,9 +118,9 @@ public final class BallHandling {
     /** Side that touched the ball last and how many consecutive touches it has made. */
     private CourtSide touchSide;
     private int touchCount;
-    /** Id of the player who made the last deliberate contact, or -1. */
+    /** Id of the player who touched the ball last, or -1. */
     private int lastToucherId = -1;
-    private CourtSide ballHalf;
+    private double lastTouchTime = Double.NEGATIVE_INFINITY;
 
     public BallHandling(Ball ball, List<VolleyballPlayer> players, CollisionSystem collisions,
                         TrajectoryPredictor predictor, Net net, long seed) {
@@ -139,7 +139,6 @@ public final class BallHandling {
         for (VolleyballPlayer p : players) maxId = Math.max(maxId, p.id);
         states = new PlayerState[maxId + 1];
         for (int i = 0; i < states.length; i++) states[i] = new PlayerState();
-        ballHalf = CourtDimensions.sideOf(ball.position.x);
     }
 
     public void removeListener(BallTouchListener listener) {
@@ -346,7 +345,6 @@ public final class BallHandling {
         lastToucherId = -1;
         for (PlayerState s : states) s.armed = false;
         ball.hold(ServeMechanic.holdPoint(p, type, tmp));
-        ballHalf = p.side;
     }
 
     public boolean toss(double now) {
@@ -381,7 +379,6 @@ public final class BallHandling {
         touchSide = side;
         touchCount = touches;
         lastToucherId = -1;
-        ballHalf = CourtDimensions.sideOf(ball.position.x);
     }
 
     /** Touches the given team has made in its current possession. */
@@ -466,17 +463,6 @@ public final class BallHandling {
         float distance = (float) Math.sqrt(dx * dx + dz * dz);
         float approach = distance < 1e-4f ? 0f : -(ball.velocity.x * dx + ball.velocity.z * dz) / distance;
         return approach > 0f && distance - approach * dt * 2f < BODY_GUARD;
-    }
-
-    /** Runs after the ball physics step: detects the ball changing halves. */
-    public void afterBallPhysics() {
-        if (!ball.isActive()) return;
-        CourtSide half = CourtDimensions.sideOf(ball.position.x);
-        if (half != ballHalf) {
-            ballHalf = half;
-            // Coming back into the half of the team that touched it last starts a fresh possession.
-            if (half == touchSide) touchCount = 0;
-        }
     }
 
     private List<ContactType> candidates(VolleyballPlayer p, ActionKind kind) {
@@ -627,13 +613,7 @@ public final class BallHandling {
         if (p.isUpright()) p.setActionPose(poseFor(type), 0.35f);
         s.armed = false;
 
-        lastToucherId = p.id;
-        if (touchSide == p.side) touchCount++;
-        else {
-            touchSide = p.side;
-            touchCount = 1;
-        }
-        ballHalf = CourtDimensions.sideOf(ball.position.x);
+        countTouch(p, now);
 
         PassRating rating = null;
         float miss = Float.NaN;
@@ -663,14 +643,7 @@ public final class BallHandling {
         if (contact.kind() == ColliderKind.PLAYER_BODY) {
             // The ball bouncing off a body is a touch of that player's team too.
             VolleyballPlayer touched = player(contact.playerId());
-            if (touched == null) return;
-            if (touchSide == touched.side) touchCount++;
-            else {
-                touchSide = touched.side;
-                touchCount = 1;
-            }
-            lastToucherId = touched.id;
-            ballHalf = CourtDimensions.sideOf(ball.position.x);
+            if (touched != null) countTouch(touched, contact.time());
             return;
         }
         if (contact.kind() != ColliderKind.BLOCK) return;
@@ -682,7 +655,7 @@ public final class BallHandling {
         touchSide = blocker.side;
         touchCount = 0;
         lastToucherId = blocker.id;
-        ballHalf = CourtDimensions.sideOf(ball.position.x);
+        lastTouchTime = contact.time();
         BallTouch touch = new BallTouch(blocker.id, blocker.side, ContactType.BLOCK, ContactPurpose.BLOCK,
                 Math.min(1f, blocker.blockPenetration() / 0.3f), null, Float.NaN, contact.position().cpy(),
                 blocker.position.cpy(), blocker.isAirborne(), 0, ball.velocity.cpy(), s.blockStyle.label, contact.time());
@@ -714,6 +687,24 @@ public final class BallHandling {
         float farX = outside.side.sign() * (CourtDimensions.HALF_LENGTH + 1f);
         float t = (farX - hx) / towardsHand;
         out.set(farX, 0f, hz + (handZ - hz) * t);
+    }
+
+    /**
+     * Counts a touch by {@code p} with the referee's rules ({@code RallyManager}): every contact
+     * counts except the same player again within {@link BallTouch#SAME_ACTION_WINDOW}, and the
+     * count only starts over when the other team touches the ball (or after a block).
+     */
+    private void countTouch(VolleyballPlayer p, double now) {
+        boolean sameAction = touchSide == p.side && p.id == lastToucherId && now - lastTouchTime < BallTouch.SAME_ACTION_WINDOW;
+        if (!sameAction) {
+            if (touchSide == p.side) touchCount++;
+            else {
+                touchSide = p.side;
+                touchCount = 1;
+            }
+        }
+        lastToucherId = p.id;
+        lastTouchTime = now;
     }
 
     private VolleyballPlayer player(int id) {

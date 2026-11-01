@@ -79,35 +79,47 @@ public final class MatchMemory {
         }
         if (touch.side() != own && touch.type() == ContactType.ATTACK) {
             Habit habit = habits.computeIfAbsent(touch.playerId(), id -> new Habit());
-            float speed = touch.outgoingVelocity().len();
-            if (AttackType.TIP.label.equals(touch.variant()) || speed < 12f) {
-                habit.tips++;
-            } else {
-                float forward = Math.abs(touch.outgoingVelocity().x);
-                float lateral = touch.outgoingVelocity().z;
-                float hitZ = touch.contactPoint().z;
-                // Cross-court: the ball travels towards the other half of the court's width.
-                float towardsCentre = -Math.signum(hitZ == 0f ? 1f : hitZ) * lateral / Math.max(1f, forward);
-                if (towardsCentre > 0.2f) habit.cross++;
-                else habit.line++;
-            }
+            if (isTip(touch)) habit.tips++;
+            else if (isCross(touch)) habit.cross++;
+            else habit.line++;
         }
+    }
+
+    /** An attack played soft: a tip (or anything slower than a real swing). */
+    static boolean isTip(BallTouch attack) {
+        return AttackType.TIP.label.equals(attack.variant()) || attack.outgoingVelocity().len() < 12f;
+    }
+
+    /** A cross-court attack: the ball travels towards the other half of the court's width. */
+    static boolean isCross(BallTouch attack) {
+        float forward = Math.abs(attack.outgoingVelocity().x);
+        float lateral = attack.outgoingVelocity().z;
+        float hitZ = attack.contactPoint().z;
+        return -Math.signum(hitZ == 0f ? 1f : hitZ) * lateral / Math.max(1f, forward) > 0.2f;
     }
 
     /** The rally's result for this team: what worked is used more often (adaptive tactics). */
     public void rallyResult(boolean won) {
-        // The point was decided by our attack if our attack was the last touch.
-        Touch last = rally.isEmpty() ? null : rally.get(rally.size() - 1);
-        boolean byOwnAttack = last != null && last.side() == own && last.type() == ContactType.ATTACK;
-        if (lastSet != null && byOwnAttack) {
+        if (lastSet != null && decidedByOwnAttack()) {
             float[] r = setResults.get(lastSet);
             r[1] += 1f;
             if (won) r[0] += 1f;
         }
-        if (lastServeZone > 0 && rally.size() <= 1 && won) {
-            serveZoneWeight[lastServeZone] *= 1.3f; // an ace
+        boolean ace = won && rally.size() == 1 && rally.get(0).side() == own && rally.get(0).type() == ContactType.SERVE;
+        if (lastServeZone > 0 && ace) {
+            serveZoneWeight[lastServeZone] *= 1.3f;
             normalizeServeWeights();
         }
+    }
+
+    /**
+     * Whether the rally was decided by our attack: it was the last touch, or only the opponent's
+     * block touched the ball after it (a stuff block or a tool off the block).
+     */
+    public boolean decidedByOwnAttack() {
+        int i = rally.size() - 1;
+        while (i >= 0 && rally.get(i).side() != own && rally.get(i).type() == ContactType.BLOCK) i--;
+        return i >= 0 && rally.get(i).side() == own && rally.get(i).type() == ContactType.ATTACK;
     }
 
     public void servedTo(int zone) {
@@ -146,12 +158,5 @@ public final class MatchMemory {
             if (t.side() == own && t.rating() != null) return t.rating();
         }
         return null;
-    }
-
-    /** How many times a player touched the ball in this rally. */
-    public int touchesBy(int playerId) {
-        int n = 0;
-        for (Touch t : rally) if (t.playerId() == playerId) n++;
-        return n;
     }
 }

@@ -129,12 +129,12 @@ public final class ScoreOverlay implements MatchListener, Disposable {
     public void onPoint(MatchRules.PointSummary point, MatchScore score) {
         RallyOutcome outcome = point.outcome();
         if (outcome.isReplay()) {
-            banner("REPLAY", outcome.reason().label, Color.LIGHT_GRAY, BANNER_TIME, false);
+            banner("NO POINT", outcome.reason().label, Color.LIGHT_GRAY, BANNER_TIME, false);
             return;
         }
         Team winner = team(outcome.winner());
         if (point.matchWon()) {
-            banner(winner.name.toUpperCase() + " WIN", "Sets " + score.sets(CourtSide.HOME) + " : " + score.sets(CourtSide.AWAY)
+            banner(winner.name.toUpperCase(java.util.Locale.ROOT) + " WIN", "Sets " + score.sets(CourtSide.HOME) + " : " + score.sets(CourtSide.AWAY)
                     + "   " + setHistory(score), winner.shirtColor, 1e6f, true);
         } else if (point.setWon()) {
             setsSoFar.clear();
@@ -397,7 +397,7 @@ public final class ScoreOverlay implements MatchListener, Disposable {
         float ty = y + h - 26f * s;
         UiKit.text(batch, label, "SET " + setResult.setNumber(), x, ty, w, Align.center, false, UiKit.GOLD, a);
         ty -= 26f * s;
-        UiKit.text(batch, title, Lang.f("%s win the set", winner.name.toUpperCase()), x, ty, w, Align.center, false, UiKit.TEXT, a);
+        UiKit.text(batch, title, Lang.f("%s win the set", winner.name.toUpperCase(java.util.Locale.ROOT)), x, ty, w, Align.center, false, UiKit.TEXT, a);
         ty -= 42f * s;
         String scoreText = setResult.home() + " : " + setResult.away();
         UiKit.text(batch, big, scoreText, x, ty, w, Align.center, false, UiKit.GOLD, a);

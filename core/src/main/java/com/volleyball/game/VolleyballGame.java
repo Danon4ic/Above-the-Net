@@ -84,7 +84,7 @@ public class VolleyballGame extends Game {
         PlayerRole role = PlayerRole.OUTSIDE_HITTER;
         if (launchOptions.role() != null) {
             for (PlayerRole r : PlayerRole.values()) {
-                if (r.name().replace("_", "").startsWith(launchOptions.role().toUpperCase().replace("_", "").replace("-", ""))) {
+                if (r.name().replace("_", "").startsWith(launchOptions.role().toUpperCase(java.util.Locale.ROOT).replace("_", "").replace("-", ""))) {
                     role = r;
                     break;
                 }

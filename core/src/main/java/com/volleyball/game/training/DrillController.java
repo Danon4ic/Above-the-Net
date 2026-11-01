@@ -536,7 +536,7 @@ public final class DrillController implements BallTouchListener, BallContactList
                     String miss = fault != null ? "FAULT (" + fault + ")"
                             : netTouched && (landing == null || CourtDimensions.sideOf(landing.x) != CourtSide.AWAY) ? "FAULT (into the net)" : "OUT";
                     text.append(" -> ").append(in ? (netTouched ? "IN off the net" : "IN") : miss);
-                    if (landing != null) text.append(String.format(" at (%.1f, %.1f)", landing.x, landing.z));
+                    if (landing != null) text.append(String.format(java.util.Locale.ROOT, " at (%.1f, %.1f)", landing.x, landing.z));
                 }
                 case RECEIVE, SET -> success = traineeTouch.rating() != null && traineeTouch.rating().isPlayable()
                         && (drill == Drill.RECEIVE || traineeTouch.purpose() == ContactPurpose.SET);
@@ -590,10 +590,10 @@ public final class DrillController implements BallTouchListener, BallContactList
         StringBuilder s = new StringBuilder();
         s.append(t.type().label);
         if (!t.variant().isEmpty()) s.append(" (").append(t.variant()).append(')');
-        s.append(String.format(", contact %.0f%%", t.quality() * 100f));
-        if (t.rating() != null) s.append(String.format(", %s - %.1f m off", t.rating().label, t.missDistance()));
+        s.append(String.format(java.util.Locale.ROOT, ", contact %.0f%%", t.quality() * 100f));
+        if (t.rating() != null) s.append(String.format(java.util.Locale.ROOT, ", %s - %.1f m off", t.rating().label, t.missDistance()));
         if (t.type() == ContactType.SERVE || t.type() == ContactType.ATTACK) {
-            s.append(String.format(", %.0f km/h", t.outgoingVelocity().len() * 3.6f));
+            s.append(String.format(java.util.Locale.ROOT, ", %.0f km/h", t.outgoingVelocity().len() * 3.6f));
         }
         return s.toString();
     }

@@ -67,6 +67,24 @@ class MatchRulesTest {
     }
 
     @Test
+    void theDecidingSetStartsWithANewCoinToss() {
+        java.util.Set<CourtSide> firstServers = java.util.EnumSet.noneOf(CourtSide.class);
+        for (long seed = 0; seed < 16; seed++) {
+            List<VolleyballPlayer> players = new ArrayList<>(TeamFactory.home(0).players());
+            players.addAll(TeamFactory.away(6).players());
+            RotationManager rotation = new RotationManager(new int[]{0, 1, 2, 3, 4, 5}, new int[]{6, 7, 8, 9, 10, 11});
+            MatchRules rules = new MatchRules(new MatchFormat(2, 3, 3, 2, RuleMode.OFFICIAL, 8f), rotation, players,
+                    new Net(NetCategory.MEN), seed);
+            rules.startMatch(HOME);
+            for (int i = 0; i < 3; i++) point(rules, HOME);
+            for (int i = 0; i < 3; i++) point(rules, AWAY);
+            assertEquals(3, rules.score().setNumber(), "the deciding set");
+            firstServers.add(rules.servingSide());
+        }
+        assertEquals(2, firstServers.size(), "either team may win the toss: " + firstServers);
+    }
+
+    @Test
     void wholeMatchCanBePlayedFromFirstServeToLastSet() {
         MatchRules rules = rules(MatchFormat.official());
         java.util.Random random = new java.util.Random(4);

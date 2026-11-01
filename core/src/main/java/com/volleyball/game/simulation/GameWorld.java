@@ -96,7 +96,6 @@ public final class GameWorld {
         collisions.updateBodies();
         ballHandling.update(dt, time);
         ballPhysics.step(ball, dt, time, dispatcher);
-        ballHandling.afterBallPhysics();
         time += dt;
     }
 
@@ -119,7 +118,6 @@ public final class GameWorld {
         return Math.abs(fromNet) <= ATTENTION_HALF_ANGLE ? toBall : Float.NaN;
     }
 
-    /** Fatigue on (players tire and recover) or off (arcade). */
     /**
      * Which side of the court the benches (and the coaches, and the timeout huddles) are on:
      * +1 the usual +z side, -1 after the teams changed ends. Each team still plays its own half
@@ -135,6 +133,7 @@ public final class GameWorld {
 
     private float benchSign = 1f;
 
+    /** Fatigue on (players tire and recover) or off (arcade). */
     public void setFatigue(boolean enabled) {
         locomotion.setFatigue(enabled);
     }

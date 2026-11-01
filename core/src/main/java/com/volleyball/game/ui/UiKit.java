@@ -161,8 +161,8 @@ public final class UiKit {
 
     /** A small section heading: gold small caps. Text pass. */
     public static float sectionTitle(SpriteBatch batch, BitmapFont font, String title, float x, float y, float alpha) {
-        text(batch, font, title.toUpperCase(), x, y, JADE, alpha);
-        return width(font, title.toUpperCase());
+        text(batch, font, title.toUpperCase(java.util.Locale.ROOT), x, y, JADE, alpha);
+        return width(font, title.toUpperCase(java.util.Locale.ROOT));
     }
 
     /** Darkens the screen behind a modal overlay, with a slight vignette towards the edges. */

@@ -526,7 +526,7 @@ public final class PlaybookScreen extends ScreenAdapter {
         y -= rowH;
         for (int i = 0; i < draft.runs.size(); i++) {
             RunDraft r = draft.runs.get(i);
-            String line = String.format("%s  ·  %s  ·  %s", laneName(r.lane), r.tempo.label, r.decoy ? "decoy" : "hits");
+            String line = String.format(Locale.ROOT, "%s  ·  %s  ·  %s", laneName(r.lane), r.tempo.label, r.decoy ? "decoy" : "hits");
             UiKit.text(batch, item, line, x, y, i == selectedRun ? LANE_COLORS[r.lane.ordinal()] : UiKit.TEXT, 1f);
             y -= rowH;
         }

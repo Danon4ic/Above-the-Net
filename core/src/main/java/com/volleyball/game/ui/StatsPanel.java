@@ -164,7 +164,7 @@ public final class StatsPanel implements Disposable {
 
         batch.begin();
         UiKit.text(batch, titleFont, title, x0, top, panelW, Align.center, false, UiKit.TEXT, a);
-        UiKit.text(batch, sub, subtitle.toUpperCase(), x0, top - 44f * s, panelW, Align.center, false, UiKit.JADE, a);
+        UiKit.text(batch, sub, subtitle.toUpperCase(java.util.Locale.ROOT), x0, top - 44f * s, panelW, Align.center, false, UiKit.JADE, a);
         UiKit.text(batch, team, homeName, midX - barW - 300f * s, compareTop + 36f * s, 230f * s, Align.right, false, UiKit.TEXT, a);
         UiKit.text(batch, team, awayName, midX + barW + 70f * s, compareTop + 36f * s, UiKit.TEXT, a);
         for (int i = 0; i < rows.length; i++) {
@@ -186,7 +186,7 @@ public final class StatsPanel implements Disposable {
             float ty = tableTop - i * tRowH - 6f * s - tRowH / 2f + cell.getCapHeight() / 2f;
             String[] v = {String.valueOf(p.number), p.name + "  ·  " + p.role.label, n(l.points()), n(l.kills), n(l.attacks),
                     pct(l.attackEfficiency()), n(l.aces), n(l.serveErrors), n(l.blockPoints), n(l.digs),
-                    l.receptions == 0 ? "-" : String.format("%.1f", l.receptionAverage()), n(l.assists), n(l.errors)};
+                    l.receptions == 0 ? "-" : String.format(java.util.Locale.ROOT, "%.1f", l.receptionAverage()), n(l.assists), n(l.errors)};
             for (int c = 0; c < v.length; c++) {
                 Color color = c == 2 ? UiKit.JADE : c == 1 ? UiKit.TEXT : UiKit.TEXT_DIM;
                 UiKit.text(batch, c == 2 ? value : cell, v[c], tableX + colX[c] * tableW, ty, color, a);

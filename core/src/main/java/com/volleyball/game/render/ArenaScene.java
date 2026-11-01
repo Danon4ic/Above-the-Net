@@ -175,7 +175,7 @@ public final class ArenaScene implements Disposable {
      * falls back to the standard look (and says so in the log).
      */
     public void setQuality(GraphicsQuality newQuality) {
-        ModelBatch next;
+        ModelBatch next = null;
         ModelBatch nextDepth = null;
         GraphicsQuality applied = newQuality;
         if (newQuality.arenaShader) {
@@ -196,6 +196,7 @@ public final class ArenaScene implements Disposable {
                 Gdx.app.error("Graphics", "Arena shader unavailable, using standard lighting: " + e.getMessage());
                 if (nextDepth != null) nextDepth.dispose();
                 nextDepth = null;
+                if (next != null) next.dispose();
                 next = new ModelBatch();
                 applied = GraphicsQuality.LOW;
             }

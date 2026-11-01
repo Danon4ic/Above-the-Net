@@ -39,17 +39,31 @@ public record InputCommand(int tick, int slot, float moveX, float moveZ, int but
         return (buttons & button) != 0;
     }
 
-    /** Writes the movement part into an intent (the facing follows the movement, as for a local person). */
+    /** The strongest jump a person's input can ask for (a fully charged jump). */
+    public static final float MAX_JUMP_FACTOR = com.volleyball.game.input.InputController.CHARGED_JUMP_FACTOR;
+    /** Aim points farther than this from the court centre (m) are not meant seriously. */
+    public static final float MAX_AIM = 20f;
+
+    /**
+     * Writes the movement part into an intent (the facing follows the movement, as for a local
+     * person). Values from the network are not trusted: anything not finite or out of range is
+     * clamped, so a client cannot move or jump beyond what a local person can.
+     */
     public void applyTo(MoveIntent intent) {
         intent.clear();
-        intent.direction.set(moveX, moveZ);
+        if (Float.isFinite(moveX) && Float.isFinite(moveZ)) intent.direction.set(moveX, moveZ);
         if (intent.direction.len2() > 1f) intent.direction.nor();
         intent.faceMovement = true;
         intent.jump = has(JUMP);
         intent.sprint = has(SPRINT);
         intent.crouch = has(CROUCH);
         intent.dive = has(DIVE);
-        intent.jumpHeightFactor = jumpFactor > 0f ? jumpFactor : 1f;
+        intent.jumpHeightFactor = jumpFactor > 0f && jumpFactor <= MAX_JUMP_FACTOR ? jumpFactor : 1f;
+    }
+
+    /** The aim point if it is a sensible one. */
+    public boolean validAim() {
+        return Float.isFinite(aimX) && Float.isFinite(aimZ) && Math.abs(aimX) <= MAX_AIM && Math.abs(aimZ) <= MAX_AIM;
     }
 
     public void write(ByteBuffer out) {
@@ -64,7 +78,7 @@ public record InputCommand(int tick, int slot, float moveX, float moveZ, int but
     }
 
     public static InputCommand read(ByteBuffer in) {
-        return new InputCommand(in.getInt(), in.get(), in.getFloat(), in.getFloat(), in.getShort() & 0xffff,
+        return new InputCommand(in.getInt(), in.get() & 0xff, in.getFloat(), in.getFloat(), in.getShort() & 0xffff,
                 in.getFloat(), in.getFloat(), in.getFloat());
     }
 }

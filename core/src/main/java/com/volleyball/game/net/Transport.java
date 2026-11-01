@@ -11,6 +11,10 @@ public interface Transport extends AutoCloseable {
     /** The next received message, or null if none is waiting. Never blocks. */
     byte[] poll();
 
+    /** Host side: the current client left, the next one to write may take its place. */
+    default void releasePeer() {
+    }
+
     @Override
     void close();
 }

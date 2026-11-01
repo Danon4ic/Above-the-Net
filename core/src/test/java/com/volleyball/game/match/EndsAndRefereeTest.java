@@ -19,12 +19,12 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** The teams change ends after each set and at half of the deciding set; the referee signals. */
+/** The teams change ends between sets (not before the decider) and at half of the deciding set; the referee signals. */
 class EndsAndRefereeTest {
     private static final float DT = 1f / 120f;
 
     @Test
-    void theTeamsChangeEndsAfterEverySetAndAtEightInTheDecider() {
+    void theTeamsChangeEndsAfterTheFirstSetAndAtEightInTheDecider() {
         GameWorld world = GameWorld.withDefaultTeams(new VolleyballCourt(NetCategory.MEN), 12);
         MatchController match = new MatchController(world, new MatchFormat(2, 5, 5, 2, RuleMode.OFFICIAL, 8f), 12,
                 Difficulty.INTERMEDIATE, Difficulty.INTERMEDIATE);
@@ -48,9 +48,10 @@ class EndsAndRefereeTest {
         }
         assertTrue(match.phase() == MatchController.Phase.FINISHED);
         int sets = match.rules().score().finishedSets().size();
-        assertTrue(changes.size() >= sets - 1, "a change after each set: " + changes);
         assertTrue(sawSwappedBench, "the benches went with the teams");
-        if (sets == 3) assertEquals(3, changes.size(), "and at half of the deciding set: " + changes);
+        assertTrue(changes.get(0).startsWith("2:0-0"), "a change after the first set: " + changes);
+        // No change before the deciding set (rule 18.2.1), one at its half.
+        if (sets == 3) assertEquals(2, changes.size(), "and at half of the deciding set: " + changes);
         match.start(CourtSide.HOME);
         assertFalse(match.sidesSwapped());
         assertEquals(1f, world.benchSign());

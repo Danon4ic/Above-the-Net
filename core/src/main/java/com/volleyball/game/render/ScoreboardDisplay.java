@@ -11,6 +11,8 @@ import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.FrameBuffer;
 import com.badlogic.gdx.math.Matrix4;
 import com.badlogic.gdx.utils.Disposable;
+import com.volleyball.game.i18n.Lang;
+import com.volleyball.game.ui.UiFonts;
 
 /**
  * The arena's video scoreboard. Its image is drawn into an off-screen frame buffer that the 3D
@@ -25,7 +27,10 @@ public final class ScoreboardDisplay implements Disposable {
 
     private final FrameBuffer frameBuffer;
     private final SpriteBatch batch = new SpriteBatch();
-    private final BitmapFont font = new BitmapFont();
+    /** Rasterized large (with Cyrillic glyphs) and scaled down; sizes below are in the old 15 px font's units. */
+    private static final int FONT_PIXELS = 48;
+    private static final float FONT_UNIT = 15f / FONT_PIXELS;
+    private final BitmapFont font = UiFonts.create(UiFonts.Weight.BOLD, FONT_PIXELS);
     private final GlyphLayout layout = new GlyphLayout();
 
     private String homeName = "HOME";
@@ -41,7 +46,6 @@ public final class ScoreboardDisplay implements Disposable {
     public ScoreboardDisplay() {
         frameBuffer = new FrameBuffer(Pixmap.Format.RGBA8888, WIDTH, HEIGHT, false);
         frameBuffer.getColorBufferTexture().setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear);
-        font.getRegion().getTexture().setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear);
         font.setUseIntegerPositions(false);
         // The 3D screen maps the top of the image to v = 0 while a frame buffer stores its bottom
         // row there, so draw with a vertically flipped projection to keep the text upright.
@@ -87,13 +91,13 @@ public final class ScoreboardDisplay implements Disposable {
         Gdx.gl.glClearColor(0.02f, 0.03f, 0.06f, 1f);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
         batch.begin();
-        drawCentered(caption + "   SET " + setNumber, HEIGHT - 30f, 2.6f, new Color(0.6f, 0.8f, 1f, 1f));
+        drawCentered(Lang.t(caption) + "   " + Lang.t("SET " + setNumber), HEIGHT - 30f, 2.6f, new Color(0.6f, 0.8f, 1f, 1f));
         drawCentered(homeName, HEIGHT - 120f, 3.2f, Color.WHITE, WIDTH * 0.25f);
         drawCentered(awayName, HEIGHT - 120f, 3.2f, Color.WHITE, WIDTH * 0.75f);
         drawCentered(String.valueOf(homePoints), HEIGHT - 175f, 8f, new Color(1f, 0.85f, 0.2f, 1f), WIDTH * 0.25f);
         drawCentered(String.valueOf(awayPoints), HEIGHT - 175f, 8f, new Color(1f, 0.85f, 0.2f, 1f), WIDTH * 0.75f);
         drawCentered(":", HEIGHT - 175f, 8f, Color.WHITE, WIDTH * 0.5f);
-        drawCentered("SETS " + homeSets + " - " + awaySets, 50f, 2.6f, new Color(0.7f, 0.95f, 0.7f, 1f));
+        drawCentered(Lang.t("SETS " + homeSets + " - " + awaySets), 50f, 2.6f, new Color(0.7f, 0.95f, 0.7f, 1f));
         batch.end();
         frameBuffer.end();
         // The screens are seen from 20+ m away: without mipmaps the minified text shimmers.
@@ -108,7 +112,7 @@ public final class ScoreboardDisplay implements Disposable {
     }
 
     private void drawCentered(String text, float topY, float scale, Color color, float centreX) {
-        font.getData().setScale(scale);
+        font.getData().setScale(scale * FONT_UNIT);
         font.setColor(color);
         layout.setText(font, text);
         font.draw(batch, layout, centreX - layout.width / 2f, topY);

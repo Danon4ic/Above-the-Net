@@ -128,7 +128,7 @@ public final class PoseGalleryScreen extends ScreenAdapter {
         for (int i = 0; i < shown && focus < 0; i++) {
             VolleyballPlayer p = players.get(i);
             camera.project(tmp.set(p.position.x, 2.45f, p.position.z));
-            String label = i == 9 || i == 10 ? LABELS[i] + ": " + p.swingStyle().name().toLowerCase().replace('_', ' ')
+            String label = i == 9 || i == 10 ? LABELS[i] + ": " + p.swingStyle().name().toLowerCase(java.util.Locale.ROOT).replace('_', ' ')
                     : i == 11 ? LABELS[i] + ": " + BLOCKS[(int) (time * LOOP_SPEED / 1.8f) % BLOCKS.length] : LABELS[i];
             UiKit.text(batch, font, label, tmp.x - 80f * s, tmp.y, 160f * s, Align.center, false, UiKit.TEXT, 1f);
         }

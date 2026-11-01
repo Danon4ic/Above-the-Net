@@ -112,6 +112,14 @@ class ConfigStoreTest {
     }
 
     @Test
+    void aMissingOrUnknownLanguageIsEnglish() throws IOException {
+        Files.writeString(dir.resolve(ConfigStore.FILE_NAME), "{ \"language\": null, \"venue\": null }");
+        assertEquals("EN", new ConfigStore(dir).load().language);
+        Files.writeString(dir.resolve(ConfigStore.FILE_NAME), "{ \"language\": \"ru\" }");
+        assertEquals("RU", new ConfigStore(dir).load().language);
+    }
+
+    @Test
     void settingsSavedWithAByteOrderMarkAreRead() throws IOException {
         Files.write(dir.resolve(ConfigStore.FILE_NAME),
                 ("﻿{ \"fullscreen\": true, \"windowWidth\": 1280 }").getBytes(java.nio.charset.StandardCharsets.UTF_8));

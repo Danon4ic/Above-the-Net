@@ -5,3 +5,6 @@ bin/
 .idea/
 *.iml
 out/
+# Outputs of the diagnostic probes and the AI statistics run (core/src/test, PROBE=1 / AI_STATS=1)
+*_probe.txt
+ai_stats.txt

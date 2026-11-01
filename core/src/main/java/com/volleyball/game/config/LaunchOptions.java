@@ -17,10 +17,11 @@ import java.util.Locale;
  * @param home        quick match home team (catalog id such as "titans", or "random"), or null for the default
  * @param away        quick match away team, as {@code home}
  * @param language    interface language for this run ("en", "ru"), or null for the saved setting
+ * @param seed        seed of a match or drill ({@code --seed=123}), to replay the same random choices, or null for a fresh one
  */
 public record LaunchOptions(String drill, boolean autoplay, boolean poseGallery, String difficulty, String players, String role,
-                            int poseFocus, String venue, boolean playbook, String home, String away, String language) {
-    public static final LaunchOptions DEFAULT = new LaunchOptions(null, false, false, null, null, null, -1, null, false, null, null, null);
+                            int poseFocus, String venue, boolean playbook, String home, String away, String language, Long seed) {
+    public static final LaunchOptions DEFAULT = new LaunchOptions(null, false, false, null, null, null, -1, null, false, null, null, null, null);
 
     public static LaunchOptions parse(String[] args) {
         String drill = null;
@@ -35,6 +36,7 @@ public record LaunchOptions(String drill, boolean autoplay, boolean poseGallery,
         String home = null;
         String away = null;
         String language = null;
+        Long seed = null;
         if (args != null) {
             for (String arg : args) {
                 if (arg == null) continue;
@@ -49,6 +51,13 @@ public record LaunchOptions(String drill, boolean autoplay, boolean poseGallery,
                 else if (a.startsWith("--home=")) home = a.substring("--home=".length());
                 else if (a.startsWith("--away=")) away = a.substring("--away=".length());
                 else if (a.startsWith("--lang=")) language = a.substring("--lang=".length());
+                else if (a.startsWith("--seed=")) {
+                    try {
+                        seed = Long.parseLong(a.substring("--seed=".length()));
+                    } catch (NumberFormatException ignored) {
+                        // a fresh seed
+                    }
+                }
                 else if (a.startsWith("--venue=")) venue = a.substring("--venue=".length()).toUpperCase(Locale.ROOT);
                 else if (a.startsWith("--pose-focus=")) {
                     poseGallery = true;
@@ -60,6 +69,6 @@ public record LaunchOptions(String drill, boolean autoplay, boolean poseGallery,
                 }
             }
         }
-        return new LaunchOptions(drill, autoplay, poseGallery, difficulty, players, role, poseFocus, venue, playbook, home, away, language);
+        return new LaunchOptions(drill, autoplay, poseGallery, difficulty, players, role, poseFocus, venue, playbook, home, away, language, seed);
     }
 }

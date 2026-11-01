@@ -33,6 +33,13 @@ public final class Team {
     private VolleyballPlayer libero;
     /** Substitutes on the bench (rule 15): they can replace line-up players between rallies. */
     private final List<VolleyballPlayer> substitutes = new ArrayList<>();
+    /**
+     * Cached {@link #squad()} and {@link #onCourt()} lists (the AI asks for them many times a step).
+     * A returned list is never changed afterwards: when the roster or who is on court changes, a
+     * new list is made, so a caller holding an old one keeps a consistent snapshot.
+     */
+    private List<VolleyballPlayer> squadCache;
+    private List<VolleyballPlayer> onCourtCache = List.of();
     /** The head coach (drawn on the sideline). */
     private String coach = "Head coach";
     /** One line about how the team plays (team selection). */
@@ -97,6 +104,7 @@ public final class Team {
     public void addPlayer(VolleyballPlayer player) {
         if (player.side != side) throw new IllegalArgumentException("Player " + player.name + " is on the other side");
         players.add(player);
+        squadCache = null;
     }
 
     /** The six players of the line-up (in their starting zones 1..6). */
@@ -109,6 +117,7 @@ public final class Team {
         if (libero.side != side || libero.role != PlayerRole.LIBERO) throw new IllegalArgumentException("Not a libero of this team");
         this.libero = libero;
         libero.setOnCourt(false);
+        squadCache = null;
     }
 
     public VolleyballPlayer libero() {
@@ -119,6 +128,7 @@ public final class Team {
         if (player.side != side) throw new IllegalArgumentException("Player " + player.name + " is on the other side");
         player.setOnCourt(false);
         substitutes.add(player);
+        squadCache = null;
     }
 
     public List<VolleyballPlayer> substitutes() {
@@ -127,16 +137,31 @@ public final class Team {
 
     /** The starting six, the libero and the substitutes: everyone on the team sheet. */
     public List<VolleyballPlayer> squad() {
-        List<VolleyballPlayer> all = new ArrayList<>(players);
-        if (libero != null) all.add(libero);
-        all.addAll(substitutes);
-        return Collections.unmodifiableList(all);
+        if (squadCache == null) {
+            List<VolleyballPlayer> all = new ArrayList<>(players);
+            if (libero != null) all.add(libero);
+            all.addAll(substitutes);
+            squadCache = Collections.unmodifiableList(all);
+        }
+        return squadCache;
     }
 
-    /** Players currently on court (the libero replaces one back-row player while in). */
+    /** Players currently on court (the libero replaces one back-row player while in). Do not modify. */
     public List<VolleyballPlayer> onCourt() {
+        List<VolleyballPlayer> squad = squad();
+        // Still the same players on court (in squad order)? Then the cached list is current.
+        int matched = 0;
+        boolean same = true;
+        for (int i = 0; i < squad.size() && same; i++) {
+            VolleyballPlayer p = squad.get(i);
+            if (!p.isOnCourt()) continue;
+            same = matched < onCourtCache.size() && onCourtCache.get(matched) == p;
+            matched++;
+        }
+        if (same && matched == onCourtCache.size()) return onCourtCache;
         List<VolleyballPlayer> list = new ArrayList<>(7);
-        for (VolleyballPlayer p : squad()) if (p.isOnCourt()) list.add(p);
-        return list;
+        for (VolleyballPlayer p : squad) if (p.isOnCourt()) list.add(p);
+        onCourtCache = Collections.unmodifiableList(list);
+        return onCourtCache;
     }
 }

@@ -15,4 +15,10 @@ import com.volleyball.game.world.CourtSide;
 public record BallTouch(int playerId, CourtSide side, ContactType type, ContactPurpose purpose, float quality,
                         PassRating rating, float missDistance, Vector3 contactPoint, Vector3 playerPosition,
                         boolean airborne, int teamTouchNumber, Vector3 outgoingVelocity, String variant, double time) {
+    /**
+     * A contact by the same player this soon after their previous one is part of the same action
+     * (a body bounce right after a dig or a block) and is not counted again. Shared by ball handling
+     * and the referee so both count the team's touches the same way.
+     */
+    public static final double SAME_ACTION_WINDOW = 0.25;
 }

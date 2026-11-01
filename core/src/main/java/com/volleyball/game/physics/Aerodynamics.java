@@ -48,6 +48,10 @@ public final class Aerodynamics {
         airEnabled = enabled;
     }
 
+    public boolean airEnabled() {
+        return airEnabled;
+    }
+
     public void setKnuckleEnabled(boolean enabled) {
         knuckleEnabled = enabled;
     }

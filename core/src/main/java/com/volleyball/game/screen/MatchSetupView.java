@@ -537,7 +537,7 @@ final class MatchSetupView {
             return;
         }
         UiKit.text(batch, big, entry.shortName(), x + pad, ty - 30f * s, UiKit.TEXT, a);
-        UiKit.text(batch, name, entry.name().toUpperCase(), x + pad, ty - 98f * s, w - 2f * pad, Align.left, false, UiKit.TEXT, a);
+        UiKit.text(batch, name, entry.name().toUpperCase(Locale.ROOT), x + pad, ty - 98f * s, w - 2f * pad, Align.left, false, UiKit.TEXT, a);
         float yy = ty - 126f * s;
         yy -= UiKit.text(batch, body, entry.style(), x + pad, yy, w - 2f * pad, Align.left, true, UiKit.MINT, a) + 10f * s;
         UiKit.text(batch, body, Lang.f("Head coach: %s", entry.coach()), x + pad, yy, w - 2f * pad, Align.left, false, UiKit.TEXT_DIM, a);
@@ -594,14 +594,14 @@ final class MatchSetupView {
         float y = top - pad;
         UiKit.text(batch, label, "ROLE GUIDE  ·  " + (roleIndex + 1) + " / " + RoleGuide.ORDER.size(), x + pad, y, UiKit.JADE, a);
         y -= 24f * s;
-        UiKit.text(batch, titleFont, guide.title().toUpperCase(), x + pad, y, UiKit.TEXT, a);
+        UiKit.text(batch, titleFont, guide.title().toUpperCase(Locale.ROOT), x + pad, y, UiKit.TEXT, a);
         y -= 46f * s;
         UiKit.text(batch, motto, guide.motto(), x + pad, y, UiKit.MINT, a);
         y -= 34f * s;
         float textW = w - 2f * pad - 110f * s;
         for (RoleGuide.Item item : guide.items()) {
             if (y < top - h + pad + 20f * s) break;
-            UiKit.text(batch, topic, item.topic().toUpperCase(), x + pad, y, UiKit.JADE, a);
+            UiKit.text(batch, topic, item.topic().toUpperCase(Locale.ROOT), x + pad, y, UiKit.JADE, a);
             float th = UiKit.text(batch, body, item.text(), x + pad + 110f * s, y, textW, Align.left, true, UiKit.TEXT, a);
             y -= Math.max(20f * s, th) + 12f * s;
         }

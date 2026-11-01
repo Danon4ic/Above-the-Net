@@ -47,8 +47,12 @@ public final class Lang {
     private static Language current = Language.EN;
     private static final Map<String, String> exact = new HashMap<>();
     private static final Map<String, String> capitals = new HashMap<>();
+    /** Capitalised texts whose entry in {@link #capitals} came from a label (see {@link #add}). */
+    private static final Set<String> capitalLabels = new java.util.HashSet<>();
     private static final List<Template> templates = new ArrayList<>();
     private static final Set<String> missing = Collections.synchronizedSet(new TreeSet<>());
+    /** Bound of {@link #missing}: texts with changing numbers would otherwise fill it all session. */
+    private static final int MISSING_LIMIT = 500;
     private static final int CACHE_SIZE = 4000;
     private static final Map<String, String> cache = new LinkedHashMap<>(256, 0.75f, true) {
         @Override
@@ -147,7 +151,7 @@ public final class Lang {
                 return capitalsOnly ? out.toUpperCase(RUSSIAN) : out;
             }
         }
-        if (hasLetters(text)) missing.add(text);
+        if (hasLetters(text) && missing.size() < MISSING_LIMIT) missing.add(text);
         return text;
     }
 
@@ -195,6 +199,10 @@ public final class Lang {
             return;
         }
         exact.put(en, ru);
-        capitals.putIfAbsent(en.toUpperCase(Locale.ROOT), ru);
+        // A text in capitals is a label in capitals ("DECOY" from "Decoy"), not a phrase fragment ("decoy"):
+        // the first label wins over any fragment, otherwise the first entry stays.
+        String upper = en.toUpperCase(Locale.ROOT);
+        boolean label = Character.isUpperCase(en.charAt(0));
+        if (label ? capitalLabels.add(upper) : !capitals.containsKey(upper)) capitals.put(upper, ru);
     }
 }

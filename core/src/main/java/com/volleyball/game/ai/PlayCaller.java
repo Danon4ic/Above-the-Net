@@ -62,6 +62,8 @@ final class PlayCaller {
     /** Who sets this time (their traits colour the choice), or null. */
     private VolleyballPlayer setter;
     private String playBeforeLast;
+    /** The setter of the called play is in the front row (only then may it dump). */
+    private boolean setterFront;
 
     PlayCaller(CourtSide side, Random random) {
         this.side = side;
@@ -127,8 +129,10 @@ final class PlayCaller {
     Combination call(Difficulty difficulty, Playbook book, TeamTactics tactics, Map<SetType.Lane, VolleyballPlayer> lanes,
                      PassRating pass, boolean setterFront, Collection<VolleyballPlayer> humans) {
         reset();
+        this.setterFront = setterFront;
         PassRating rating = pass == null ? PassRating.GOOD : pass;
-        Map<Combination, Float> weights = new HashMap<>();
+        // Insertion (playbook) order, so the weighted pick is the same for the same seed.
+        Map<Combination, Float> weights = new java.util.LinkedHashMap<>();
         TeamCommand offense = tactics == null ? null : tactics.active(TeamCommand.Group.OFFENSE);
         command = offense;
         for (Combination c : book.all()) {
@@ -155,7 +159,7 @@ final class PlayCaller {
             }
             weights.put(c, w);
         }
-        Combination picked = pick(weights);
+        Combination picked = WeightedPick.pick(random, weights, null);
         if (picked == null) picked = Playbook.emergency();
         play = picked;
         playBeforeLast = lastPlayId;
@@ -409,6 +413,8 @@ final class PlayCaller {
 
     /** Why an option cannot be played now (null: it can). */
     private String unavailable(Combination.Option o, VolleyballPlayer setter, float setterQuality) {
+        // A custom play may list the dump as any option: a back-row setter may not attack it (rule 13.2.2).
+        if (o.dump() && !setterFront) return "setter in the back row";
         if (o.dump()) return setter.isAirborne() || setterQuality > 0.6f ? null : "setter not ready";
         VolleyballPlayer h = runners.get(o.hitter());
         if (h == null) return "no hitter";
@@ -480,20 +486,5 @@ final class PlayCaller {
         if (hitter != null && hitter.has(PlayerTrait.CANNON)) bias *= 1.3f;
         if (hitter != null && hitter.has(PlayerTrait.NERVOUS)) bias *= 0.85f;
         return bias;
-    }
-
-    private Combination pick(Map<Combination, Float> weights) {
-        float total = 0f;
-        for (float w : weights.values()) total += w;
-        if (total <= 0f) return null;
-        float r = random.nextFloat() * total;
-        // Iterate in playbook order for determinism.
-        List<Combination> order = new ArrayList<>(weights.keySet());
-        order.sort((a, b) -> a.id().compareTo(b.id()));
-        for (Combination c : order) {
-            r -= weights.get(c);
-            if (r <= 0f) return c;
-        }
-        return order.get(order.size() - 1);
     }
 }

@@ -3,7 +3,6 @@ package com.volleyball.game.ai;
 import com.volleyball.game.entities.PlayerRole;
 import com.volleyball.game.entities.Team;
 import com.volleyball.game.entities.VolleyballPlayer;
-import com.volleyball.game.rules.Fault;
 import com.volleyball.game.rules.RallyOutcome;
 import com.volleyball.game.rules.RotationManager;
 import com.volleyball.game.rules.SubstitutionManager;
@@ -51,7 +50,6 @@ public final class CoachAI {
         // down after the opponent's touch (their kill) is nobody's error here.
         VolleyballPlayer culprit = null;
         for (VolleyballPlayer p : team.squad()) if (p.id == outcome.playerId()) culprit = p;
-        if (outcome.reason() == Fault.BALL_IN && culprit == null) return null;
         if (culprit == null || culprit.role == PlayerRole.LIBERO || humans.contains(culprit)) return null;
         int count = errors.merge(culprit.id, 1, Integer::sum);
         if (count < ERRORS_BEFORE_SUBSTITUTION || rotation.slotZone(team.side, culprit.id) < 0) return null;

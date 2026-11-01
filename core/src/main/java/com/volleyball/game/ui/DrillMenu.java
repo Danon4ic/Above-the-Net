@@ -132,7 +132,7 @@ public final class DrillMenu implements Disposable {
 
     private void option(BitmapFont small, BitmapFont body, float x, float y, String key, String label, String value, float s) {
         UiKit.text(batch, small, key, x, y, UiKit.JADE, 1f);
-        UiKit.text(batch, small, label.toUpperCase(), x + 22f * s, y, UiKit.TEXT_FAINT, 1f);
+        UiKit.text(batch, small, label.toUpperCase(java.util.Locale.ROOT), x + 22f * s, y, UiKit.TEXT_FAINT, 1f);
         UiKit.text(batch, body, value, x + 22f * s, y - 18f * s, UiKit.TEXT, 1f);
     }
 

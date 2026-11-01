@@ -6,15 +6,15 @@ import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.freetype.FreeTypeFontGenerator;
 import com.badlogic.gdx.utils.Disposable;
 
+import com.badlogic.gdx.utils.LongMap;
+
 import java.util.EnumMap;
-import java.util.HashMap;
-import java.util.Map;
 
 /**
  * The game's typefaces: Montserrat (SIL Open Font License, bundled in {@code fonts/}) in several
  * weights, rasterized by FreeType at exactly the pixel size needed, so text stays crisp at
  * every resolution. Latin and Cyrillic glyphs are included. Fonts are generated on first use
- * and cached by weight and size.
+ * and cached by weight and size; sizes not used for a while (the window was resized) are freed.
  */
 public final class UiFonts implements Disposable {
     public enum Weight {
@@ -36,17 +36,31 @@ public final class UiFonts implements Disposable {
             + "—–«»…•·°±×←→↑↓№’“”‹›";
 
     private final EnumMap<Weight, FreeTypeFontGenerator> generators = new EnumMap<>(Weight.class);
-    private final Map<Long, BitmapFont> cache = new HashMap<>();
+    private final LongMap<Cached> cache = new LongMap<>();
+    /** Above this many cached fonts, the ones unused for {@link #STALE_FRAMES} frames are freed. */
+    private static final int CACHE_SOFT_LIMIT = 40;
+    private static final long STALE_FRAMES = 600;
+
+    private static final class Cached {
+        final BitmapFont font;
+        /** Frame the font was last asked for. */
+        long lastUsed;
+
+        Cached(BitmapFont font) {
+            this.font = font;
+        }
+    }
 
     /**
      * A font of the weight at {@code pixels} height (rounded). The returned font is shared: set
-     * its colour before drawing, do not dispose it and do not change its scale.
+     * its colour before drawing, do not dispose it, do not change its scale and do not keep it
+     * past the frame (fonts of sizes no longer asked for are freed).
      */
     public BitmapFont get(Weight weight, float pixels) {
         int size = Math.max(8, Math.round(pixels));
         long key = (long) weight.ordinal() << 32 | size;
-        BitmapFont font = cache.get(key);
-        if (font == null) {
+        Cached cached = cache.get(key);
+        if (cached == null) {
             FreeTypeFontGenerator.FreeTypeFontParameter p = new FreeTypeFontGenerator.FreeTypeFontParameter();
             p.size = size;
             p.characters = CHARACTERS;
@@ -54,11 +68,50 @@ public final class UiFonts implements Disposable {
             p.magFilter = Texture.TextureFilter.Linear;
             p.hinting = FreeTypeFontGenerator.Hinting.AutoMedium;
             p.kerning = true;
-            font = generator(weight).generateFont(p);
+            BitmapFont font = generator(weight).generateFont(p);
             font.setUseIntegerPositions(true);
-            cache.put(key, font);
+            if (cache.size >= CACHE_SOFT_LIMIT) evictStale();
+            cached = new Cached(font);
+            cache.put(key, cached);
         }
-        return font;
+        cached.lastUsed = frame();
+        return cached.font;
+    }
+
+    private static long frame() {
+        return Gdx.graphics == null ? 0L : Gdx.graphics.getFrameId();
+    }
+
+    /** Frees the fonts no screen has asked for in the last {@link #STALE_FRAMES} frames. */
+    private void evictStale() {
+        long now = frame();
+        LongMap.Entries<Cached> entries = cache.entries();
+        while (entries.hasNext) {
+            LongMap.Entry<Cached> entry = entries.next();
+            if (now - entry.value.lastUsed > STALE_FRAMES) {
+                entry.value.font.dispose();
+                entries.remove();
+            }
+        }
+    }
+
+    /**
+     * A font of its own (not cached, the caller disposes it) with Latin and Cyrillic glyphs, for
+     * text drawn outside the interface, such as the arena's video scoreboard.
+     */
+    public static BitmapFont create(Weight weight, int pixels) {
+        FreeTypeFontGenerator generator = new FreeTypeFontGenerator(Gdx.files.classpath("fonts/" + weight.file));
+        try {
+            FreeTypeFontGenerator.FreeTypeFontParameter p = new FreeTypeFontGenerator.FreeTypeFontParameter();
+            p.size = pixels;
+            p.characters = CHARACTERS;
+            p.minFilter = Texture.TextureFilter.Linear;
+            p.magFilter = Texture.TextureFilter.Linear;
+            p.kerning = true;
+            return generator.generateFont(p);
+        } finally {
+            generator.dispose();
+        }
     }
 
     private static float userScale = 1f;
@@ -79,7 +132,7 @@ public final class UiFonts implements Disposable {
 
     @Override
     public void dispose() {
-        for (BitmapFont font : cache.values()) font.dispose();
+        for (Cached cached : cache.values()) cached.font.dispose();
         cache.clear();
         for (FreeTypeFontGenerator generator : generators.values()) generator.dispose();
         generators.clear();

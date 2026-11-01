@@ -13,6 +13,7 @@ import com.volleyball.game.world.CourtDimensions;
 import com.volleyball.game.world.CourtSide;
 import com.volleyball.game.world.Net;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,13 +37,13 @@ public final class RallyManager implements BallTouchListener, BallContactListene
 
     /** Abandon a rally that runs this long without ending (replayed). */
     public static final float MAX_RALLY_TIME = 40f;
-    /** A body bounce this soon after the same player's touch is part of the same action. */
-    static final double SAME_ACTION_WINDOW = 0.25;
 
     private final MatchFormat format;
     private final RotationManager rotation;
     private final Net net;
     private final Map<Integer, VolleyballPlayer> players = new HashMap<>();
+    /** The same players in a fixed order, for the per-step net check without an iterator. */
+    private final List<VolleyballPlayer> playerList = new ArrayList<>();
     private final Vector3 previousBall = new Vector3();
 
     private State state = State.OVER;
@@ -73,7 +74,10 @@ public final class RallyManager implements BallTouchListener, BallContactListene
         this.format = format;
         this.rotation = rotation;
         this.net = net;
-        for (VolleyballPlayer p : allPlayers) players.put(p.id, p);
+        for (VolleyballPlayer p : allPlayers) {
+            players.put(p.id, p);
+            playerList.add(p);
+        }
     }
 
     /** Whistle for the serve: the serving team's zone-1 player must serve within the time limit. */
@@ -89,9 +93,10 @@ public final class RallyManager implements BallTouchListener, BallContactListene
         lastToucherId = -1;
         lastTouchWasBlock = false;
         lastTouchWasServe = false;
+        possessionWasServe = false;
         liberoFrontZoneSet = false;
         serverInZone = false;
-        for (VolleyballPlayer p : players.values()) p.consumeNetContact();
+        clearNetContacts();
     }
 
     public State state() {
@@ -132,14 +137,22 @@ public final class RallyManager implements BallTouchListener, BallContactListene
             previousBall.set(ball.position);
             ballSeen = true;
         }
-        if (state == State.IN_PLAY && format.isOfficial()) {
-            for (VolleyballPlayer p : players.values()) {
+        if (state != State.IN_PLAY) {
+            // Touching the net is only a fault while the ball is in play (rule 11.3).
+            clearNetContacts();
+        } else if (format.isOfficial()) {
+            for (int i = 0; i < playerList.size(); i++) {
+                VolleyballPlayer p = playerList.get(i);
                 if (p.consumeNetContact()) {
                     end(p.side.opposite(), Fault.PLAYER_NET_TOUCH, p.id, now);
                     return;
                 }
             }
         }
+    }
+
+    private void clearNetContacts() {
+        for (int i = 0; i < playerList.size(); i++) playerList.get(i).consumeNetContact();
     }
 
     private void checkNetCrossing(Ball ball, double now) {
@@ -149,11 +162,11 @@ public final class RallyManager implements BallTouchListener, BallContactListene
         float t = x0 / (x0 - x1);
         float y = previousBall.y + (ball.position.y - previousBall.y) * t;
         float z = previousBall.z + (ball.position.z - previousBall.z) * t;
-        CourtSide from = CourtDimensions.sideOf(x0);
+        // The team that touched the ball last is responsible for where it crosses (a block touch counts).
         if (!net.isWithinAntennas(z, Ball.RADIUS) && y > net.bottomHeight()) {
-            end(from.opposite(), Fault.OUTSIDE_CROSSING_SPACE, lastToucherId, now);
+            end(lastTouchLoser().opposite(), Fault.OUTSIDE_CROSSING_SPACE, lastToucherId, now);
         } else if (y + Ball.RADIUS < net.bottomHeight() && Math.abs(z) <= CourtDimensions.HALF_WIDTH) {
-            end(from.opposite(), Fault.UNDER_NET, lastToucherId, now);
+            end(lastTouchLoser().opposite(), Fault.UNDER_NET, lastToucherId, now);
         }
     }
 
@@ -181,6 +194,7 @@ public final class RallyManager implements BallTouchListener, BallContactListene
                 // A block touch: the team now has three touches, the blocker may play again.
                 possession = p.side;
                 touchCount = 0;
+                possessionWasServe = false;
                 lastToucherId = p.id;
                 lastTouchWasBlock = true;
                 lastTouchWasServe = false;
@@ -274,7 +288,7 @@ public final class RallyManager implements BallTouchListener, BallContactListene
             possession = p.side;
             touchCount = 1;
         } else {
-            boolean sameAction = p.id == lastToucherId && now - lastTouchTime < SAME_ACTION_WINDOW;
+            boolean sameAction = p.id == lastToucherId && now - lastTouchTime < BallTouch.SAME_ACTION_WINDOW;
             if (sameAction) {
                 lastTouchTime = now;
                 return true;

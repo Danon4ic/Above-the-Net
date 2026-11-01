@@ -25,6 +25,13 @@ import java.util.List;
  * (see {@link TeamAI}) but follow the same reasoning.
  */
 public final class ShotAdvisor {
+    /**
+     * An opponent this close to the net (m) and this far along it from the hitter (m) is in the
+     * hitter's block: the shot choice of the team AI and the advice read the same block.
+     */
+    static final float BLOCK_NET_DISTANCE = 1.5f;
+    static final float BLOCK_LATERAL = 1.8f;
+
     /** How good the pass to the setter is, judged from where it comes down. */
     public enum PassQuality { GOOD, OK, POOR }
 
@@ -142,7 +149,7 @@ public final class ShotAdvisor {
         int blockers = 0;
         float blockZ = 0f;
         for (VolleyballPlayer o : opponents(hitter.side)) {
-            if (Math.abs(o.position.x) < 1.5f && Math.abs(o.position.z - hitter.position.z) < 1.8f) {
+            if (Math.abs(o.position.x) < BLOCK_NET_DISTANCE && Math.abs(o.position.z - hitter.position.z) < BLOCK_LATERAL) {
                 blockers++;
                 blockZ += o.position.z;
             }

@@ -32,7 +32,7 @@ public enum Fault {
     LIBERO_BLOCK("Libero blocked", true),
     LIBERO_SET_ATTACK("Attack above the net after a libero's overhead set from the front zone", true),
     /** Rally abandoned (e.g. the ball got stuck); replayed without a point. */
-    REPLAY("Replay", false);
+    REPLAY("Rally replayed", false);
 
     public final String label;
     public final boolean officialOnly;

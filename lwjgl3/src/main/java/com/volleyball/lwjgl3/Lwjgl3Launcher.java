@@ -22,9 +22,9 @@ public final class Lwjgl3Launcher {
     private Lwjgl3Launcher() {}
 
     public static void main(String[] args) {
-        ConfigStore store = ConfigStore.userDefault();
-        GameConfig config = store.load();
         try {
+            ConfigStore store = ConfigStore.userDefault();
+            GameConfig config = store.load();
             new Lwjgl3Application(new VolleyballGame(store, config, LaunchOptions.parse(args)), createConfiguration(config));
         } catch (RuntimeException | Error e) {
             Path log = writeCrashLog(e);

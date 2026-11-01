@@ -9,7 +9,6 @@ import com.volleyball.game.mechanics.ContactType;
 import com.volleyball.game.mechanics.ContactZone;
 import com.volleyball.game.mechanics.ServeType;
 import com.volleyball.game.physics.MoveIntent;
-import com.volleyball.game.physics.PhysicsConstants;
 import com.volleyball.game.physics.PlayerLocomotion;
 import com.volleyball.game.physics.TrajectoryPredictor;
 import com.volleyball.game.simulation.GameWorld;
@@ -61,8 +60,6 @@ public final class AutoPlayer {
     private double toucherSeenAt;
     /** Sideways offset (m, along the net) of this player's block from the expected hitting spot. */
     private float blockOffset;
-    /** Extra delay before the block jump (negative = earlier), e.g. when fooled by a decoy. */
-    private float blockJumpDelay;
     /** Base defense: extra depth (m, + = deeper) and sideways shift (m, +z) of the reading position. */
     private float defenseDepth;
     private float defenseShift;
@@ -83,6 +80,11 @@ public final class AutoPlayer {
     }
 
     /** The player is in the back row: attacks take off behind the attack line. */
+    /** Forgets the last rally's ball, so the serve is a new ball to react to even from the same server. */
+    public void newRally() {
+        seenToucher = Integer.MIN_VALUE;
+    }
+
     public void setBackRow(boolean backRow) {
         this.backRow = backRow;
     }
@@ -98,10 +100,6 @@ public final class AutoPlayer {
     /** Group block: stand this far along the net (+z) from the expected hitting spot. */
     public void setBlockOffset(float offset) {
         blockOffset = offset;
-    }
-
-    public void setBlockJumpDelay(float delay) {
-        blockJumpDelay = delay;
     }
 
     /** Adjusts the base defense position (scouting, tactics). */
@@ -243,7 +241,7 @@ public final class AutoPlayer {
         world.predictor().predict(world.ball(), 3f, forecast);
         forecast.watchHeight = Float.NaN;
         if (!forecast.reachesWatchHeight) return;
-        float riseTime = (float) Math.sqrt(2f * jumpHeight / PhysicsConstants.GRAVITY);
+        float riseTime = PlayerLocomotion.riseTime(jumpHeight);
         float carry = PlayerLocomotion.TAKEOFF_CARRY * riseTime;
         float takeoffX = forecast.descentPoint.x - relX - p.velocity.x * carry;
         // Never take off on or inside the end line.
@@ -312,7 +310,7 @@ public final class AutoPlayer {
             return;
         }
         float t = forecast.timeToDescent;
-        float riseTime = (float) Math.sqrt(2f * jump / PhysicsConstants.GRAVITY);
+        float riseTime = PlayerLocomotion.riseTime(jump);
         // The jump keeps part of the run-up: take off that much short of the hitting spot.
         float carry = PlayerLocomotion.TAKEOFF_CARRY * riseTime;
         moveTowards(p, intent, awayFromNet(p, forecast.descentPoint.x - relX - p.velocity.x * carry + readX(t) * 0.5f,
@@ -340,10 +338,10 @@ public final class AutoPlayer {
                 forecast.descentPoint.z + blockOffset));
         moveTowards(p, intent, p.side.sign() * 0.4f, spot);
         brakeAtNet(p, intent, 0.7f);
-        float riseTime = (float) Math.sqrt(2f * PlayerLocomotion.jumpHeight(p.attributes) / PhysicsConstants.GRAVITY);
+        float riseTime = PlayerLocomotion.riseTime(PlayerLocomotion.jumpHeight(p.attributes));
         // Jump straight up: never while still drifting towards the net (that ends in the net).
         float towardsNet = p.velocity.x * -p.side.sign();
-        if (forecast.timeToDescent <= riseTime - 0.08f + blockJumpDelay && towardsNet < 0.5f) intent.jump = true;
+        if (forecast.timeToDescent <= riseTime - 0.08f && towardsNet < 0.5f) intent.jump = true;
     }
 
     /**

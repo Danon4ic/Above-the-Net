@@ -321,13 +321,13 @@ public final class HelpMenu implements Disposable {
                 float ry = listTop - (i + 1) * rowH;
                 boolean sel = i == selected;
                 float cy = ry + (rowH - 4f * s) / 2f;
-                UiKit.text(batch, number, String.format("%02d", i + 1), x0 + pad + 16f * s, cy + number.getCapHeight() / 2f,
+                UiKit.text(batch, number, String.format(java.util.Locale.ROOT, "%02d", i + 1), x0 + pad + 16f * s, cy + number.getCapHeight() / 2f,
                         sel ? UiKit.JADE : UiKit.TEXT_FAINT, a);
-                UiKit.text(batch, item, list.get(i).title().toUpperCase(), x0 + pad + 48f * s + (sel ? 4f * s : 0f),
+                UiKit.text(batch, item, list.get(i).title().toUpperCase(java.util.Locale.ROOT), x0 + pad + 48f * s + (sel ? 4f * s : 0f),
                         cy + item.getCapHeight() / 2f, listW - 56f * s, Align.left, false, sel ? UiKit.TEXT : UiKit.TEXT_DIM, a);
             }
         }
-        UiKit.text(batch, cardTitle, topic.title().toUpperCase(), cardX + inner, cardTop - 24f * s, UiKit.TEXT, a);
+        UiKit.text(batch, cardTitle, topic.title().toUpperCase(java.util.Locale.ROOT), cardX + inner, cardTop - 24f * s, UiKit.TEXT, a);
         UiKit.text(batch, summary, topic.summary(), cardX + inner, cardTop - 62f * s, cardW - 2f * inner, Align.left, true,
                 UiKit.MINT, a);
         for (int i = 0; i < topic.rows().size(); i++) {

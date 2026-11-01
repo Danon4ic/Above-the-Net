@@ -107,6 +107,8 @@ public final class MatchScreen extends ScreenAdapter {
     private final com.badlogic.gdx.math.Vector3 heldBall = new com.badlogic.gdx.math.Vector3();
     /** The two head coaches on the sideline (figures only). */
     private final SidelineCoaches coaches;
+    /** Seed of the crowd and commentary sounds, drawn with the others from the session seed. */
+    private final long soundSeed;
     /** The first referee on the stand (hand signals). */
     private final com.volleyball.game.match.Referee referee = new com.volleyball.game.match.Referee();
     /** Players and coaches: everything the player renderer draws this frame. */
@@ -165,13 +167,19 @@ public final class MatchScreen extends ScreenAdapter {
         this.setup = setup;
         this.config = game.config();
         this.court = new VolleyballCourt(config.netCategory());
-        TeamCatalog.Entry[] teams = setup.teams(new java.util.Random());
+        // One seed drives every random choice of the session, so a match can be replayed with --seed.
+        long seed = game.launchOptions().seed() != null ? game.launchOptions().seed() : System.nanoTime();
+        Gdx.app.log("Match", "seed " + seed);
+        java.util.Random seeds = new java.util.Random(seed);
+        TeamCatalog.Entry[] teams = setup.teams(new java.util.Random(seeds.nextLong()));
         // The person's team in the chosen kit; the opponent changes to its away kit if the kits clash.
         com.volleyball.game.entities.Team homeTeam = TeamFactory.build(teams[0], CourtSide.HOME, 0, teams[1].shirt(), setup.awayKit());
-        this.world = new GameWorld(court, homeTeam, TeamFactory.build(teams[1], CourtSide.AWAY, 6, homeTeam.shirtColor, false));
-        this.coaches = new SidelineCoaches(world.home(), world.away(), System.nanoTime());
+        this.world = new GameWorld(court, homeTeam, TeamFactory.build(teams[1], CourtSide.AWAY, 6, homeTeam.shirtColor, false),
+                seeds.nextLong());
+        this.coaches = new SidelineCoaches(world.home(), world.away(), seeds.nextLong());
         this.ballLab = new BallLab(world);
-        this.drills = new DrillController(world);
+        this.drills = new DrillController(world, seeds.nextLong());
+        this.soundSeed = seeds.nextLong();
         world.addContactListener(ballLab);
         world.addContactListener(this::logContact);
         this.autoTrainee = new AutoTrainee(world);
@@ -199,7 +207,7 @@ public final class MatchScreen extends ScreenAdapter {
         input = new InputController(new GdxKeyState(config.keyBindings()));
         input2 = new InputController(new GdxKeyState(config.keyBindingsPlayer2()));
         sound = game.sound();
-        soundDirector = new SoundDirector(world, sound, System.nanoTime()).attach();
+        soundDirector = new SoundDirector(world, sound, soundSeed).attach();
         drills.addMatchListener(soundDirector);
         scoreOverlay = new ScoreOverlay(world, game.fonts());
         scoreOverlay.resize(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
@@ -457,11 +465,11 @@ public final class MatchScreen extends ScreenAdapter {
         String title;
         if (finished) {
             CourtSide winner = score.matchWinner();
-            title = (winner == CourtSide.HOME ? world.home().name : world.away().name).toUpperCase() + " WIN";
+            title = (winner == CourtSide.HOME ? world.home().name : world.away().name).toUpperCase(java.util.Locale.ROOT) + " WIN";
         } else {
             title = "MATCH STATISTICS";
         }
-        String subtitle = String.format("Sets %d : %d   ·   Set %d   ·   %d : %d", score.sets(CourtSide.HOME), score.sets(CourtSide.AWAY),
+        String subtitle = String.format(java.util.Locale.ROOT, "Sets %d : %d   ·   Set %d   ·   %d : %d", score.sets(CourtSide.HOME), score.sets(CourtSide.AWAY),
                 score.setNumber(), score.points(CourtSide.HOME), score.points(CourtSide.AWAY));
         String footer = finished ? "Tab: the other team's players   ·   Enter: main menu"
                 : "Tab: the other team's players   ·   K / Esc: back to the match";
@@ -624,7 +632,7 @@ public final class MatchScreen extends ScreenAdapter {
         BallHandling handling = world.ballHandling();
         if (handling.lastTouchSide() != p.side || handling.teamTouches(p.side) < 1 || handling.teamTouches(p.side) > 2) return null;
         String assignment = match.ai(p.side).playAssignment(p);
-        return assignment == null ? null : "PLAY  ·  " + assignment.toUpperCase();
+        return assignment == null ? null : "PLAY  ·  " + assignment.toUpperCase(java.util.Locale.ROOT);
     }
 
     private final List<String[]> actionKeys = new ArrayList<>();
@@ -731,8 +739,8 @@ public final class MatchScreen extends ScreenAdapter {
         boolean holding = handling.server() == p && handling.servePhase() == BallHandling.ServePhase.HOLDING;
         boolean next = handling.nextServer() == p && !world.ball().isActive() && handling.servePhase() == BallHandling.ServePhase.NONE;
         if (!holding && !next) return null;
-        return holding ? "YOUR SERVE  ·  " + handling.serveType(p).label.toUpperCase()
-                : "YOU SERVE NEXT  ·  " + handling.serveType(p).label.toUpperCase();
+        return holding ? "YOUR SERVE  ·  " + handling.serveType(p).label.toUpperCase(java.util.Locale.ROOT)
+                : "YOU SERVE NEXT  ·  " + handling.serveType(p).label.toUpperCase(java.util.Locale.ROOT);
     }
 
     private void perform(PauseMenu.Action action) {
@@ -814,7 +822,7 @@ public final class MatchScreen extends ScreenAdapter {
         if (scoreOverlay != null && drills.match() != null && !roleAnnounced) {
             roleAnnounced = true;
             RoleGuide guide = RoleGuide.of(drills.role());
-            scoreOverlay.announce("YOUR ROLE: " + guide.title().toUpperCase(), guide.motto() + "   (Esc: role guide)",
+            scoreOverlay.announce("YOUR ROLE: " + guide.title().toUpperCase(java.util.Locale.ROOT), guide.motto() + "   (Esc: role guide)",
                     world.home().shirtColor, 4.5f);
         }
         input.clearBuffer();
@@ -1024,7 +1032,7 @@ public final class MatchScreen extends ScreenAdapter {
         hud.setTopOffset(match != null && !replaying ? Gdx.graphics.getHeight() - matchHud.cardBottom() + 4f : 0f);
         if (match != null) {
             if (replaying) return status;
-            if (showDetails) status.add(String.format("DETAILS  ·  FPS %d  ·  camera %s", Gdx.graphics.getFramesPerSecond(),
+            if (showDetails) status.add(String.format(java.util.Locale.ROOT, "DETAILS  ·  FPS %d  ·  camera %s", Gdx.graphics.getFramesPerSecond(),
                     cameraController.mode().label));
             else if (showAi) status.add("AI VIEW");
         }
@@ -1033,12 +1041,12 @@ public final class MatchScreen extends ScreenAdapter {
         } else if (match != null) {
             return status;
         } else {
-            status.add(String.format("%s  ·  %s  ·  %d / %d%s", drills.drill().label.toUpperCase(), drills.phaseLabel(),
+            status.add(String.format(java.util.Locale.ROOT, "%s  ·  %s  ·  %d / %d%s", drills.drill().label.toUpperCase(java.util.Locale.ROOT), drills.phaseLabel(),
                     drills.successes(), drills.attempts(), autoplay ? "  ·  DEMO (F10 to play)" : ""));
             status.add("  " + drills.drill().instructions);
         }
-        if (match == null) status.add(String.format("#%d %s  ·  %s%s%s", p.number, p.name, p.role.label,
-                p.isAirborne() ? String.format("  ·  in the air %.2f m", p.position.y) : "",
+        if (match == null) status.add(String.format(java.util.Locale.ROOT, "#%d %s  ·  %s%s%s", p.number, p.name, p.role.label,
+                p.isAirborne() ? String.format(java.util.Locale.ROOT, "  ·  in the air %.2f m", p.position.y) : "",
                 handling.isArmed(p) ? "  ·  ACTION ARMED" : ""));
         ContactPurpose context = handling.variantContext(p);
         String variant = switch (context) {
@@ -1052,12 +1060,12 @@ public final class MatchScreen extends ScreenAdapter {
             status.add("Result: " + drills.lastResult());
         }
         if (showDetails) {
-            status.add(String.format("  FPS %d  ·  camera %s", Gdx.graphics.getFramesPerSecond(), cameraController.mode().label));
-            status.add(String.format("  Serve %s  ·  Set %s  ·  Shot %s  ·  %s  ·  team touches %d", handling.serveType(p).label,
+            status.add(String.format(java.util.Locale.ROOT, "  FPS %d  ·  camera %s", Gdx.graphics.getFramesPerSecond(), cameraController.mode().label));
+            status.add(String.format(java.util.Locale.ROOT, "  Serve %s  ·  Set %s  ·  Shot %s  ·  %s  ·  team touches %d", handling.serveType(p).label,
                     handling.setType(p).label, handling.attackType(p).label, handling.blockStyle(p).label, handling.teamTouches(p.side)));
-            status.add(String.format("  %.1f m/s  ·  jump %.2f m", p.groundSpeed(), PlayerLocomotion.jumpHeight(p.attributes)));
+            status.add(String.format(java.util.Locale.ROOT, "  %.1f m/s  ·  jump %.2f m", p.groundSpeed(), PlayerLocomotion.jumpHeight(p.attributes)));
             if (ball.isActive()) {
-                status.add(String.format("  Ball %.0f km/h  ·  spin %.1f rev/s  ·  height %.2f m", ball.speed() * 3.6f,
+                status.add(String.format(java.util.Locale.ROOT, "  Ball %.0f km/h  ·  spin %.1f rev/s  ·  height %.2f m", ball.speed() * 3.6f,
                         ball.spinRevolutionsPerSecond(), ball.position.y));
             }
             if (match != null) addMatchDetails(match);
@@ -1066,7 +1074,7 @@ public final class MatchScreen extends ScreenAdapter {
         }
         if (match != null && showAi) addAiStatus(match);
         if (match == null) {
-            status.add(String.format("  F1 help  ·  M menu  ·  Esc pause  ·  H details  ·  C camera  ·  N sound %s (%d%%)",
+            status.add(String.format(java.util.Locale.ROOT, "  F1 help  ·  M menu  ·  Esc pause  ·  H details  ·  C camera  ·  N sound %s (%d%%)",
                     config.soundEnabled ? "on" : "off", Math.round(config.masterVolume * 100)));
         }
         return status;
@@ -1076,12 +1084,12 @@ public final class MatchScreen extends ScreenAdapter {
     private void addAiStatus(MatchController match) {
         for (CourtSide side : CourtSide.values()) {
             TeamAI ai = match.ai(side);
-            StringBuilder line = new StringBuilder(String.format("AI %s [%s, risk %.2f]:", side == CourtSide.HOME
+            StringBuilder line = new StringBuilder(String.format(java.util.Locale.ROOT, "AI %s [%s, risk %.2f]:", side == CourtSide.HOME
                     ? world.home().shortName : world.away().shortName, ai.difficulty().label, ai.risk()));
             for (VolleyballPlayer p : (side == CourtSide.HOME ? world.home() : world.away()).onCourt()) {
                 AiState state = ai.state(p);
-                line.append(String.format("  #%d %s", p.number, state.label));
-                if (state == AiState.MOVING_TO_BALL || state == AiState.PASSING) line.append(String.format(" %.0f%%", ai.reachChance(p) * 100f));
+                line.append(String.format(java.util.Locale.ROOT, "  #%d %s", p.number, state.label));
+                if (state == AiState.MOVING_TO_BALL || state == AiState.PASSING) line.append(String.format(java.util.Locale.ROOT, " %.0f%%", ai.reachChance(p) * 100f));
             }
             status.add(line.toString());
             // The other team's plan stays its coach's secret: only a team with a person in it (or
@@ -1103,11 +1111,11 @@ public final class MatchScreen extends ScreenAdapter {
         RallyManager rally = match.rules().rally();
         RotationManager rotation = match.rules().rotation();
         VolleyballPlayer server = match.currentServer();
-        status.add(String.format("  %s %d : %d %s    sets %d : %d    set %d%s",
+        status.add(String.format(java.util.Locale.ROOT, "  %s %d : %d %s    sets %d : %d    set %d%s",
                 world.home().shortName, score.points(CourtSide.HOME), score.points(CourtSide.AWAY), world.away().shortName,
                 score.sets(CourtSide.HOME), score.sets(CourtSide.AWAY), score.setNumber(),
                 score.isMatchOver() ? "   MATCH OVER - " + (score.matchWinner() == CourtSide.HOME ? world.home().name : world.away().name) + " win" : ""));
-        status.add(String.format("  Serving: #%d %s (%s)   touches %s %d / %s %d   rally %.1f s   [%s]",
+        status.add(String.format(java.util.Locale.ROOT, "  Serving: #%d %s (%s)   touches %s %d / %s %d   rally %.1f s   [%s]",
                 server.number, server.name, server.side == CourtSide.HOME ? world.home().shortName : world.away().shortName,
                 world.home().shortName, rally.touches(CourtSide.HOME), world.away().shortName, rally.touches(CourtSide.AWAY),
                 rally.state() == RallyManager.State.OVER ? 0.0 : rally.elapsed(world.time()), match.rules().format().mode().label));
@@ -1154,7 +1162,7 @@ public final class MatchScreen extends ScreenAdapter {
         String what = contact.kind() == ColliderKind.PLAYER_BODY
                 ? "body of #" + numberOf(contact.playerId())
                 : contact.kind().name();
-        contactLog.addFirst(String.format("%s at (%.1f, %.1f, %.1f) %.1f m/s", what,
+        contactLog.addFirst(String.format(java.util.Locale.ROOT, "%s at (%.1f, %.1f, %.1f) %.1f m/s", what,
                 contact.position().x, contact.position().y, contact.position().z, contact.impactSpeed()));
         while (contactLog.size() > CONTACT_LOG_SIZE) contactLog.removeLast();
     }

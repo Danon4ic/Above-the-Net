@@ -114,6 +114,12 @@ class TacticalCoachTest {
                 sentBy[0] = t.side();
                 outBy[0] = 0f;
             });
+            // A ball off a body is that team's ball (saving it is right, not playing an out-ball).
+            world.addContactListener(c -> {
+                if (c.kind() != com.volleyball.game.physics.ColliderKind.PLAYER_BODY) return;
+                sentBy[0] = world.player(c.playerId()).side;
+                outBy[0] = 0f;
+            });
             match.start(CourtSide.HOME);
             boolean counted = false;
             boolean chased = false;

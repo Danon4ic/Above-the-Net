@@ -32,6 +32,8 @@ public final class GdxSoundSink implements SoundSink, Disposable {
     private GdxSoundSink(GameConfig config) {
         this.config = config;
         folder = FileHandle.tempDirectory("volleyball-audio");
+        // Each file is deleted once loaded; the empty folder goes at exit even if dispose never runs.
+        folder.file().deleteOnExit();
         generator = new Thread(this::generateAll, "audio-synth");
         generator.setDaemon(true);
         generator.start();
@@ -53,7 +55,7 @@ public final class GdxSoundSink implements SoundSink, Disposable {
         try {
             for (SoundId id : SoundId.values()) {
                 if (disposed) return;
-                FileHandle file = folder.child(id.name().toLowerCase() + ".wav");
+                FileHandle file = folder.child(id.name().toLowerCase(java.util.Locale.ROOT) + ".wav");
                 file.writeBytes(SoundSynth.toWav(synth.generate(id)), false);
                 ready.add(Map.entry(id, file));
             }
@@ -71,6 +73,8 @@ public final class GdxSoundSink implements SoundSink, Disposable {
             } catch (RuntimeException e) {
                 Gdx.app.error("Audio", "Could not load " + entry.getKey() + ": " + e.getMessage());
             }
+            // The sound is decoded into memory: the WAV file is no longer needed.
+            entry.getValue().delete();
         }
         // Keep the loops at the right level when the settings change.
         for (Map.Entry<SoundId, Float> loop : loopVolumes.entrySet()) applyLoop(loop.getKey(), loop.getValue());

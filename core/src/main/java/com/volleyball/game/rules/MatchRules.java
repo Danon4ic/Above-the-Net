@@ -31,8 +31,15 @@ public final class MatchRules {
     private final SubstitutionManager substitutions = new SubstitutionManager();
     private CourtSide servingSide;
     private CourtSide firstServerOfSet;
+    /** The coin toss before the deciding set (rule 7.1). */
+    private final java.util.SplittableRandom toss;
 
     public MatchRules(MatchFormat format, RotationManager rotation, List<VolleyballPlayer> players, Net net) {
+        this(format, rotation, players, net, 0L);
+    }
+
+    public MatchRules(MatchFormat format, RotationManager rotation, List<VolleyballPlayer> players, Net net, long seed) {
+        this.toss = new java.util.SplittableRandom(seed);
         this.format = format;
         this.rotation = rotation;
         this.score = new MatchScore(format);
@@ -64,8 +71,10 @@ public final class MatchRules {
         boolean sideOut = winner != servingSide;
         if (point.setWon()) {
             if (!point.matchWon()) {
-                // New set: starting line-ups; the team that received first in the last set serves first.
-                firstServerOfSet = firstServerOfSet.opposite();
+                // New set: starting line-ups; the team that received first in the last set serves first,
+                // except in the deciding set, which starts with a new coin toss (rule 7.1).
+                boolean deciding = format.maxSets() > 1 && score.setNumber() == format.maxSets();
+                firstServerOfSet = deciding ? (toss.nextBoolean() ? CourtSide.HOME : CourtSide.AWAY) : firstServerOfSet.opposite();
                 servingSide = firstServerOfSet;
                 rotation.reset();
                 substitutions.newSet(rotation);

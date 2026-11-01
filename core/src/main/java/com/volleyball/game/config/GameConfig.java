@@ -115,6 +115,7 @@ public final class GameConfig {
         graphicsQuality = graphicsQuality().name();
         lighting = lighting().name();
         netCategory = netCategory().name();
+        language = com.volleyball.game.i18n.Lang.parse(language).name();
         return this;
     }
 

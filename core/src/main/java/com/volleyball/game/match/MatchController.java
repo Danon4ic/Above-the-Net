@@ -88,12 +88,14 @@ public final class MatchController {
         this.world = world;
         this.system = system;
         RotationManager rotation = new RotationManager(lineUp(world.home(), system), lineUp(world.away(), system));
-        this.rules = new MatchRules(format, rotation, world.players(), world.court().net());
+        this.rules = new MatchRules(format, rotation, world.players(), world.court().net(), seed);
         RallyManager rally = rules.rally();
         world.ballHandling().addListener(rally);
         world.addContactListener(rally);
-        homeAI = new TeamAI(world, world.home(), home, seed);
-        awayAI = new TeamAI(world, world.away(), away, seed + 1);
+        // Independent streams for the two teams (adjacent java.util.Random seeds start out correlated).
+        java.util.SplittableRandom seeds = new java.util.SplittableRandom(seed);
+        homeAI = new TeamAI(world, world.home(), home, seeds.nextLong());
+        awayAI = new TeamAI(world, world.away(), away, seeds.nextLong());
         world.ballHandling().addListener(homeAI);
         world.ballHandling().addListener(awayAI);
         homeAI.setSystem(system);
@@ -261,8 +263,8 @@ public final class MatchController {
     }
 
     /**
-     * The teams change ends (rule 18.2): after every set, and in the deciding set when the
-     * leading team reaches 8 points (half of the set). The benches go with them.
+     * The teams change ends (rule 18.2): after every set but the one before the deciding set, and in
+     * the deciding set when the leading team reaches 8 points (half of the set). The benches go with them.
      */
     private void changeEnds() {
         sidesSwapped = !sidesSwapped;
@@ -351,7 +353,10 @@ public final class MatchController {
             runLength = 0;
             homeCoach.newSet();
             awayCoach.newSet();
-            if (!lastPoint.matchWon()) changeEnds();
+            // The teams change ends after every set except before the deciding one (rule 18.2.1).
+            MatchScore score = rules.score();
+            boolean decidingNext = score.format().maxSets() > 1 && score.setNumber() == score.format().maxSets();
+            if (!lastPoint.matchWon() && !decidingNext) changeEnds();
         } else if (!lastPoint.matchWon()) {
             MatchScore score = rules.score();
             MatchFormat format = score.format();

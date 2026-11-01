@@ -81,6 +81,11 @@ public final class PlayerLocomotion {
         return PlayerAttributes.scale(attributes.jump, 0.40f, 0.95f);
     }
 
+    /** Time (s) from take-off to the top of a jump of the given height. */
+    public static float riseTime(float jumpHeight) {
+        return (float) Math.sqrt(2f * jumpHeight / PhysicsConstants.GRAVITY);
+    }
+
     /** Take-off vertical speed; a run-up adds up to 15 % jump height (approach jump). */
     public static float takeoffSpeed(VolleyballPlayer player) {
         return takeoffSpeed(player, 1f);

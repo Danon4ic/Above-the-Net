@@ -46,7 +46,11 @@ public final class NetClient {
             if (message == null) continue;
             try {
                 switch (message.type()) {
-                    case WELCOME -> slot = message.payload().get();
+                    case WELCOME -> {
+                        slot = message.payload().get();
+                        // A (re)started host counts its ticks from the start again.
+                        lastSnapshot = null;
+                    }
                     case SNAPSHOT -> {
                         WorldSnapshot snapshot = WorldSnapshot.read(message.payload());
                         if (newest == null || snapshot.tick > newest.tick) newest = snapshot;
@@ -54,11 +58,12 @@ public final class NetClient {
                     default -> {
                     }
                 }
-            } catch (BufferUnderflowException | ArrayIndexOutOfBoundsException malformed) {
+            } catch (BufferUnderflowException | IndexOutOfBoundsException | IllegalArgumentException malformed) {
                 // ignore truncated or corrupted messages
             }
         }
-        if (newest != null && (lastSnapshot == null || newest.tick > lastSnapshot.tick)) {
+        if (newest != null && (lastSnapshot == null || newest.tick > lastSnapshot.tick
+                || lastSnapshot.tick - newest.tick > NetHost.RESTART_TICKS)) {
             newest.applyTo(world);
             lastSnapshot = newest;
         }

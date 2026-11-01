@@ -158,12 +158,12 @@ public final class MatchHud implements Disposable {
         shapes.end();
 
         batch.begin();
-        UiKit.text(batch, modeFont, m.mode.toUpperCase(), x + pad, top - 12f * s, UiKit.JADE, 1f);
+        UiKit.text(batch, modeFont, m.mode.toUpperCase(java.util.Locale.ROOT), x + pad, top - 12f * s, UiKit.JADE, 1f);
         UiKit.text(batch, numberFont, String.valueOf(m.number), x + pad, by + badge / 2f + numberFont.getCapHeight() / 2f, badge,
                 Align.center, false, UiKit.TEXT, 1f);
         float tx = x + pad + badge + 12f * s;
         UiKit.text(batch, nameFont, m.name, tx, by + badge - 6f * s, UiKit.TEXT, 1f);
-        UiKit.text(batch, roleFont, m.role.toUpperCase() + (m.youServe ? "   ·   YOUR SERVE" : ""), tx, by + 16f * s,
+        UiKit.text(batch, roleFont, m.role.toUpperCase(java.util.Locale.ROOT) + (m.youServe ? "   ·   YOUR SERVE" : ""), tx, by + 16f * s,
                 m.youServe ? UiKit.MINT : UiKit.TEXT_DIM, 1f);
         if (!m.traits.isEmpty()) {
             UiKit.text(batch, roleFont, m.traits, x + pad, by - 12f * s, cardW - 2f * pad, Align.left, false, UiKit.JADE, 1f);
@@ -176,7 +176,7 @@ public final class MatchHud implements Disposable {
             UiKit.text(batch, small, "FATIGUE OFF (ARCADE)", x + pad, barY + 18f * s, UiKit.TEXT_FAINT, 1f);
         }
         String[] chipLabels = {"TOUCHES", "RALLY", "SERVE"};
-        String rally = m.rallyTime < 0f ? "-" : String.format("%d:%02d", (int) m.rallyTime / 60, (int) m.rallyTime % 60);
+        String rally = m.rallyTime < 0f ? "-" : String.format(java.util.Locale.ROOT, "%d:%02d", (int) m.rallyTime / 60, (int) m.rallyTime % 60);
         String[] chipValues = {m.touches + " / 3", rally, m.server};
         for (int i = 0; i < 3; i++) {
             float cx = x + pad + i * (chipW + 8f * s);

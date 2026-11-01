@@ -375,6 +375,48 @@ class RallyManagerTest {
         assertFault(u, AWAY, Fault.UNDER_NET);
     }
 
+    @Test
+    void attackOnServeIsNotCalledAfterABlockOfTheReceivingTeamsAttack() {
+        RallyManager r = rally(MatchFormat.official());
+        r.onBallTouch(touch(0, ContactType.SERVE, 3f, 0.9f));
+        r.onBallTouch(touch(10, ContactType.FOREARM_PASS));   // away receives the serve
+        r.onBallTouch(touch(6, ContactType.OVERHEAD_PASS));
+        r.onBallTouch(touch(8, ContactType.ATTACK, 3.2f, 0.9f));
+        r.onBallTouch(touch(2, ContactType.BLOCK, 3.0f, 0.8f)); // home blocks: possession home
+        VolleyballPlayer hitter = player(1);                    // home zone 2 plays the rebound above the net
+        hitter.placeAt(-1.5f, 2f);
+        hitter.setAirborne(true);
+        r.onBallTouch(touch(1, ContactType.ATTACK, 3.2f, 0.9f));
+        assertEquals(RallyManager.State.IN_PLAY, r.state(), "home never received a serve in this possession");
+        hitter.setAirborne(false);
+    }
+
+    @Test
+    void aBallCrossingOutsideTheAntennasAfterABlockIsTheBlockingTeamsFault() {
+        RallyManager r = rally(MatchFormat.official());
+        r.onBallTouch(touch(0, ContactType.SERVE, 3f, 0.9f));
+        r.onBallTouch(touch(10, ContactType.FOREARM_PASS));
+        r.onBallTouch(touch(6, ContactType.OVERHEAD_PASS));
+        r.onBallTouch(touch(8, ContactType.ATTACK, 3.2f, 0.9f));
+        r.onBallTouch(touch(2, ContactType.BLOCK, 3.0f, 0.8f));
+        // Off the home block's hands, from the away side back over to home outside the antenna.
+        ball.launch(new Vector3(0.2f, 3f, 4.9f), new Vector3(-10f, 0f, 0f), Vector3.Zero, 1);
+        r.update(ball, time);
+        ball.position.set(-0.2f, 3f, 4.9f);
+        r.update(ball, time + 0.04);
+        assertFault(r, AWAY, Fault.OUTSIDE_CROSSING_SPACE);
+    }
+
+    @Test
+    void touchingTheNetBeforeTheServeIsNotAFault() {
+        RallyManager r = rally(MatchFormat.official());
+        player(8).markNetContact();
+        r.update(ball, time);
+        r.onBallTouch(touch(0, ContactType.SERVE, 3f, 0.9f));
+        r.update(ball, time);
+        assertEquals(RallyManager.State.IN_PLAY, r.state());
+    }
+
     /** A second-touch overhead set by player {@code id} with the given contact quality. */
     private BallTouch secondTouchSet(int id, float quality) {
         time += 0.6;

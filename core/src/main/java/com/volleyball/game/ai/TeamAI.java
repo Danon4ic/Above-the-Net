@@ -16,11 +16,13 @@ import com.volleyball.game.mechanics.BallTouch;
 import com.volleyball.game.mechanics.BallTouchListener;
 import com.volleyball.game.mechanics.BlockStyle;
 import com.volleyball.game.mechanics.ContactType;
+import com.volleyball.game.mechanics.ContactZone;
 import com.volleyball.game.mechanics.PassRating;
 import com.volleyball.game.mechanics.ServeType;
 import com.volleyball.game.mechanics.SetType;
 import com.volleyball.game.mechanics.TacticalTargets;
 import com.volleyball.game.physics.MoveIntent;
+import com.volleyball.game.physics.PhysicsConstants;
 import com.volleyball.game.physics.PlayerLocomotion;
 import com.volleyball.game.physics.TrajectoryPredictor;
 import com.volleyball.game.rules.MatchScore;
@@ -29,10 +31,12 @@ import com.volleyball.game.simulation.GameWorld;
 import com.volleyball.game.world.CourtDimensions;
 import com.volleyball.game.world.CourtSide;
 import com.volleyball.game.world.CourtZones;
+import com.volleyball.game.tactics.Combination;
 import com.volleyball.game.tactics.DefenseScheme;
 import com.volleyball.game.tactics.Playbook;
 import com.volleyball.game.tactics.TeamCommand;
 import com.volleyball.game.tactics.TeamTactics;
+import com.volleyball.game.tactics.Tempo;
 
 import java.util.Collection;
 import java.util.EnumMap;
@@ -121,12 +125,15 @@ public final class TeamAI implements BallTouchListener {
     // Per-rally decisions.
     private int responsibleId = -1;
     private int responsibleForToucher = Integer.MIN_VALUE;
+    /** Counts the ball changing hands (a new last toucher); keys per-touch random draws such as the jump timing. */
+    private int ballPhase;
     private double responsibleChosenAt;
     private int attackerId = -1;
     private int attackDecidedFor = -1;
     private boolean serveAimed;
     private double lastTouchAt;
-    private boolean fooledByDecoy;
+    /** The blocker who bit on the decoy of the current set (jumps on the next step), or -1. */
+    private int fooledByDecoy = -1;
     private int decoyCheckedFor = Integer.MIN_VALUE;
     /** The ball now coming was served (the first touch is a serve reception). */
     private boolean receivingServe;
@@ -154,7 +161,8 @@ public final class TeamAI implements BallTouchListener {
         final Vector2 positionError = new Vector2();
         float reachChance;
         boolean wasAirborne;
-        float landingTimer;
+        /** World time of the last landing (the landing state lasts {@link #LANDING_TIME}). */
+        double landedAt = Double.NEGATIVE_INFINITY;
         /** The player's own way of playing (shot preferences, risk), so no two hitters are alike. */
         Style style = Style.NEUTRAL;
 
@@ -266,7 +274,7 @@ public final class TeamAI implements BallTouchListener {
     }
 
     /** The play now being run, or null. */
-    public com.volleyball.game.tactics.Combination currentPlay() {
+    public Combination currentPlay() {
         return playCaller.play();
     }
 
@@ -274,22 +282,22 @@ public final class TeamAI implements BallTouchListener {
      * The set the current play would give now (for a person setting on Auto), or null without a play.
      */
     public SetType playSet() {
-        com.volleyball.game.tactics.Combination.Option o = playCaller.chosen();
+        Combination.Option o = playCaller.chosen();
         return o == null || o.dump() ? null : o.set();
     }
 
     /** What the play asks of a player (for a person's on-screen hint), or null. */
     public String playAssignment(VolleyballPlayer p) {
-        com.volleyball.game.tactics.Combination play = playCaller.play();
+        Combination play = playCaller.play();
         if (play == null) return null;
         for (Map.Entry<SetType.Lane, VolleyballPlayer> e : playCaller.runners().entrySet()) {
             if (e.getValue() != p) continue;
-            com.volleyball.game.tactics.Combination.Run run = play.runOf(e.getKey());
-            com.volleyball.game.tactics.Combination.Option o = playCaller.chosen();
+            Combination.Run run = play.runOf(e.getKey());
+            Combination.Option o = playCaller.chosen();
             boolean yours = o != null && !o.dump() && o.hitter() == e.getKey();
-            if (run != null && run.decoy()) return play.name() + ": DECOY - " + run.tempo().label.toLowerCase() + " fake, jump with the set";
+            if (run != null && run.decoy()) return play.name() + ": DECOY - " + run.tempo().label.toLowerCase(java.util.Locale.ROOT) + " fake, jump with the set";
             if (yours && o != null) return play.name() + ": YOUR SET - " + o.set().label;
-            if (run != null) return play.name() + ": run the " + run.tempo().label.toLowerCase() + " approach";
+            if (run != null) return play.name() + ": run the " + run.tempo().label.toLowerCase(java.util.Locale.ROOT) + " approach";
         }
         return play.name();
     }
@@ -349,7 +357,7 @@ public final class TeamAI implements BallTouchListener {
         attackerId = -1;
         attackDecidedFor = -1;
         serveAimed = false;
-        fooledByDecoy = false;
+        fooledByDecoy = -1;
         playCaller.reset();
         decoysJumped.clear();
         attackPlay = null;
@@ -366,8 +374,8 @@ public final class TeamAI implements BallTouchListener {
         ourServeInPlay = false;
         for (Brain brain : brains.values()) {
             brain.positionError.set((float) random.nextGaussian(), (float) random.nextGaussian()).scl(difficulty.positionError * 0.6f);
+            brain.motor.newRally();
             brain.motor.setBlockOffset(0f);
-            brain.motor.setBlockJumpDelay(0f);
             brain.motor.setDefenseAdjustment(0f, 0f);
             brain.motor.setDefenseSpot(Float.NaN, Float.NaN);
         }
@@ -397,7 +405,7 @@ public final class TeamAI implements BallTouchListener {
         // Which plays score: the rally ended with our attack from a play.
         List<MatchMemory.Touch> rallyTouches = memory.rallyTouches();
         MatchMemory.Touch last = rallyTouches.isEmpty() ? null : rallyTouches.get(rallyTouches.size() - 1);
-        if (attackPlay != null && last != null && last.side() == side && last.type() == ContactType.ATTACK) playCaller.result(attackPlay, won);
+        if (attackPlay != null && memory.decidedByOwnAttack()) playCaller.result(attackPlay, won);
         // The coach of a team without a person rethinks the plan (the person commands their own team).
         if (coaching && !personInTeam && lastScore != null) {
             coach.rallyFinished(won, last == null ? null : last.side(), last == null ? null : last.type(),
@@ -466,6 +474,7 @@ public final class TeamAI implements BallTouchListener {
 
         if (handling.lastToucherId() != responsibleForToucher) {
             responsibleForToucher = handling.lastToucherId();
+            ballPhase++;
             responsibleId = -1;
             attackDecidedFor = -1;
             dumpDecided = false;
@@ -531,9 +540,9 @@ public final class TeamAI implements BallTouchListener {
                 playCaller.followSet(plannedSet, playbook, advisor.hitters(ballPlayer, rotation));
             }
             VolleyballPlayer hitter = null;
-            com.volleyball.game.tactics.Combination play = playCaller.play();
+            Combination play = playCaller.play();
             if (play != null) {
-                for (com.volleyball.game.tactics.Combination.Option o : play.options()) {
+                for (Combination.Option o : play.options()) {
                     if (!o.dump() && o.set() == plannedSet) hitter = playCaller.runner(o.hitter());
                 }
             }
@@ -594,8 +603,8 @@ public final class TeamAI implements BallTouchListener {
                         case INTERMEDIATE -> 0.04f;
                         case PROFESSIONAL -> 0.015f;
                     };
-                    if (brain.motor.jumpTimingFor() != responsibleForToucher) {
-                        brain.motor.setJumpTiming((float) random.nextGaussian() * spread, responsibleForToucher);
+                    if (brain.motor.jumpTimingFor() != ballPhase) {
+                        brain.motor.setJumpTiming((float) random.nextGaussian() * spread, ballPhase);
                     }
                 }
                 brain.motor.setBackRow(!rotation.isFrontRow(side, p.id));
@@ -676,7 +685,7 @@ public final class TeamAI implements BallTouchListener {
      * ball short into the free side, decided once per possession.
      */
     private boolean setterDump(VolleyballPlayer p, RotationManager rotation) {
-        com.volleyball.game.tactics.Combination.Option o = playCaller.chosen();
+        Combination.Option o = playCaller.chosen();
         if (o == null || !o.dump() || p.role != PlayerRole.SETTER || !rotation.isFrontRow(side, p.id)) return false;
         if (!dumpDecided) {
             dumpDecided = true;
@@ -774,7 +783,7 @@ public final class TeamAI implements BallTouchListener {
             for (float t = 0f; t <= 0.4f; t += 0.02f) {
                 float x = ball.position.x + ball.velocity.x * t;
                 float z = ball.position.z + ball.velocity.z * t;
-                float y = ball.position.y + ball.velocity.y * t - 4.905f * t * t;
+                float y = ball.position.y + ball.velocity.y * t - 0.5f * PhysicsConstants.GRAVITY * t * t;
                 float dx = x - p.position.x;
                 float dz = z - p.position.z;
                 if (dx * dx + dz * dz < 0.25f && y > p.position.y + 0.4f && y < p.position.y + p.height + 0.15f) {
@@ -1014,7 +1023,7 @@ public final class TeamAI implements BallTouchListener {
         dumpDecided = false;
         playCaller.setSetter(from);
         playCaller.call(difficulty, playbook, tactics, lanes, memory.lastOwnPass(), setterFront, humans);
-        com.volleyball.game.tactics.Combination.Option o = playCaller.chosen();
+        Combination.Option o = playCaller.chosen();
         if (o != null && !o.dump()) plannedSet = o.set();
         VolleyballPlayer hitter = playCaller.chosenHitter(from);
         attackerId = hitter == null ? -1 : hitter.id;
@@ -1039,7 +1048,7 @@ public final class TeamAI implements BallTouchListener {
         float placement = (float) Math.hypot(whoSets.position.x - setterRead.descentPoint.x, whoSets.position.z - setterRead.descentPoint.z);
         float quality = Math.max(0f, 1f - placement / 1.6f);
         boolean readBlock = difficulty.readsPlay || tactics.is(TeamCommand.VS_SINGLE_BLOCK);
-        com.volleyball.game.tactics.Combination.Option o = playCaller.decide(whoSets, quality, readBlock, opponents());
+        Combination.Option o = playCaller.decide(whoSets, quality, readBlock, opponents());
         if (o == null || humans.contains(whoSets)) return;
         if (!o.dump()) {
             world.ballHandling().setSetType(whoSets, o.set());
@@ -1057,11 +1066,11 @@ public final class TeamAI implements BallTouchListener {
         moveTo(p, target.x, target.z, false);
         brakeAtNet(p);
         brain.state = AiState.APPROACHING;
-        com.volleyball.game.tactics.Tempo tempo = playCaller.tempoOf(p);
-        if (!playCaller.isDecoy(p) || tempo == null || tempo == com.volleyball.game.tactics.Tempo.THIRD) return;
+        Tempo tempo = playCaller.tempoOf(p);
+        if (!playCaller.isDecoy(p) || tempo == null || tempo == Tempo.THIRD) return;
         if (p.isAirborne() || decoysJumped.contains(p.id) || !p.isUpright()) return;
-        float rise = (float) Math.sqrt(2f * PlayerLocomotion.jumpHeight(p.attributes) / com.volleyball.game.physics.PhysicsConstants.GRAVITY);
-        float jumpAt = tempo == com.volleyball.game.tactics.Tempo.FIRST ? rise * 0.7f : 0.05f;
+        float rise = PlayerLocomotion.riseTime(PlayerLocomotion.jumpHeight(p.attributes));
+        float jumpAt = tempo == Tempo.FIRST ? rise * 0.7f : 0.05f;
         if (timeToSet < jumpAt && Math.hypot(p.position.x - target.x, p.position.z - target.z) < 1.2f && !runningAtNet(p)) decoyJump(p);
     }
 
@@ -1075,7 +1084,7 @@ public final class TeamAI implements BallTouchListener {
     private boolean runningAtNet(VolleyballPlayer p) {
         float towards = p.velocity.x * -side.sign();
         if (towards <= 0.3f) return false;
-        float airTime = 2f * (float) Math.sqrt(2f * PlayerLocomotion.jumpHeight(p.attributes) / com.volleyball.game.physics.PhysicsConstants.GRAVITY);
+        float airTime = 2f * PlayerLocomotion.riseTime(PlayerLocomotion.jumpHeight(p.attributes));
         return Math.abs(p.position.x) - towards * airTime < 0.6f;
     }
 
@@ -1087,8 +1096,8 @@ public final class TeamAI implements BallTouchListener {
     private boolean finishDecoy(VolleyballPlayer p) {
         if (!playCaller.isDecoy(p) || playCaller.play() == null) return false;
         if (p.isAirborne()) return decoysJumped.contains(p.id);
-        com.volleyball.game.tactics.Tempo tempo = playCaller.tempoOf(p);
-        if (decoysJumped.contains(p.id) || tempo == null || tempo == com.volleyball.game.tactics.Tempo.THIRD || !p.isUpright()) return false;
+        Tempo tempo = playCaller.tempoOf(p);
+        if (decoysJumped.contains(p.id) || tempo == null || tempo == Tempo.THIRD || !p.isUpright()) return false;
         if (playCaller.runTarget(p, -1f, target) == null) return false;
         if (target.x * side.sign() < 1.0f) target.x = side.sign() * 1.0f;
         if (Math.hypot(p.position.x - target.x, p.position.z - target.z) > 1.2f || runningAtNet(p)) return false;
@@ -1144,7 +1153,7 @@ public final class TeamAI implements BallTouchListener {
         int blockers = 0;
         float blockLateral = 0f;
         for (VolleyballPlayer o : opponents()) {
-            if (Math.abs(o.position.x) < 1.4f && Math.abs(o.position.z - a.position.z) < 1.8f) {
+            if (Math.abs(o.position.x) < ShotAdvisor.BLOCK_NET_DISTANCE && Math.abs(o.position.z - a.position.z) < ShotAdvisor.BLOCK_LATERAL) {
                 blockers++;
                 blockLateral += -o.position.z * opponent.sign();
             }
@@ -1187,7 +1196,7 @@ public final class TeamAI implements BallTouchListener {
         }
         // Against a single block the coach wants it hard.
         if (tactics.is(TeamCommand.VS_SINGLE_BLOCK) && blockers <= 1) shotWeights.merge(AttackType.POWER, 1.5f, Float::sum);
-        AttackType type = cautious ? (random.nextFloat() < 0.5f ? AttackType.ROLL_SHOT : AttackType.TIP) : pick(shotWeights, AttackType.POWER);
+        AttackType type = cautious ? (random.nextFloat() < 0.5f ? AttackType.ROLL_SHOT : AttackType.TIP) : WeightedPick.pick(random, shotWeights, AttackType.POWER);
         if (advised == AttackType.TIP && cautious) type = AttackType.TIP;
 
         float depth;
@@ -1302,7 +1311,7 @@ public final class TeamAI implements BallTouchListener {
 
     /** The ball is about to reach the hitter's hand (the last moment to choose the shot). */
     private boolean ballNearHand(VolleyballPlayer p) {
-        com.volleyball.game.mechanics.ContactZone.idealPoint(p, ContactType.ATTACK, null, target);
+        ContactZone.idealPoint(p, ContactType.ATTACK, null, target);
         return target.dst(world.ball().position) < 1.4f;
     }
 
@@ -1577,7 +1586,6 @@ public final class TeamAI implements BallTouchListener {
             float dz = p.position.z - point.z;
             // The libero takes the dig even from a little farther than the closest teammate.
             float d = (float) Math.sqrt(dx * dx + dz * dz) - (p.role == PlayerRole.LIBERO ? 0.8f : 0f);
-            d = d * Math.abs(d);
             if (d < bestDistance) {
                 bestDistance = d;
                 best = p;
@@ -1642,9 +1650,10 @@ public final class TeamAI implements BallTouchListener {
         if (difficulty.readsPlay || p.isAirborne()) return;
         int setToucher = world.ballHandling().lastToucherId();
         if (decoyCheckedFor == setToucher) {
-            if (fooledByDecoy) {
+            // Only the blocker whose read was fooled jumps with the decoy.
+            if (fooledByDecoy == p.id) {
                 world.intent(p).jump = true;
-                fooledByDecoy = false;
+                fooledByDecoy = -1;
             }
             return;
         }
@@ -1655,7 +1664,7 @@ public final class TeamAI implements BallTouchListener {
                 // The wall never bites; the reader rarely does.
                 float chance = difficulty == Difficulty.BEGINNER ? 0.6f : 0.35f;
                 if (p.has(PlayerTrait.READER)) chance *= 0.4f;
-                fooledByDecoy = !p.has(PlayerTrait.WALL) && random.nextFloat() < chance;
+                fooledByDecoy = !p.has(PlayerTrait.WALL) && random.nextFloat() < chance ? p.id : -1;
                 return;
             }
         }
@@ -1691,14 +1700,15 @@ public final class TeamAI implements BallTouchListener {
                 VolleyballPlayer weakest = weakestReceiver();
                 int zone = pickServeZone();
                 float r = random.nextFloat();
+                Float seam = r >= 0.15f && r < 0.35f ? seamLateral(opponent) : null;
                 if (r < 0.15f) {
                     // A shorter serve, in front of the receivers (a float cannot land much closer than ~5 m).
                     depth = 4.9f + random.nextFloat() * 0.8f;
                     lateral = -3f + random.nextFloat() * 6f;
-                } else if (r < 0.35f && seamLateral(opponent) != null) {
+                } else if (seam != null) {
                     // Into the seam between two receivers: neither is sure it is theirs.
                     depth = 5.5f + random.nextFloat() * 1.5f;
-                    lateral = seamLateral(opponent);
+                    lateral = seam;
                 } else if (weakest != null && random.nextFloat() < 0.6f) {
                     depth = weakest.position.x * opponent.sign() + (random.nextFloat() - 0.5f);
                     lateral = -weakest.position.z * opponent.sign() + (random.nextFloat() - 0.5f) * 1.2f;
@@ -1970,6 +1980,9 @@ public final class TeamAI implements BallTouchListener {
         }
     }
 
+    /** How long after touching down a player counts as landing (s). */
+    private static final double LANDING_TIME = 0.25;
+
     /** States that follow from the body: in the air, landing, diving, getting up. */
     private void updateBodyStates(Collection<VolleyballPlayer> humans) {
         for (VolleyballPlayer p : court) {
@@ -1979,14 +1992,14 @@ public final class TeamAI implements BallTouchListener {
                 brain.state = AiState.IDLE;
                 continue;
             }
-            if (brain.wasAirborne && !p.isAirborne()) brain.landingTimer = 0.25f;
+            if (brain.wasAirborne && !p.isAirborne()) brain.landedAt = world.time();
             brain.wasAirborne = p.isAirborne();
-            if (brain.landingTimer > 0f) brain.landingTimer -= 1f / 120f;
+            boolean landing = world.time() - brain.landedAt < LANDING_TIME;
             if (p.bodyState() == BodyState.DIVING) brain.state = AiState.DIVING;
             else if (!p.isUpright()) brain.state = AiState.RECOVERING;
             else if (p.isAirborne() && brain.state != AiState.ATTACKING && brain.state != AiState.BLOCKING
                     && brain.state != AiState.SERVING && brain.state != AiState.CELEBRATING) brain.state = AiState.JUMPING;
-            else if (brain.landingTimer > 0f && !p.isAirborne() && brain.state != AiState.MOVING_TO_BALL
+            else if (landing && !p.isAirborne() && brain.state != AiState.MOVING_TO_BALL
                     && brain.state != AiState.PASSING && brain.state != AiState.SETTING) brain.state = AiState.LANDING;
         }
     }
@@ -2058,17 +2071,5 @@ public final class TeamAI implements BallTouchListener {
 
     private List<VolleyballPlayer> opponents() {
         return side == CourtSide.HOME ? world.away().onCourt() : world.home().onCourt();
-    }
-
-    private <T> T pick(Map<T, Float> weights, T fallback) {
-        float total = 0f;
-        for (float w : weights.values()) total += Math.max(0f, w);
-        if (total <= 0f) return fallback;
-        float r = random.nextFloat() * total;
-        for (Map.Entry<T, Float> e : weights.entrySet()) {
-            r -= Math.max(0f, e.getValue());
-            if (r <= 0f) return e.getKey();
-        }
-        return fallback;
     }
 }

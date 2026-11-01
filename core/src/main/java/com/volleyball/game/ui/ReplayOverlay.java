@@ -49,7 +49,7 @@ public final class ReplayOverlay implements Disposable {
         batch.begin();
         UiKit.text(batch, title, "REPLAY", x + 42f * s, y + h - 20f * s, UiKit.TEXT, 1f);
         String right = angle + (slowMotion ? "   ·   SLOW MOTION" : "");
-        UiKit.text(batch, small, right.toUpperCase(), x, y + h - 26f * s, w - 20f * s, Align.right, false, UiKit.JADE, 1f);
+        UiKit.text(batch, small, right.toUpperCase(java.util.Locale.ROOT), x, y + h - 26f * s, w - 20f * s, Align.right, false, UiKit.JADE, 1f);
         UiKit.text(batch, small, "Space: slow motion   ·   C: camera angle   ·   V / Esc: back to the match", x, y + 22f * s, w,
                 Align.center, false, UiKit.TEXT_DIM, 1f);
         batch.end();

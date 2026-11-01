@@ -72,7 +72,7 @@ public final class TacticsPanel implements Disposable {
         shapes.end();
 
         batch.begin();
-        UiKit.text(batch, title, "TEAM TACTICS  ·  " + group.label.toUpperCase(), x + pad, y + h - pad, UiKit.JADE, alpha);
+        UiKit.text(batch, title, "TEAM TACTICS  ·  " + group.label.toUpperCase(java.util.Locale.ROOT), x + pad, y + h - pad, UiKit.JADE, alpha);
         for (int i = 0; i < commands.size(); i++) {
             TeamCommand c = commands.get(i);
             boolean on = tactics.is(c);

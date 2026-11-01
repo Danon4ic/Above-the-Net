@@ -1,6 +1,5 @@
 package com.volleyball.game.ai;
 
-import com.volleyball.game.mechanics.AttackType;
 import com.volleyball.game.mechanics.BallTouch;
 import com.volleyball.game.mechanics.ContactType;
 import com.volleyball.game.mechanics.PassRating;
@@ -106,13 +105,9 @@ final class TacticalCoach {
             } else {
                 oppAttacks += 1f;
                 lastOppAttack = touch;
-                float speed = touch.outgoingVelocity().len();
-                oppAttackTip = AttackType.TIP.label.equals(touch.variant()) || speed < 12f;
-                oppAttackHard = speed > 22f;
-                float forward = Math.abs(touch.outgoingVelocity().x);
-                float lateral = touch.outgoingVelocity().z;
-                float hitZ = touch.contactPoint().z;
-                oppAttackCross = -Math.signum(hitZ == 0f ? 1f : hitZ) * lateral / Math.max(1f, forward) > 0.2f;
+                oppAttackTip = MatchMemory.isTip(touch);
+                oppAttackHard = touch.outgoingVelocity().len() > 22f;
+                oppAttackCross = MatchMemory.isCross(touch);
                 if (oppAttackTip) oppTips += 1f;
             }
         }

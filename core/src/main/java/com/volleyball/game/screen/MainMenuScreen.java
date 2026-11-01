@@ -593,10 +593,10 @@ public final class MainMenuScreen extends ScreenAdapter {
             boolean sel = i == selected;
             boolean isLocked = locked != null && locked.get(i);
             Color color = isLocked ? UiKit.TEXT_FAINT : lerp(UiKit.TEXT_DIM, UiKit.TEXT, h);
-            UiKit.text(batch, number, String.format("%02d", i + 1), x + dx, textY - 2f * s,
+            UiKit.text(batch, number, String.format(java.util.Locale.ROOT, "%02d", i + 1), x + dx, textY - 2f * s,
                     isLocked ? UiKit.TEXT_FAINT : lerp(UiKit.TEXT_FAINT, UiKit.JADE, h), appear);
             float labelX = x + 36f * s + dx + h * 8f * s;
-            String label = labels.get(i).toUpperCase();
+            String label = labels.get(i).toUpperCase(java.util.Locale.ROOT);
             // Label and value share the row: if they would touch, both get a smaller type.
             BitmapFont labelFont = font;
             BitmapFont rowValueFont = valueFont;
@@ -700,10 +700,10 @@ public final class MainMenuScreen extends ScreenAdapter {
         shapes.end();
         batch.begin();
         float y = cardTop - pad;
-        UiKit.text(batch, titleFont, title.toUpperCase(), cardX + pad, y, UiKit.TEXT, appear);
+        UiKit.text(batch, titleFont, title.toUpperCase(java.util.Locale.ROOT), cardX + pad, y, UiKit.TEXT, appear);
         y -= 50f * s;
         if (subtitle != null) {
-            UiKit.text(batch, small, subtitle.toUpperCase(), cardX + pad, y, UiKit.JADE, appear);
+            UiKit.text(batch, small, subtitle.toUpperCase(java.util.Locale.ROOT), cardX + pad, y, UiKit.JADE, appear);
             y -= 26f * s;
         }
         UiKit.text(batch, body, text, cardX + pad, y, cardW - 2 * pad, Align.left, true, UiKit.TEXT_DIM, appear);
@@ -1009,5 +1009,6 @@ public final class MainMenuScreen extends ScreenAdapter {
         if (ballRenderer != null) ballRenderer.dispose();
         if (batch != null) batch.dispose();
         if (shapes != null) shapes.dispose();
+        if (controls != null) controls.dispose();
     }
 }
