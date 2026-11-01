@@ -76,6 +76,8 @@ public final class ScoreOverlay implements MatchListener, Disposable {
     private String contextSignature = "";
     private float contextAlpha;
     private float contextChangedAt = -10f;
+    /** Height kept free at the bottom (the play caller), so captions sit above it. */
+    private float bottomClear;
 
     public ScoreOverlay(GameWorld world, UiFonts fonts) {
         this.world = world;
@@ -90,6 +92,16 @@ public final class ScoreOverlay implements MatchListener, Disposable {
     /** Shows a caption now (e.g. the person's role at the start of the match). */
     public void announce(String title, String text, Color color, float seconds) {
         banner(title, text, color, seconds, false);
+    }
+
+    /** The bottom edge below which the captions must not go (the top of the play caller), 0 for none. */
+    public void setBottomClear(float y) {
+        bottomClear = y;
+    }
+
+    /** The baseline of the lower-third captions: low on the screen, above the play caller. */
+    private float captionBase() {
+        return Math.max(height * 0.1f, bottomClear + 12f * s);
     }
 
     /** A title line for the action strip (e.g. "YOUR SERVE · FLOAT"), or null. */
@@ -321,7 +333,7 @@ public final class ScoreOverlay implements MatchListener, Disposable {
         float panelH = (bannerBig ? 96f : 72f) * s;
         float x = (width - panelW) / 2f;
         // Lower third, like a TV caption: clear of the player's card and the score bug.
-        float y = height * (bannerBig ? 0.2f : 0.1f) - (1f - in) * 24f * s;
+        float y = (bannerBig ? Math.max(height * 0.2f, captionBase()) : captionBase()) - (1f - in) * 24f * s;
 
         begin();
         UiKit.panel(shapes, x, y, panelW, panelH, 0.94f * alpha, 0f);
@@ -439,7 +451,7 @@ public final class ScoreOverlay implements MatchListener, Disposable {
         float w = Math.max(keysW, titleW) + 2f * pad;
         float h = (contextKeys.isEmpty() ? 0f : capH + 8f * s) + (contextTitle == null ? 0f : 22f * s) + 16f * s;
         float x = (width - w) / 2f;
-        float y = height * 0.1f + 90f * s;
+        float y = captionBase() + 82f * s;
         begin();
         UiKit.panel(shapes, x, y, w, h, 0.88f * a, 0f);
         shapes.setColor(UiKit.PRIMARY.r, UiKit.PRIMARY.g, UiKit.PRIMARY.b, a);

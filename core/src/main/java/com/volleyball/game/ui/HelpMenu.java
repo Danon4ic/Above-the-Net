@@ -75,7 +75,9 @@ public final class HelpMenu implements Disposable {
                         + "Your player also reaches a little farther than the computer's."));
         topic("Shots and sets", "The bar at the bottom of the screen shows the options of the moment.",
                 row("1 - 9", "Choose directly: serve type, set (with the hitter it goes to), shot, block line or diagonal."),
-                row("0", "Auto: the game picks the set or shot from the pass, the block and the defence (cyan dot)."),
+                row("0", "Auto: the game picks the set or shot from the pass, the block and the defence (blue dot)."),
+                row("6 - 8", "Power serves (3, 5): straight topspin, curve left or curve right. A curving serve bends in the air "
+                        + "and still lands on the aim, with a little less dive and a little more risk."),
                 row(key(keys, PlayerAction.VARIANT_PREVIOUS) + " / " + key(keys, PlayerAction.VARIANT_NEXT),
                         "Step through the same options."),
                 row("Shots", "Power, cut (sharp angle), roll, tip (over the block; the setter's dump), tool (off the block, out)."),
@@ -242,6 +244,10 @@ public final class HelpMenu implements Disposable {
         float pad = 30f * s;
         float top = y0 + panelH - pad;
         float listW = roleOnly ? 0f : 290f * s;
+        // The topic titles shrink together until the longest fits the list column.
+        float itemSize = 16f * s;
+        while (!roleOnly && itemSize > 11f * s && widest(fonts.get(UiFonts.Weight.BOLD, itemSize), list) > listW - 56f * s) itemSize -= 0.5f * s;
+        item = fonts.get(UiFonts.Weight.BOLD, itemSize);
         float rowH = Math.min(46f * s, (top - 64f * s - (y0 + pad)) / Math.max(1, list.size()));
         float listTop = top - 64f * s;
         float cardX = x0 + pad + listW + (roleOnly ? 0f : 22f * s);
@@ -317,8 +323,8 @@ public final class HelpMenu implements Disposable {
                 float cy = ry + (rowH - 4f * s) / 2f;
                 UiKit.text(batch, number, String.format(java.util.Locale.ROOT, "%02d", i + 1), x0 + pad + 16f * s, cy + number.getCapHeight() / 2f,
                         sel ? UiKit.JADE : UiKit.TEXT_FAINT, a);
-                UiKit.text(batch, item, list.get(i).title().toUpperCase(java.util.Locale.ROOT), x0 + pad + 48f * s + (sel ? 4f * s : 0f),
-                        cy + item.getCapHeight() / 2f, listW - 56f * s, Align.left, false, sel ? UiKit.TEXT : UiKit.TEXT_DIM, a);
+                String label = UiKit.fit(item, list.get(i).title().toUpperCase(java.util.Locale.ROOT), listW - 56f * s);
+                UiKit.text(batch, item, label, x0 + pad + 48f * s, cy + item.getCapHeight() / 2f, sel ? UiKit.TEXT : UiKit.TEXT_DIM, a);
             }
         }
         UiKit.text(batch, cardTitle, topic.title().toUpperCase(java.util.Locale.ROOT), cardX + inner, cardTop - 24f * s, UiKit.TEXT, a);
@@ -333,6 +339,12 @@ public final class HelpMenu implements Disposable {
             UiKit.text(batch, body, r.text(), textX, y, textW, Align.left, true, UiKit.TEXT, a);
         }
         batch.end();
+    }
+
+    private static float widest(BitmapFont font, List<Topic> topics) {
+        float w = 0f;
+        for (Topic t : topics) w = Math.max(w, UiKit.width(font, t.title().toUpperCase(java.util.Locale.ROOT)));
+        return w;
     }
 
     @Override

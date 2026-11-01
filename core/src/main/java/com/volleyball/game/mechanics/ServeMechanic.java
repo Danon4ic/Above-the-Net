@@ -19,6 +19,8 @@ import java.util.Random;
  * skilled server tosses less consistently. The hit then aims at the target with the type's
  * pace, preferring the fastest speed that still clears the net with the type's margin, and adds
  * an execution error that grows with poor contact, low serving rating and riskier serve types.
+ * A power serve can be curved ({@link ServeSpin}): part of its topspin becomes sidespin, and the
+ * launch is aimed so the bending ball still comes down on the target.
  * Nothing guarantees a good serve: a late hit or a bad toss sends it into the net or out.
  */
 public final class ServeMechanic {
@@ -79,17 +81,22 @@ public final class ServeMechanic {
         float skill = PlayerAttributes.normalized(c.player.attributes.serving);
         float speed = speed(c.serveType, c.player.attributes) * (0.85f + 0.15f * c.quality);
         float clearance = c.netTop + Ball.RADIUS + c.serveType.netMargin;
+        ServeSpin spin = ServeSpin.applies(c.serveType) && c.serveSpin != null ? c.serveSpin : ServeSpin.TOPSPIN;
+        float topspin = c.serveType.topspin * spin.topspinShare;
+        float sidespin = c.serveType.topspin * spin.sidespinShare;
         // Fastest safe pace: search downwards from full speed to 75 % of it.
-        solver.solveOverNet(c.ballPosition, c.target.x, c.target.z, speed * 0.75f, speed,
-                c.serveType.topspin, 0f, clearance, out);
+        solver.solveOverNet(c.ballPosition, c.target.x, c.target.z, speed * 0.75f, speed, topspin, sidespin, clearance, out);
         if (!out.clearsNet) {
             // Even the slowest allowed speed would not clear: hit at full pace and let physics decide.
-            solver.solve(c.ballPosition, c.target.x, c.target.z, speed, c.serveType.topspin, 0f, out);
+            solver.solve(c.ballPosition, c.target.x, c.target.z, speed, topspin, sidespin, out);
         }
         float sigma = c.serveType.errorDegrees * (1.6f - c.quality) * (1.4f - skill);
         if (c.serveType.topspin == 0f && c.player.has(PlayerTrait.FLOAT_SPECIALIST)) sigma *= 0.7f;
+        if (spin != ServeSpin.TOPSPIN) sigma *= ServeSpin.CURVE_ERROR;
         ExecutionError.apply(out.velocity, sigma, 0.03f * (1.6f - c.quality), random);
-        LaunchSolver.spinFor(out.velocity, c.serveType.topspin * (0.7f + 0.3f * c.quality), 0f, out.spin);
+        // A cleaner contact puts more of the intended spin on the ball.
+        float spinQuality = 0.7f + 0.3f * c.quality;
+        LaunchSolver.spinFor(out.velocity, topspin * spinQuality, sidespin * spinQuality, out.spin);
         if (c.serveType.topspin == 0f) {
             // A float is hit through the centre of the ball; a mishit leaves a little spin.
             float wobble = (1.2f - c.quality) * 1.2f;

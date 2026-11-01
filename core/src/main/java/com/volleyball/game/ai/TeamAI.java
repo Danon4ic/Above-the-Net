@@ -13,6 +13,7 @@ import com.volleyball.game.entities.VolleyballPlayer;
 import com.volleyball.game.mechanics.AttackType;
 import com.volleyball.game.mechanics.BallHandling;
 import com.volleyball.game.mechanics.BallTouch;
+import com.volleyball.game.mechanics.ServeSpin;
 import com.volleyball.game.mechanics.BallTouchListener;
 import com.volleyball.game.mechanics.ContactType;
 import com.volleyball.game.mechanics.ContactZone;
@@ -742,6 +743,8 @@ public final class TeamAI implements BallTouchListener {
 
     /** A ball landing within this of the line still touches it (the contact patch). */
     private static final float OUT_CONTACT = 0.025f;
+    /** How often a power server curves the serve. */
+    private static final float CURVE_SERVE_CHANCE = 0.25f;
 
     /** Only the ball player may have a ball action armed: earlier requests of others are withdrawn. */
     private void cancelOthers(int ballPlayerId, Collection<VolleyballPlayer> humans) {
@@ -1570,6 +1573,12 @@ public final class TeamAI implements BallTouchListener {
         TacticalTargets.teamPoint(opponent, depth, lateral, 0f, target);
         handling.setAim(server, target.x, target.z);
         handling.setServeType(server, type);
+        // A power server curves about one serve in four, either way, to make it harder to read.
+        ServeSpin spin = ServeSpin.TOPSPIN;
+        if (ServeSpin.applies(type) && random.nextFloat() < CURVE_SERVE_CHANCE) {
+            spin = random.nextBoolean() ? ServeSpin.CURVE_LEFT : ServeSpin.CURVE_RIGHT;
+        }
+        handling.setServeSpin(server, spin);
         memory.servedTo(zoneOf(depth, lateral));
     }
 

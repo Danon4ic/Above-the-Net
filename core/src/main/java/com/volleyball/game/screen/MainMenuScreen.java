@@ -497,6 +497,13 @@ public final class MainMenuScreen extends ScreenAdapter {
         rowBounds.clear();
         // Many rows (the settings) close up so the list ends above the key hints.
         rowH = Math.min(rowH, (topY - 70f * s) / Math.max(1, labels.size()));
+        if (values == null) {
+            // The rows are as wide as the longest label needs (in the current language).
+            BitmapFont labelFont = fonts.get(UiFonts.Weight.BOLD, 24f * s);
+            float widest = 0f;
+            for (String label : labels) widest = Math.max(widest, UiKit.width(labelFont, label.toUpperCase(java.util.Locale.ROOT)));
+            rowW = Math.max(rowW, 20f * s + 36f * s + widest + 24f * s);
+        }
         float delta = Gdx.graphics.getDeltaTime();
         float fade = pageFade();
         for (int i = 0; i < labels.size() && i < rowHighlight.length; i++) {
@@ -641,10 +648,16 @@ public final class MainMenuScreen extends ScreenAdapter {
         float cardX = width - cardW - 70f * s;
         float cardTop = height - 210f * s;
         float appear = pageAppear();
-        BitmapFont titleFont = fonts.get(UiFonts.Weight.EXTRABOLD, 34f * s);
         BitmapFont body = fonts.get(UiFonts.Weight.MEDIUM, 17f * s);
         BitmapFont small = fonts.get(UiFonts.Weight.SEMIBOLD, 15f * s);
         float pad = 32f * s;
+        // A long title (in the current language) takes a smaller size rather than leave the card.
+        String heading = title.toUpperCase(java.util.Locale.ROOT);
+        float titleSize = 34f * s;
+        while (titleSize > 20f * s && UiKit.width(fonts.get(UiFonts.Weight.EXTRABOLD, titleSize), heading) > cardW - 2 * pad) {
+            titleSize -= 1f * s;
+        }
+        BitmapFont titleFont = fonts.get(UiFonts.Weight.EXTRABOLD, titleSize);
         float textH = UiKit.wrappedHeight(body, text, cardW - 2 * pad);
         float cardH = pad * 2 + 50f * s + (subtitle != null ? 26f * s : 0f) + textH + 24f * s + bullets.size() * 30f * s;
 
@@ -653,7 +666,7 @@ public final class MainMenuScreen extends ScreenAdapter {
         shapes.end();
         batch.begin();
         float y = cardTop - pad;
-        UiKit.text(batch, titleFont, title.toUpperCase(java.util.Locale.ROOT), cardX + pad, y, UiKit.TEXT, appear);
+        UiKit.text(batch, titleFont, UiKit.fit(titleFont, heading, cardW - 2 * pad), cardX + pad, y, UiKit.TEXT, appear);
         y -= 50f * s;
         if (subtitle != null) {
             UiKit.text(batch, small, subtitle.toUpperCase(java.util.Locale.ROOT), cardX + pad, y, UiKit.TEXT_FAINT, appear);
@@ -663,7 +676,7 @@ public final class MainMenuScreen extends ScreenAdapter {
         y -= textH + 24f * s;
         for (String b : bullets) {
             UiKit.text(batch, small, "•", cardX + pad, y, UiKit.JADE, appear);
-            UiKit.text(batch, small, b, cardX + pad + 20f * s, y, UiKit.TEXT, appear);
+            UiKit.text(batch, small, UiKit.fit(small, b, cardW - 2 * pad - 20f * s), cardX + pad + 20f * s, y, UiKit.TEXT, appear);
             y -= 30f * s;
         }
         batch.end();

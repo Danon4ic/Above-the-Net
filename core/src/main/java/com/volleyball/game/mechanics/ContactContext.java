@@ -24,6 +24,8 @@ public final class ContactContext {
     public float apex;
     public float netTop;
     public ServeType serveType;
+    /** How a power serve is struck (straight topspin or curving); ignored for other serves. */
+    public ServeSpin serveSpin = ServeSpin.TOPSPIN;
     public SetType setType;
     public AttackType attackType;
 }

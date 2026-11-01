@@ -10,6 +10,7 @@ import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.utils.Disposable;
 import com.volleyball.game.entities.Team;
 import com.volleyball.game.entities.VolleyballPlayer;
+import com.volleyball.game.i18n.Lang;
 import com.volleyball.game.match.MatchController;
 import com.volleyball.game.rules.RotationManager;
 import com.volleyball.game.rules.SubstitutionManager;
@@ -147,17 +148,14 @@ public final class SubstitutionMenu implements Disposable {
         UiKit.dim(shapes, width, height, 0.55f);
         UiKit.panel(shapes, x0, y0, panelW, panelH, 0.97f, 0f);
         float selY = listTop - (courtIndex + 1) * rowH;
-        shapes.setColor(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, 0.16f);
-        shapes.rect(x0 + pad - 10f * s, selY + 4f * s, colW, rowH - 6f * s);
-        shapes.setColor(UiKit.JADE);
-        shapes.rect(x0 + pad - 10f * s, selY + 4f * s, 3f * s, rowH - 6f * s);
+        UiKit.rowHighlight(shapes, x0 + pad - 10f * s, selY + 4f * s, colW, rowH - 6f * s, 1f, s, 1f);
         shapes.end();
 
         batch.begin();
         UiKit.text(batch, title, "SUBSTITUTIONS  ·  " + team.shortName, x0 + pad, top, UiKit.TEXT, 1f);
         String used = subs.used(team.side) + " / " + SubstitutionManager.MAX_PER_SET + " used this set"
                 + (match.pendingSubstitutions(team.side) > 0 ? "  ·  " + match.pendingSubstitutions(team.side) + " waiting" : "");
-        UiKit.text(batch, small, used, x0 + pad, top - 40f * s, UiKit.JADE, 1f);
+        UiKit.text(batch, small, used, x0 + pad, top - 40f * s, UiKit.TEXT_DIM, 1f);
         UiKit.text(batch, head, "LINE-UP  (↑ ↓)", x0 + pad, listTop + 4f * s, UiKit.TEXT_FAINT, 1f);
         UiKit.text(batch, head, "SUBSTITUTE  (← →)", x0 + 2 * pad + colW, listTop + 4f * s, UiKit.TEXT_FAINT, 1f);
         for (int i = 0; i < court.size(); i++) {
@@ -166,7 +164,10 @@ public final class SubstitutionMenu implements Disposable {
             String libero = rotation.replacedByLibero(team.side) == p.id ? "   (libero in)" : "";
             UiKit.text(batch, small, "Z" + (i + 1), x0 + pad, y, UiKit.TEXT_FAINT, 1f);
             UiKit.text(batch, row, "#" + p.number + "  " + p.name, x0 + pad + 40f * s, y, i == courtIndex ? UiKit.TEXT : UiKit.TEXT_DIM, 1f);
-            UiKit.text(batch, small, p.role.label + libero, x0 + pad + 250f * s, y, UiKit.TEXT_FAINT, 1f);
+            // The role column ends with the line-up column (cut short rather than run into the bench side).
+            float roleX = x0 + pad + 200f * s;
+            String role = UiKit.fit(small, Lang.t(p.role.label + libero), x0 + pad - 10f * s + colW - 8f * s - roleX);
+            UiKit.text(batch, small, role, roleX, y, UiKit.TEXT_FAINT, 1f);
         }
         float bx = x0 + 2 * pad + colW;
         if (bench.isEmpty()) {

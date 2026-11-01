@@ -29,6 +29,7 @@ import com.volleyball.game.mechanics.ActionKind;
 import com.volleyball.game.mechanics.BallHandling;
 import com.volleyball.game.mechanics.AttackType;
 import com.volleyball.game.mechanics.ContactPurpose;
+import com.volleyball.game.mechanics.ServeSpin;
 import com.volleyball.game.mechanics.ServeType;
 import com.volleyball.game.mechanics.SetType;
 import com.volleyball.game.physics.BallContact;
@@ -364,6 +365,7 @@ public final class MatchScreen extends ScreenAdapter {
         renderMatchHud(trainee);
         if (mouseLook) matchHud.renderCrosshair(aimValid);
         hud.render(Gdx.graphics.getHeight(), buildStatus(trainee, ball));
+        shotSelector.clearTop();
         if (!autoplay && !paused) renderSelector(trainee, delta);
         if (!paused) handleTacticsKeys(trainee);
         renderTactics(trainee, delta);
@@ -372,6 +374,7 @@ public final class MatchScreen extends ScreenAdapter {
         scoreOverlay.setPrompt(prompt);
         scoreOverlay.setYourSide(autoplay ? null : trainee.side);
         scoreOverlay.setActions(paused ? java.util.List.of() : actionHints(trainee));
+        scoreOverlay.setBottomClear(shotSelector.top());
         scoreOverlay.render(drills.match(), paused ? 0f : delta);
         helpMenu.render();
         drillMenu.render(drills.drill(), drills.difficulty(), drills.sessionMode(), drills.role(), drills.system());
@@ -685,6 +688,10 @@ public final class MatchScreen extends ScreenAdapter {
             if (handling.servePhase() == BallHandling.ServePhase.HOLDING) {
                 actionKeys.add(new String[]{primary, "Toss"});
                 actionKeys.add(new String[]{variants, "Serve type"});
+                if (ServeSpin.applies(handling.serveType(p))) {
+                    int first = ServeType.values().length + 1;
+                    actionKeys.add(new String[]{first + "-" + (first + ServeSpin.values().length - 1), "Spin"});
+                }
             } else {
                 if (handling.serveType(p).jump && !p.isAirborne()) {
                     actionKeys.add(new String[]{keyLabel(com.volleyball.game.input.PlayerAction.MOVE_FORWARD), "Run-up"});
@@ -749,8 +756,12 @@ public final class MatchScreen extends ScreenAdapter {
         boolean holding = handling.server() == p && handling.servePhase() == BallHandling.ServePhase.HOLDING;
         boolean next = handling.nextServer() == p && !world.ball().isActive() && handling.servePhase() == BallHandling.ServePhase.NONE;
         if (!holding && !next) return null;
-        return holding ? "YOUR SERVE  ·  " + handling.serveType(p).label.toUpperCase(java.util.Locale.ROOT)
-                : "YOU SERVE NEXT  ·  " + handling.serveType(p).label.toUpperCase(java.util.Locale.ROOT);
+        ServeType type = handling.serveType(p);
+        String serve = type.label.toUpperCase(java.util.Locale.ROOT);
+        if (ServeSpin.applies(type) && handling.serveSpin(p) != ServeSpin.TOPSPIN) {
+            serve += "  ·  " + handling.serveSpin(p).label.toUpperCase(java.util.Locale.ROOT);
+        }
+        return (holding ? "YOUR SERVE  ·  " : "YOU SERVE NEXT  ·  ") + serve;
     }
 
     private void perform(PauseMenu.Action action) {
@@ -986,7 +997,19 @@ public final class MatchScreen extends ScreenAdapter {
                     selectorOptions.add(new com.volleyball.game.ui.ShotSelector.Option(String.valueOf(i + 1), types[i].label, null, true,
                             selected == i + 1, false));
                 }
-                hint = null;
+                // A power serve also takes a spin, on the numbers after the serve types.
+                ServeSpin spin = handling.serveSpin(p);
+                boolean spinnable = ServeSpin.applies(handling.serveType(p));
+                if (spinnable) {
+                    ServeSpin[] spins = ServeSpin.values();
+                    for (int i = 0; i < spins.length; i++) {
+                        selectorOptions.add(new com.volleyball.game.ui.ShotSelector.Option(String.valueOf(types.length + i + 1),
+                                spins[i].label, "Spin", true, spin == spins[i], false));
+                    }
+                }
+                hint = spinnable && spin != ServeSpin.TOPSPIN
+                        ? "Curving serve: the ball bends in the air and still lands on your aim; a little less dive, a little more risk."
+                        : null;
                 hot = handling.server() == p;
             }
             case BLOCK -> {
@@ -1032,7 +1055,7 @@ public final class MatchScreen extends ScreenAdapter {
                 hot = ballHere && handling.teamTouches(p.side) == 2 || p.isAirborne();
             }
         }
-        shotSelector.render(delta, title, hint, selectorOptions, hot);
+        shotSelector.render(delta, title, hint, selectorOptions, hot, matchHud.hintsRight(), matchHud.hintsTop());
     }
 
     private List<String> buildStatus(VolleyballPlayer p, Ball ball) {

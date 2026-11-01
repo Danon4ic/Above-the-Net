@@ -47,7 +47,8 @@ public final class TacticsPanel implements Disposable {
         BitmapFont small = fonts.get(UiFonts.Weight.MEDIUM, 12f * s);
         float pad = 16f * s;
         float rowH = 26f * s;
-        float w = 360f * s;
+        // Wide enough for the footer line (and the longest command) in the current language.
+        float w = Math.max(360f * s, UiKit.width(small, "G: next group   ·   Alt+0: let the team decide") + 2f * pad + 8f * s);
         float h = pad * 2f + 34f * s + rowH * commands.size() + (extra == null ? 0f : rowH) + 30f * s;
         float x = 24f * s;
         float y = (height - h) / 2f;
@@ -59,8 +60,7 @@ public final class TacticsPanel implements Disposable {
         float rowTop = y + h - pad - 34f * s;
         for (int i = 0; i < commands.size(); i++) {
             if (!tactics.is(commands.get(i))) continue;
-            shapes.setColor(UiKit.JADE.r, UiKit.JADE.g, UiKit.JADE.b, 0.18f * alpha);
-            shapes.rect(x + 6f * s, rowTop - (i + 1) * rowH + 3f * s, w - 12f * s, rowH - 2f * s);
+            UiKit.rowHighlight(shapes, x + 6f * s, rowTop - (i + 1) * rowH + 3f * s, w - 12f * s, rowH - 2f * s, 1f, s, alpha);
         }
         BitmapFont keyFont = fonts.get(UiFonts.Weight.EXTRABOLD, 11.5f * s);
         float capH = 20f * s;
@@ -72,7 +72,7 @@ public final class TacticsPanel implements Disposable {
         shapes.end();
 
         batch.begin();
-        UiKit.text(batch, title, "TEAM TACTICS  ·  " + group.label.toUpperCase(java.util.Locale.ROOT), x + pad, y + h - pad, UiKit.JADE, alpha);
+        UiKit.text(batch, title, "TEAM TACTICS  ·  " + group.label.toUpperCase(java.util.Locale.ROOT), x + pad, y + h - pad, UiKit.TEXT, alpha);
         for (int i = 0; i < commands.size(); i++) {
             TeamCommand c = commands.get(i);
             boolean on = tactics.is(c);

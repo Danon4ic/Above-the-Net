@@ -76,6 +76,7 @@ public final class BallHandling {
         boolean hasAim;
         final Vector3 aim = new Vector3();
         ServeType serveType = ServeType.FLOAT;
+        ServeSpin serveSpin = ServeSpin.TOPSPIN;
         SetType setType = SetType.HIGH_OUTSIDE;
         AttackType attackType = AttackType.POWER;
         BlockStyle blockStyle = BlockStyle.NORMAL;
@@ -196,6 +197,15 @@ public final class BallHandling {
         if (p == server && servePhase == ServePhase.HOLDING) serveType = type;
     }
 
+    /** The spin of this player's power serve (straight topspin or curving). */
+    public ServeSpin serveSpin(VolleyballPlayer p) {
+        return states[p.id].serveSpin;
+    }
+
+    public void setServeSpin(VolleyballPlayer p, ServeSpin spin) {
+        states[p.id].serveSpin = spin;
+    }
+
     public SetType setType(VolleyballPlayer p) {
         return states[p.id].setType;
     }
@@ -295,12 +305,18 @@ public final class BallHandling {
 
     /**
      * Direct choice (number keys) in the current context: 0 = Auto (sets and shots), 1..n = the
-     * n-th type. Out-of-range numbers are ignored.
+     * n-th type. While serving, the numbers after the serve types choose the spin of a power
+     * serve. Out-of-range numbers are ignored.
      */
     public void selectVariant(VolleyballPlayer p, int index) {
         ContactPurpose context = variantContext(p);
-        if (index < (hasAuto(context) ? 0 : 1) || index > variantCount(context)) return;
         PlayerState s = states[p.id];
+        if (context == ContactPurpose.SERVE && index > variantCount(context)) {
+            int spin = index - variantCount(context) - 1;
+            if (ServeSpin.applies(s.serveType) && spin < ServeSpin.values().length) s.serveSpin = ServeSpin.values()[spin];
+            return;
+        }
+        if (index < (hasAuto(context) ? 0 : 1) || index > variantCount(context)) return;
         switch (context) {
             case SERVE -> setServeType(p, ServeType.values()[index - 1]);
             case BLOCK -> s.blockStyle = BlockStyle.values()[index - 1];
@@ -558,6 +574,7 @@ public final class BallHandling {
         if (pressure && p.has(PlayerTrait.NERVOUS)) c.quality *= 0.85f;
         c.lateralOffset = ContactZone.lateralOffset(p, type, serveTypeFor(p), ball.position, tmp);
         c.serveType = serveTypeFor(p);
+        c.serveSpin = ServeSpin.applies(c.serveType) ? s.serveSpin : ServeSpin.TOPSPIN;
         c.setType = s.setType;
         c.attackType = s.kind == ActionKind.SECONDARY ? AttackType.TIP : s.attackType;
         if (type == ContactType.ATTACK) p.setSwingStyle(swingFor(c.attackType));
@@ -569,7 +586,7 @@ public final class BallHandling {
             c.purpose = ContactPurpose.SERVE;
             aimOrDefault(p, s, c.target);
             serveMechanic.hit(c, random, solution);
-            variant = c.serveType.label;
+            variant = c.serveSpin == ServeSpin.TOPSPIN ? c.serveType.label : c.serveType.label + " · " + c.serveSpin.label;
             servePhase = ServePhase.NONE;
         } else if (type == ContactType.ATTACK) {
             c.purpose = ContactPurpose.ATTACK;

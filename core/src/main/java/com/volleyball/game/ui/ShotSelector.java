@@ -39,13 +39,12 @@ public final class ShotSelector implements Disposable {
     }
 
 
-    /** Width kept free at the bottom-left for the folded key hints (px at the design size). */
-    private static final float HINTS_RESERVE = 230f;
-
     private final SpriteBatch batch = new SpriteBatch();
     private final ShapeRenderer shapes = new ShapeRenderer();
     private final UiFonts fonts;
     private final List<float[]> chips = new ArrayList<>();
+    /** Top edge of the bar (with its hint line) in the last frame drawn, 0 when hidden. */
+    private float top;
     private int width;
     private int height;
 
@@ -67,8 +66,11 @@ public final class ShotSelector implements Disposable {
      * @param hint    a line about the selected option (its description), or null
      * @param options the options, in key order
      * @param hot     the decision is close: highlight the bar
+     * @param keepClearRight, keepClearTop the bottom-left corner taken by the key hints (0, 0: none)
      */
-    public void render(float delta, String title, String hint, List<Option> options, boolean hot) {
+    public void render(float delta, String title, String hint, List<Option> options, boolean hot, float keepClearRight,
+                       float keepClearTop) {
+        top = 0f;
         if (options.isEmpty()) return;
         float s = UiFonts.uiScale(height);
         float labelSize = 15f * s;
@@ -101,12 +103,13 @@ public final class ShotSelector implements Disposable {
         float titleW = UiKit.width(fonts.get(UiFonts.Weight.EXTRABOLD, 13f * s), title) + 22f * s;
         float x0 = (width - total - titleW) / 2f + titleW;
         float y = height * 0.025f;
-        // Keep clear of the folded key hints in the bottom-left corner: move right, or else up.
-        float reserved = HINTS_RESERVE * s;
+        // Keep clear of the key hints in the bottom-left corner: move right, or else up over them.
+        float reserved = keepClearRight > 0f ? keepClearRight + 16f * s : 0f;
         if (x0 - titleW < reserved) {
             if (reserved + titleW + total <= width - 16f * s) x0 = reserved + titleW;
-            else y = Math.max(y, 46f * s);
+            else y = Math.max(y, keepClearTop + 10f * s);
         }
+        top = y + chipH + (hint == null ? 0f : 34f * s);
 
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
@@ -159,6 +162,16 @@ public final class ShotSelector implements Disposable {
             UiKit.text(batch, hintFont, hint, 0f, y + chipH + 22f * s, width, com.badlogic.gdx.utils.Align.center, false, UiKit.TEXT, 0.9f);
         }
         batch.end();
+    }
+
+    /** Forgets the last frame's bar (call before a frame that may not draw it). */
+    public void clearTop() {
+        top = 0f;
+    }
+
+    /** Top edge of the bar and its hint line in the last frame (0: not shown), to stack captions above it. */
+    public float top() {
+        return top;
     }
 
     @Override

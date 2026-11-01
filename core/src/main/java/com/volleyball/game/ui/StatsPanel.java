@@ -200,7 +200,7 @@ public final class StatsPanel implements Disposable {
         BitmapFont legend = fonts.get(UiFonts.Weight.MEDIUM, 11f * s);
         UiKit.text(batch, legend, "PTS points  ·  K kills  ·  ATT attacks  ·  EFF (kills - errors - blocked) / attacks  ·  ACE aces  ·  "
                         + "SE serve errors  ·  BLK block points  ·  DIG digs  ·  REC reception 0-3  ·  AST assists  ·  ERR errors",
-                x0, y0 + 50f * s, panelW, Align.center, false, UiKit.TEXT_FAINT, a);
+                x0 + 30f * s, y0 + 66f * s, panelW - 60f * s, Align.center, true, UiKit.TEXT_FAINT, a);
         batch.end();
     }
 

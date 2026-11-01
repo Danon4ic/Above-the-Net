@@ -108,19 +108,19 @@ public final class DrillMenu implements Disposable {
         }
         float y = optionsTop - 16f * s;
         UiKit.text(batch, name, "QUICK MATCH OPTIONS", x0 + pad, y, UiKit.TEXT, 1f);
-        UiKit.text(batch, small, "applied when the match (8) starts", x0 + pad + 250f * s, y - 2f * s, UiKit.TEXT_FAINT, 1f);
+        float noteX = x0 + pad + UiKit.width(name, "QUICK MATCH OPTIONS") + 14f * s;
+        UiKit.text(batch, small, "applied when the match (8) starts", noteX, y - 2f * s, x0 + panelW - pad - noteX, Align.left, false,
+                UiKit.TEXT_FAINT, 1f);
         y -= 32f * s;
         option(small, body, x0 + pad, y, "D", "AI level", difficulty.label, s);
         option(small, body, x0 + pad + panelW * 0.25f, y, "P", "Players", mode.label, s);
         option(small, body, x0 + pad + panelW * 0.53f, y, "O", "Your role", RoleGuide.of(role).title(), s);
         if (system != null) option(small, body, x0 + pad + panelW * 0.76f, y, "Y", "System", system.label, s);
-        y -= 36f * s;
-        if (mode.twoLocalPlayers) {
-            UiKit.text(batch, body, "Player 2: arrows move, Right Ctrl jump, / play, . overhead or tip, , low stance, ' switch player",
-                    x0 + pad, y, UiKit.TEXT_DIM, 1f);
-        } else {
-            UiKit.text(batch, body, RoleGuide.of(role).motto(), x0 + pad, y, UiKit.TEXT_DIM, 1f);
-        }
+        y -= 46f * s;
+        String line = mode.twoLocalPlayers
+                ? "Player 2: arrows move, Right Ctrl jump, / play, . overhead or tip, , low stance, ' switch player"
+                : RoleGuide.of(role).motto();
+        UiKit.text(batch, body, line, x0 + pad, y, panelW - 2f * pad, Align.left, true, UiKit.TEXT_DIM, 1f);
         batch.end();
     }
 

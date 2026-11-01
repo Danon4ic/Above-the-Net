@@ -61,6 +61,9 @@ public final class MatchHud implements Disposable {
     /** Seconds the hints have been on screen since the match screen opened (they fold away after a while). */
     private float hintsTime;
     private static final float HINTS_INTRO = 8f;
+    // The bottom-left corner the key hints took this frame (0 when none), for the bars beside them.
+    private float hintsRight;
+    private float hintsTop;
 
     public MatchHud(UiFonts fonts) {
         this.fonts = fonts;
@@ -83,6 +86,16 @@ public final class MatchHud implements Disposable {
     public void toggleHints() {
         hintsExpanded = !hintsExpanded;
         hintsTime = HINTS_INTRO;
+    }
+
+    /** Right edge of the key hints in the bottom-left corner this frame (0: none shown). */
+    public float hintsRight() {
+        return hintsRight;
+    }
+
+    /** Top edge of the key hints in the bottom-left corner this frame (0: none shown). */
+    public float hintsTop() {
+        return hintsTop;
     }
 
     /** The card's lower edge (to place other panels under it). */
@@ -149,8 +162,9 @@ public final class MatchHud implements Disposable {
                 float zy = gridY + (1 - row) * (cell + gap);
                 UiKit.roundedRect(shapes, zx, zy, cell, cell, 2f * s, zone == m.yourZone ? UiKit.PRIMARY : UiKit.DEEP);
                 if (zone == m.serverZone) {
+                    // The server: a bright bar along the bottom of the cell.
                     shapes.setColor(UiKit.TEXT);
-                    shapes.circle(zx + cell - 3.5f * s, zy + cell - 3.5f * s, 2f * s, 8);
+                    shapes.rect(zx + 3f * s, zy + 1.5f * s, cell - 6f * s, Math.max(1f, 1.5f * s));
                 }
             }
         }
@@ -207,6 +221,8 @@ public final class MatchHud implements Disposable {
         }
         batch.end();
 
+        hintsRight = 0f;
+        hintsTop = 0f;
         if (showHints) {
             hintsTime += Gdx.graphics.getDeltaTime();
             // At first the full hints, fading into the chip; later the chip unless J opened them.
@@ -249,6 +265,8 @@ public final class MatchHud implements Disposable {
             maxX = Math.max(maxX, x + w + 6f * s + UiKit.width(label, HINTS[i][1]));
         }
         if (maxX > width * 0.36f) return; // too narrow: the help (F1) lists them all
+        hintsRight = Math.max(hintsRight, maxX + 12f * s);
+        hintsTop = Math.max(hintsTop, baseY + 2f * rowGap + 12f * s);
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
         shapes.begin(ShapeRenderer.ShapeType.Filled);
@@ -282,6 +300,8 @@ public final class MatchHud implements Disposable {
             UiKit.keycap(shapes, cx, y, w, h, false, 0.8f * alpha);
             cx += w + 6f * s + UiKit.width(label, c[1]) + 14f * s;
         }
+        hintsRight = Math.max(hintsRight, cx);
+        hintsTop = Math.max(hintsTop, y + h);
         shapes.end();
         batch.begin();
         cx = x;
