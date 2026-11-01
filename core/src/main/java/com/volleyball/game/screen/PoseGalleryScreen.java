@@ -183,14 +183,16 @@ public final class PoseGalleryScreen extends ScreenAdapter {
             case 11 -> blockLoop(p, t);
             case 12 -> {
                 // A defensive specialist: flat on the chest (see FallKind).
-                yaw = -MathUtils.HALF_PI;
+                // Diving away from its neighbour on the right (the side fall goes that way).
+                yaw = MathUtils.HALF_PI;
                 p.attributes.defense = 90;
-                p.diveDirection.set(0f, 0f, 1f);
+                p.diveDirection.set(0f, 0f, -1f);
                 p.setDiveRoll(false);
                 diveLoop(p, t);
             }
             case 13 -> {
-                p.diveDirection.set(0f, 0f, -1f);
+                // Sideways to the free end of the row.
+                p.diveDirection.set(0f, 0f, 1f);
                 p.setDiveRoll(true);
                 diveLoop(p, t + 0.6f);
             }
