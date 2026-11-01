@@ -18,6 +18,8 @@ import com.volleyball.game.entities.SwingStyle;
 import com.volleyball.game.entities.Team;
 import com.volleyball.game.entities.VolleyballPlayer;
 import com.volleyball.game.physics.PlayerLocomotion;
+import com.volleyball.game.render.anim.PlayerAnimState;
+import com.volleyball.game.render.anim.Spring;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -76,34 +78,59 @@ public final class PlayerRenderer implements Disposable {
         final Node[] shin = new Node[2];
         final Node[] foot = new Node[2];
 
-        /** Smoothed pose (what is drawn): left/right arm, trunk lean and twist, pelvis drop, head pitch. */
+        /** Smoothed pose (what is drawn): left/right arm, trunk lean, twist and side bend, pelvis drop, head pitch. */
         final ArmPose left = new ArmPose();
         final ArmPose right = new ArmPose();
         float lean;
         float twist;
+        float roll;
         float drop;
         float headPitch;
         /** Step cycle (radians) and the travelled distance it was last advanced to. */
         float stridePhase;
         float strideAt = Float.NaN;
         boolean initialised;
+        /** One critically damped spring per pose value (see {@link Spring}): arms (raise, spread, elbow ×2), trunk, pelvis. */
+        final Spring[] springs = new Spring[11];
+        /** This figure's own clock (s): idle sway and the landing are timed with it. */
+        float clock;
+        /** Ground velocity (m/s, world) last frame and the smoothed acceleration in the body's frame. */
+        float lastVx;
+        float lastVz;
+        float accelForward;
+        float accelSide;
+        /** Turning speed (rad/s), smoothed. */
+        float turnRate;
+        float lastYaw = Float.NaN;
+        /** Landing: when the feet last touched down and how hard (vertical speed, m/s). */
+        boolean wasAirborne;
+        float fallSpeed;
+        float landedAt = -10f;
+        float landingImpact;
+        PlayerAnimState state = PlayerAnimState.IDLE;
 
-        /** Moves the drawn pose a fraction {@code k} towards the target. */
-        void blend(ArmPose l, ArmPose r, float targetLean, float targetTwist, float targetDrop, float k) {
+        /** Moves the drawn pose towards the target, each value on its spring. */
+        void blend(ArmPose l, ArmPose r, float targetLean, float targetTwist, float targetRoll, float targetDrop,
+                   float halfLife, float dt) {
             if (!initialised) {
                 syncTo(l, r, targetLean, targetTwist);
+                roll = targetRoll;
                 drop = targetDrop;
+                springs[9].snap(targetRoll);
+                springs[10].snap(targetDrop);
                 return;
             }
-            left.raise += (l.raise - left.raise) * k;
-            left.spread += (l.spread - left.spread) * k;
-            left.elbow += (l.elbow - left.elbow) * k;
-            right.raise += (r.raise - right.raise) * k;
-            right.spread += (r.spread - right.spread) * k;
-            right.elbow += (r.elbow - right.elbow) * k;
-            lean += (targetLean - lean) * k;
-            twist += (targetTwist - twist) * k;
-            drop += (targetDrop - drop) * k;
+            left.raise = springs[0].update(l.raise, halfLife, dt);
+            left.spread = springs[1].update(l.spread, halfLife, dt);
+            left.elbow = springs[2].update(l.elbow, halfLife, dt);
+            right.raise = springs[3].update(r.raise, halfLife, dt);
+            right.spread = springs[4].update(r.spread, halfLife, dt);
+            right.elbow = springs[5].update(r.elbow, halfLife, dt);
+            // The trunk is heavier than the arms: it follows a little later.
+            lean = springs[6].update(targetLean, halfLife * 1.4f, dt);
+            twist = springs[7].update(targetTwist, halfLife * 1.2f, dt);
+            roll = springs[9].update(targetRoll, halfLife * 1.6f, dt);
+            drop = springs[10].update(targetDrop, halfLife * 1.2f, dt);
         }
 
         /** Jumps straight to a pose (dives are keyed exactly; the next blend starts from here). */
@@ -112,11 +139,20 @@ public final class PlayerRenderer implements Disposable {
             right.set(r.raise, r.spread, r.elbow);
             lean = newLean;
             twist = newTwist;
+            springs[0].snap(l.raise);
+            springs[1].snap(l.spread);
+            springs[2].snap(l.elbow);
+            springs[3].snap(r.raise);
+            springs[4].snap(r.spread);
+            springs[5].snap(r.elbow);
+            springs[6].snap(newLean);
+            springs[7].snap(newTwist);
             initialised = true;
         }
 
         Figure(ModelInstance instance) {
             this.instance = instance;
+            for (int i = 0; i < springs.length; i++) springs[i] = new Spring();
             pelvis = instance.getNode(PlayerModelFactory.PELVIS);
             torso = instance.getNode(PlayerModelFactory.TORSO);
             head = instance.getNode(PlayerModelFactory.HEAD);
@@ -357,17 +393,18 @@ public final class PlayerRenderer implements Disposable {
     }
 
     private void pose(Figure f, VolleyballPlayer player, float yaw, Vector3 lookAt) {
+        float dt = Math.min(0.05f, Gdx.graphics == null ? 1f / 60f : Gdx.graphics.getDeltaTime());
+        f.clock += dt;
         float speed = player.groundSpeed();
         float speedFactor = Math.min(1f, speed / 4f);
         // Movement direction in the model's local frame (forward +X, right +Z).
         float cos = MathUtils.cos(yaw);
         float sin = MathUtils.sin(yaw);
-        float moveX = 0f;
-        float moveZ = 0f;
-        if (speed > 0.05f) {
-            moveX = (player.velocity.x * cos - player.velocity.z * sin) / speed;
-            moveZ = (player.velocity.x * sin + player.velocity.z * cos) / speed;
-        }
+        float forwardSpeed = player.velocity.x * cos - player.velocity.z * sin;
+        float sideSpeed = player.velocity.x * sin + player.velocity.z * cos;
+        float moveX = speed > 0.05f ? forwardSpeed / speed : 0f;
+        float moveZ = speed > 0.05f ? sideSpeed / speed : 0f;
+        trackMotion(f, player, yaw, cos, sin, dt);
         // The step cycle advances with the distance covered; a slower gait takes shorter steps,
         // so the planted foot stays put on the floor instead of sliding (walking coaches too).
         float strideLength = strideLength(speed);
@@ -385,6 +422,11 @@ public final class PlayerRenderer implements Disposable {
         if (body != BodyState.UPRIGHT) {
             poseDiveAndRecovery(f, player);
             f.syncTo(leftArm, rightArm, 0f, 0f);
+            f.springs[9].snap(0f);
+            f.springs[10].snap(0f);
+            f.roll = 0f;
+            f.wasAirborne = false;
+            f.state = PlayerAnimState.of(player, forwardSpeed, sideSpeed, 10f, false);
             f.instance.calculateTransforms();
             return;
         }
@@ -405,24 +447,25 @@ public final class PlayerRenderer implements Disposable {
             float toBall = MathUtils.atan2(-dz, dx);
             headYaw = MathUtils.clamp(wrap(toBall - yaw), -HEAD_TURN_LIMIT, HEAD_TURN_LIMIT);
         }
+        float sinceLanding = f.clock - f.landedAt;
+        PlayerAnimState state = PlayerAnimState.of(player, forwardSpeed, sideSpeed, sinceLanding, approaching(player, lookAt));
+        f.state = state;
 
-        // ---- targets: pelvis drop, trunk lean (forward < 0) and twist (+ = right shoulder forward)
-        float drop = player.isCrouching() ? CROUCH_DROP : 0f;
-        if (!airborne && speed > 0.05f) {
-            drop = Math.max(drop, 0.06f * speedFactor) + 0.03f * Math.abs(MathUtils.sin(phase * 2f)) * speedFactor;
-        }
-        // Landing: the legs absorb the impact.
-        if (!airborne && player.recoveryTime() > 0f) drop = Math.max(drop, 0.2f);
-        drop = Math.max(drop, 0.26f * player.jumpCharge());
-        float lean = -0.12f * speedFactor - (player.isCrouching() ? 0.26f : 0f) - 0.3f * player.jumpCharge();
-        if (speed > 5f) lean -= 0.08f; // sprint
-        // Running: the shoulders counter-rotate against the legs.
-        float twist = -0.14f * MathUtils.sin(phase) * speedFactor;
-        // Stance: feet apart (+ = wider), and a split stance (left foot forward) for serving.
-        float stance = player.isCrouching() ? 1f : 0.3f;
+        // ---- targets: pelvis drop, trunk lean (forward < 0), twist (+ = right shoulder forward),
+        // side bend (+ = towards the right); stance: feet apart (+ = wider), split: left foot forward.
+        float drop = 0f;
+        float lean = 0f;
+        float twist = 0f;
+        float roll = 0f;
+        float headDrop = 0f;
+        float stance = 0.3f;
         float split = 0f;
-
-        // ---- arms: locomotion first
+        locomotion(f, player, state, phase, speed, speedFactor, sideSpeed, sinceLanding);
+        drop = poseDrop;
+        lean = poseLean;
+        twist = poseTwist;
+        roll = poseRoll;
+        stance = poseStance;
         if (airborne) {
             airborneArms(player, ballHigh);
             if (!player.isBlocking() && ballHigh && player.velocity.y < 1.6f && action == ActionPose.NONE) {
@@ -430,27 +473,17 @@ public final class PlayerRenderer implements Disposable {
                 twist = -0.5f;
                 lean = 0.18f;
             }
-        } else if (player.jumpCharge() > 0f) {
-            // Arms swing back while loading the jump.
-            float c = player.jumpCharge();
-            leftArm.set(-0.9f * c, 0.15f, 0.2f);
-            rightArm.set(-0.9f * c, 0.15f, 0.2f);
-        } else if (player.recoveryTime() > 0f) {
-            // Just landed: arms forward and out for balance.
-            leftArm.set(0.9f, 0.4f, 0.6f);
-            rightArm.set(0.9f, 0.4f, 0.6f);
-        } else if (atNetReady(player, lookAt, speed)) {
+        } else if (atNetReady(player, lookAt, speed) && !state.stepping()) {
             // Block ready: hands up at the height of the head, palms to the net.
             leftArm.set(1.75f, 0.3f, 1.55f);
             rightArm.set(1.75f, 0.3f, 1.55f);
             stance = 0.8f;
-        } else if (player.isCrouching()) {
-            leftArm.set(0.6f, 0.2f, 0.9f);
-            rightArm.set(0.6f, 0.2f, 0.9f);
-        } else {
-            float swing = 0.65f * MathUtils.sin(phase) * speedFactor;
-            leftArm.set(0.1f + swing, 0.1f, 0.3f + 0.75f * speedFactor);
-            rightArm.set(0.1f - swing, 0.1f, 0.3f + 0.75f * speedFactor);
+        }
+        if (!airborne && action == ActionPose.NONE) {
+            // Inertia: the trunk leans into an acceleration and back against braking, and banks
+            // into a change of direction (the feet push sideways, the body leans in).
+            lean += MathUtils.clamp(-0.04f * f.accelForward, -0.2f, 0.16f);
+            roll += MathUtils.clamp(0.03f * f.accelSide, -0.16f, 0.16f);
         }
 
         // ---- ball actions override
@@ -481,9 +514,9 @@ public final class PlayerRenderer implements Disposable {
                     twist = player.swingStyle() == SwingStyle.TIP ? -0.2f : -0.55f;
                     lean = player.swingStyle() == SwingStyle.TIP ? 0.05f : 0.2f;
                 } else {
-                    float[] trunk = swing(player.swingStyle(), progress);
-                    twist = trunk[0];
-                    lean = trunk[1];
+                    swing(player.swingStyle(), progress);
+                    twist = trunkTwist;
+                    lean = trunkLean;
                 }
                 if (!airborne) split = 0.2f;
             }
@@ -519,9 +552,9 @@ public final class PlayerRenderer implements Disposable {
                 split = 0.22f;
             }
             case BLOCK -> {
-                float[] trunk = blockArms(player);
-                lean = trunk[0];
-                twist = trunk[1];
+                blockArms(player);
+                lean = trunkLean;
+                twist = trunkTwist;
             }
             case REF_SERVE_RIGHT, REF_SERVE_LEFT -> {
                 // The arm comes up in front and sweeps out to the side, towards the serving team.
@@ -585,6 +618,15 @@ public final class PlayerRenderer implements Disposable {
                 rightArm.set(1.15f, MathUtils.lerp(-0.45f, -0.1f, clap), 1.2f);
                 lean = -0.05f;
             }
+            case DISAPPOINTED -> {
+                // Hands go to the hips, the head drops, a breath out.
+                float in = smooth(progress / 0.3f);
+                leftArm.set(MathUtils.lerp(0.1f, -0.25f, in), MathUtils.lerp(0.1f, 0.62f, in), MathUtils.lerp(0.3f, 1.75f, in));
+                rightArm.set(MathUtils.lerp(0.1f, -0.25f, in), MathUtils.lerp(0.1f, 0.62f, in), MathUtils.lerp(0.3f, 1.75f, in));
+                lean = -0.1f * in;
+                headDrop = 0.4f * in;
+                drop = 0.03f * in;
+            }
             case CELEBRATE -> {
                 // Fists up, pumping.
                 float pump = 0.5f + 0.5f * MathUtils.sin(progress * MathUtils.PI2 * 3f);
@@ -606,11 +648,11 @@ public final class PlayerRenderer implements Disposable {
             mirrorArms();
             twist = -twist;
             split = -split;
+            roll = -roll;
         }
         boolean striking = !held && (action == ActionPose.SWING || action == ActionPose.PLATFORM || action == ActionPose.OVERHEAD);
-        float dt = Math.min(0.05f, Gdx.graphics == null ? 1f / 60f : Gdx.graphics.getDeltaTime());
-        float k = 1f - (float) Math.exp(-(striking ? 30f : 13f) * dt);
-        f.blend(leftArm, rightArm, lean, twist, drop, k);
+        float halfLife = striking ? STRIKE_HALF_LIFE : airborne ? AIR_HALF_LIFE : POSE_HALF_LIFE;
+        f.blend(leftArm, rightArm, lean, twist, roll, drop, halfLife, dt);
 
         // ---- legs, with the smoothed pelvis height
         float pelvisDrop = f.drop;
@@ -624,28 +666,10 @@ public final class PlayerRenderer implements Disposable {
             float footY;
             float footPitch = 0f;
             if (airborne) {
-                float rise = MathUtils.clamp(player.velocity.y / 3.5f, -1f, 1f);
-                if (player.isBlocking() || action == ActionPose.BLOCK) {
-                    // Block: legs straight down, together.
-                    footX = 0f;
-                    footY = -(PlayerModelFactory.THIGH_LENGTH + PlayerModelFactory.SHIN_LENGTH) * 0.97f;
-                    footPitch = -0.4f;
-                } else if (rise > 0.35f) {
-                    // Take-off: legs extended, toes pointed.
-                    footX = i == 0 ? -0.05f : 0.03f;
-                    footY = -(PlayerModelFactory.THIGH_LENGTH + PlayerModelFactory.SHIN_LENGTH) * 0.97f;
-                    footPitch = -0.6f;
-                } else if (rise > -0.45f) {
-                    // At the top: the lower legs fold back (the body is a bow).
-                    footX = -0.22f + i * 0.06f;
-                    footY = -(PlayerModelFactory.THIGH_LENGTH + PlayerModelFactory.SHIN_LENGTH) * 0.78f;
-                    footPitch = -0.7f;
-                } else {
-                    // Coming down: feet reach for the floor, knees soft.
-                    footX = 0.06f - i * 0.1f;
-                    footY = -(PlayerModelFactory.THIGH_LENGTH + PlayerModelFactory.SHIN_LENGTH) * 0.9f;
-                    footPitch = -0.2f;
-                }
+                airborneLeg(player, action, i);
+                footX = legX;
+                footY = legY;
+                footPitch = legPitch;
                 footZ = i == 0 ? -0.05f : 0.05f;
             } else {
                 // Step cycle along the movement direction; the swinging foot lifts.
@@ -663,13 +687,204 @@ public final class PlayerRenderer implements Disposable {
 
         applyArm(f, 0, f.left);
         applyArm(f, 1, f.right);
-        f.torso.rotation.setFromAxisRad(0f, 1f, 0f, f.twist).mul(tmpQuat.setFromAxisRad(0f, 0f, 1f, f.lean));
-        // The head keeps looking forward over a leaning trunk, turns towards the ball and looks up at it.
-        f.headPitch += (ballPitch * 0.55f - f.headPitch) * k;
-        float nod = MathUtils.clamp(-f.lean * 0.6f + f.headPitch, -0.35f, 0.55f);
+        f.torso.rotation.setFromAxisRad(0f, 1f, 0f, f.twist).mul(tmpQuat.setFromAxisRad(0f, 0f, 1f, f.lean))
+                .mul(tmpQuat.setFromAxisRad(1f, 0f, 0f, f.roll));
+        // The head keeps looking forward over a leaning trunk, turns towards the ball and looks up at it;
+        // it stays level when the trunk bends sideways.
+        f.headPitch += (ballPitch * 0.55f - f.headPitch) * (1f - (float) Math.exp(-13f * dt));
+        float nod = MathUtils.clamp(-f.lean * 0.6f + f.headPitch - headDrop, -0.6f, 0.55f);
         f.head.rotation.setFromAxisRad(0f, 1f, 0f, headYaw - f.twist * 0.8f)
-                .mul(tmpQuat.setFromAxisRad(0f, 0f, 1f, nod));
+                .mul(tmpQuat.setFromAxisRad(0f, 0f, 1f, nod))
+                .mul(tmpQuat.setFromAxisRad(1f, 0f, 0f, -f.roll * 0.7f));
         f.instance.calculateTransforms();
+    }
+
+    /** Time (s) in which a pose closes half the way to its target: strikes, in the air, everything else. */
+    private static final float STRIKE_HALF_LIFE = 0.025f;
+    private static final float AIR_HALF_LIFE = 0.045f;
+    private static final float POSE_HALF_LIFE = 0.06f;
+
+    /**
+     * Remembers how the player moves: the ground acceleration in the body's frame (smoothed, so a
+     * single step of the physics does not jerk the trunk), the turning speed, and the landing
+     * (when the feet touched down and how fast the body was falling).
+     */
+    private static void trackMotion(Figure f, VolleyballPlayer player, float yaw, float cos, float sin, float dt) {
+        if (dt <= 0f) return;
+        float ax = (player.velocity.x - f.lastVx) / dt;
+        float az = (player.velocity.z - f.lastVz) / dt;
+        f.lastVx = player.velocity.x;
+        f.lastVz = player.velocity.z;
+        if (!player.isUpright() || player.isAirborne()) {
+            ax = 0f;
+            az = 0f;
+        }
+        float forward = MathUtils.clamp(ax * cos - az * sin, -25f, 25f);
+        float side = MathUtils.clamp(ax * sin + az * cos, -25f, 25f);
+        float k = 1f - (float) Math.exp(-8f * dt);
+        f.accelForward += (forward - f.accelForward) * k;
+        f.accelSide += (side - f.accelSide) * k;
+        if (!Float.isNaN(f.lastYaw)) f.turnRate += (wrap(yaw - f.lastYaw) / dt - f.turnRate) * k;
+        f.lastYaw = yaw;
+        boolean airborne = player.isAirborne();
+        if (airborne) f.fallSpeed = Math.min(f.fallSpeed, player.velocity.y);
+        if (f.wasAirborne && !airborne) {
+            f.landedAt = f.clock;
+            // A block or a hop lands softly; a full attack jump hard.
+            f.landingImpact = MathUtils.clamp((-f.fallSpeed - 1.5f) / 3f, 0.15f, 1f);
+        }
+        if (!airborne) f.fallSpeed = 0f;
+        f.wasAirborne = airborne;
+    }
+
+    /** Running in for an attack: towards the net, close to it, with the ball up on the own side. */
+    private static boolean approaching(VolleyballPlayer player, Vector3 ball) {
+        if (ball == null || ball.y < 2.4f || Math.signum(ball.x) != Math.signum(player.position.x)) return false;
+        float towardsNet = -Math.signum(player.position.x) * player.velocity.x;
+        return towardsNet > 1.5f && Math.abs(player.position.x) < 5f;
+    }
+
+    // Locomotion targets (written by locomotion, read by pose; no allocation per frame).
+    private float poseDrop;
+    private float poseLean;
+    private float poseTwist;
+    private float poseRoll;
+    private float poseStance;
+
+    /**
+     * The body on the ground by state: standing (breathing, weight shifting), ready (low, on the
+     * toes), walking and running (arms swinging against the legs, shoulders counter-rotating,
+     * a sprint bent further forward), the approach (big arm swing), backpedalling and the side
+     * shuffle (low, arms ready, no arm swing), the loaded jump and the landing (the legs absorb
+     * the impact: deeper the harder the landing).
+     */
+    private void locomotion(Figure f, VolleyballPlayer player, PlayerAnimState state, float phase, float speed,
+                            float speedFactor, float sideSpeed, float sinceLanding) {
+        float drop = 0f;
+        float lean = 0f;
+        float twist = 0f;
+        float roll = 0f;
+        float stance = 0.3f;
+        float swing = MathUtils.sin(phase);
+        float bob = Math.abs(MathUtils.sin(phase * 2f));
+        switch (state) {
+            case READY -> {
+                // Knees bent, weight forward, hands out in front; a small bounce keeps the legs live.
+                float bounce = 0.5f + 0.5f * MathUtils.sin(f.clock * 9f + player.id);
+                drop = CROUCH_DROP - 0.02f * bounce;
+                lean = -0.28f;
+                leftArm.set(0.6f, 0.2f, 0.9f);
+                rightArm.set(0.6f, 0.2f, 0.9f);
+                stance = 1f;
+            }
+            case SHUFFLE -> {
+                // Low and square to the ball, arms ready: the feet push sideways, the body leans into it.
+                drop = (player.isCrouching() ? CROUCH_DROP : 0.13f) + 0.02f * bob;
+                lean = -0.24f;
+                roll = MathUtils.clamp(sideSpeed / 3f, -1f, 1f) * 0.06f;
+                leftArm.set(0.55f, 0.25f, 0.95f);
+                rightArm.set(0.55f, 0.25f, 0.95f);
+                stance = 1f;
+            }
+            case BACKPEDAL -> {
+                // Short quick steps backwards, chest still over the feet, hands low in front.
+                drop = 0.09f + 0.02f * bob;
+                lean = -0.06f;
+                leftArm.set(0.45f + 0.2f * swing, 0.15f, 0.85f);
+                rightArm.set(0.45f - 0.2f * swing, 0.15f, 0.85f);
+                stance = 0.6f;
+            }
+            case WALK, RUN, SPRINT, APPROACH -> {
+                boolean sprint = state == PlayerAnimState.SPRINT;
+                boolean approach = state == PlayerAnimState.APPROACH;
+                float amplitude = (approach ? 1.05f : sprint ? 0.85f : 0.65f) * speedFactor;
+                float elbow = sprint ? 1.35f : 0.3f + 0.75f * speedFactor;
+                leftArm.set(0.1f + amplitude * swing, 0.1f, elbow);
+                rightArm.set(0.1f - amplitude * swing, 0.1f, elbow);
+                drop = 0.06f * speedFactor + 0.03f * bob * speedFactor;
+                lean = -0.12f * speedFactor - (sprint ? 0.1f : 0f) - (approach ? 0.12f : 0f);
+                // The shoulders counter-rotate against the hips.
+                twist = -(sprint ? 0.18f : 0.14f) * swing * speedFactor;
+            }
+            case JUMP_PREP -> {
+                // Loading the jump: hips back and down, arms swing back.
+                float c = player.jumpCharge();
+                leftArm.set(-0.9f * c, 0.15f, 0.2f);
+                rightArm.set(-0.9f * c, 0.15f, 0.2f);
+                drop = 0.26f * c;
+                lean = -0.3f * c;
+            }
+            case LANDING -> {
+                // The knees give, then straighten: deepest about 0.08 s after the touch-down.
+                float t = sinceLanding / PlayerAnimState.LANDING_TIME;
+                float absorb = t < 0.25f ? smooth(t / 0.25f) : 1f - smooth((t - 0.25f) / 0.75f);
+                float depth = 0.06f + 0.2f * f.landingImpact;
+                drop = depth * absorb;
+                lean = -(0.06f + 0.2f * f.landingImpact) * absorb;
+                // Arms forward and out for balance.
+                leftArm.set(0.15f + 0.75f * absorb, 0.1f + 0.3f * absorb, 0.3f + 0.3f * absorb);
+                rightArm.set(0.15f + 0.75f * absorb, 0.1f + 0.3f * absorb, 0.3f + 0.3f * absorb);
+                stance = 0.6f;
+            }
+            default -> {
+                // Standing: breathing and a slow shift of weight from foot to foot - never a statue.
+                float breath = MathUtils.sin(f.clock * 1.7f + player.id);
+                float shift = MathUtils.sin(f.clock * 0.55f + player.id * 1.3f);
+                drop = 0.015f + 0.006f * breath;
+                lean = -0.03f + 0.012f * breath;
+                roll = 0.03f * shift;
+                leftArm.set(0.08f + 0.015f * breath, 0.1f, 0.3f);
+                rightArm.set(0.08f + 0.015f * breath, 0.1f, 0.3f);
+                stance = 0.45f;
+            }
+        }
+        poseDrop = drop;
+        poseLean = lean;
+        poseTwist = twist;
+        poseRoll = roll;
+        poseStance = stance;
+    }
+
+    // One leg in the air (written by airborneLeg).
+    private float legX;
+    private float legY;
+    private float legPitch;
+
+    /**
+     * A leg in the air, from the vertical speed: legs extended and toes pointed at the take-off,
+     * the lower legs folded back at the top (the body a bow), the feet reaching for the floor on
+     * the way down; blended continuously between the three. A blocker keeps both legs down.
+     */
+    private void airborneLeg(VolleyballPlayer player, ActionPose action, int i) {
+        float full = PlayerModelFactory.THIGH_LENGTH + PlayerModelFactory.SHIN_LENGTH;
+        if (player.isBlocking() || action == ActionPose.BLOCK) {
+            legX = 0f;
+            legY = -full * 0.97f;
+            legPitch = -0.4f;
+            return;
+        }
+        float rise = MathUtils.clamp(player.velocity.y / 3.5f, -1f, 1f);
+        // Keyframes: take-off (rise 1), top (0), coming down (-1).
+        float topX = -0.22f + i * 0.06f;
+        float topY = -full * 0.78f;
+        float topPitch = -0.7f;
+        if (rise >= 0f) {
+            float w = smooth((rise - 0.15f) / 0.45f);
+            legX = MathUtils.lerp(topX, i == 0 ? -0.05f : 0.03f, w);
+            legY = MathUtils.lerp(topY, -full * 0.97f, w);
+            legPitch = MathUtils.lerp(topPitch, -0.6f, w);
+        } else {
+            float w = smooth((-rise - 0.2f) / 0.5f);
+            legX = MathUtils.lerp(topX, 0.06f - i * 0.1f, w);
+            legY = MathUtils.lerp(topY, -full * 0.9f, w);
+            legPitch = MathUtils.lerp(topPitch, -0.2f, w);
+        }
+    }
+
+    /** The animation state the player was last drawn in (see {@link PlayerAnimState}), or null if never drawn. */
+    public PlayerAnimState animState(VolleyballPlayer p) {
+        Figure f = figures.get(p.id);
+        return f == null ? null : f.state;
     }
 
     /** Length of a full step cycle (two steps) at this speed: about 1.3 m walking, 1.7 m running. */
@@ -709,15 +924,25 @@ public final class PlayerRenderer implements Disposable {
      */
     private void airborneArms(VolleyballPlayer player, boolean ballHigh) {
         float rise = MathUtils.clamp(player.velocity.y / 3.5f, -1f, 1f);
-        if (rise > 0.45f) {
-            leftArm.set(2.7f, 0.25f, 0.25f);
-            rightArm.set(2.7f, 0.25f, 0.25f);
-        } else if (ballHigh && rise > -0.5f) {
+        // At the top: cocked for the hit if the ball is up in front, otherwise arms up and out.
+        if (ballHigh) {
             windUp(player.swingStyle());
         } else {
-            leftArm.set(1.4f, 0.55f, 0.4f);
-            rightArm.set(1.4f, 0.55f, 0.4f);
+            leftArm.set(2.1f, 0.4f, 0.35f);
+            rightArm.set(2.1f, 0.4f, 0.35f);
         }
+        // Take-off: both arms thrown up; coming down without a ball: lowered for balance.
+        float up = smooth((rise - 0.3f) / 0.35f);
+        float down = ballHigh ? smooth((-rise - 0.4f) / 0.4f) : smooth((-rise - 0.1f) / 0.5f);
+        blendArms(2.7f, 0.25f, 0.25f, up);
+        blendArms(1.4f, 0.55f, 0.4f, down);
+    }
+
+    /** Moves both arm targets a fraction {@code w} towards the same pose. */
+    private void blendArms(float raise, float spread, float elbow, float w) {
+        if (w <= 0f) return;
+        leftArm.set(MathUtils.lerp(leftArm.raise, raise, w), MathUtils.lerp(leftArm.spread, spread, w), MathUtils.lerp(leftArm.elbow, elbow, w));
+        rightArm.set(MathUtils.lerp(rightArm.raise, raise, w), MathUtils.lerp(rightArm.spread, spread, w), MathUtils.lerp(rightArm.elbow, elbow, w));
     }
 
     /**
@@ -755,15 +980,19 @@ public final class PlayerRenderer implements Disposable {
     }
 
     /**
-     * The swing after the wind-up, by shot, over the pose's progress (0..1); returns the trunk's
-     * twist and lean. Power: whip and a long follow-through across the body. Cut: the arm snaps
+     * The swing after the wind-up, by shot, over the pose's progress (0..1); sets the trunk's
+     * twist and lean ({@link #trunkTwist}, {@link #trunkLean}). Power: whip and a long follow-through across the body. Cut: the arm snaps
      * across the body with the trunk turning hard. Roll: a slower brush up and over, the arm
      * finishing high. Tip: a short push up and forward, the arm stays up. Tool: the swing goes
      * out wide, towards the block's edge. Float serve: a punch that stops at the contact.
      * Topspin serve: a full whip with the body thrown into it. Underhand: from behind the hip
      * forward and up.
      */
-    private float[] swing(SwingStyle style, float progress) {
+    // Trunk targets written by swing and blockArms.
+    private float trunkTwist;
+    private float trunkLean;
+
+    private void swing(SwingStyle style, float progress) {
         float whip = smooth(progress / 0.3f);
         float follow = smooth((progress - 0.3f) / 0.7f);
         float twist;
@@ -832,7 +1061,8 @@ public final class PlayerRenderer implements Disposable {
                 lean = MathUtils.lerp(MathUtils.lerp(serve ? 0.3f : 0.2f, serve ? -0.5f : -0.35f, whip), -0.25f, follow);
             }
         }
-        return new float[]{twist, lean};
+        trunkTwist = twist;
+        trunkLean = lean;
     }
 
     private final ArmPose swapArm = new ArmPose();
@@ -865,8 +1095,8 @@ public final class PlayerRenderer implements Disposable {
         return BlockKind.STRAIGHT;
     }
 
-    /** The arms of the block (by {@link #blockKind}); returns the trunk's lean and twist. */
-    private float[] blockArms(VolleyballPlayer player) {
+    /** The arms of the block (by {@link #blockKind}); sets the trunk's lean and twist. */
+    private void blockArms(VolleyballPlayer player) {
         float over = player.isBlocking() ? Math.min(1f, player.blockPenetration() / 0.3f) : 0f;
         float up = 2.95f - 0.4f * over;
         float lean = -0.1f - 0.12f * over;
@@ -909,7 +1139,8 @@ public final class PlayerRenderer implements Disposable {
                 rightArm.set(up, 0.14f, 0.05f);
             }
         }
-        return new float[]{lean, twist};
+        trunkLean = lean;
+        trunkTwist = twist;
     }
 
     /** Standing at the net facing it while the ball is on the other side: ready to block. */

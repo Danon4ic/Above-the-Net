@@ -21,6 +21,8 @@ public enum ActionPose {
     HIGH_FIVE,
     /** After a point lost: a short clap of encouragement in front of the chest. */
     CLAP,
+    /** After a point lost: head down, hands on the hips (or on the knees), a moment of frustration. */
+    DISAPPOINTED,
     // The first referee's hand signals (right / left: which arm points).
     /** Authorisation to serve: the arm sweeps towards the serving team. */
     REF_SERVE_RIGHT, REF_SERVE_LEFT,
