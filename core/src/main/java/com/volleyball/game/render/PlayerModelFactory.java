@@ -43,7 +43,7 @@ final class PlayerModelFactory {
     /** Ankle joint height above the sole. */
     static final float ANKLE_HEIGHT = 0.035f;
     static final float SHOULDER_HEIGHT = 0.44f;
-    static final float SHOULDER_WIDTH = 0.235f;
+    static final float SHOULDER_WIDTH = 0.26f;
     static final float UPPER_ARM_LENGTH = 0.29f;
 
     private static final Color SKIN = new Color(0.86f, 0.68f, 0.55f, 1f);
@@ -91,82 +91,67 @@ final class PlayerModelFactory {
         Color leg = coach ? shorts : SKIN;
         Color hair = coach ? COACH_HAIR : HAIR;
 
-        // Pelvis and hips (shorts): a rounded block, wider than deep.
         GeometryBuilder pelvis = node(PELVIS, 0f, PELVIS_HEIGHT, 0f, material);
-        pelvis.frustum(0f, 0f, 0.11f, -0.07f, 0.21f, 0.33f, 0.24f, 0.37f, shorts);
-        pelvis.ellipsoid(-0.02f, -0.06f, 0f, 0.22f, 0.12f, 0.36f, shorts);  // seat
+        pelvis.box(0f, 0.01f, 0f, 0.26f, 0.22f, 0.38f, shorts);
 
-        // Trunk: abdomen, then a chest that widens to the shoulders; shoulders and neck rounded.
         GeometryBuilder torso = node(TORSO, 0f, 0.10f, 0f, material);
-        torso.frustum(0f, 0f, 0.19f, -0.01f, 0.225f, 0.35f, 0.21f, 0.32f, shirt);   // abdomen
-        torso.frustum(0f, 0f, 0.41f, 0.18f, 0.25f, 0.42f, 0.23f, 0.36f, shirt);     // chest
-        torso.ellipsoid(0f, 0.405f, 0f, 0.235f, 0.11f, 0.42f, liberoTrim != null ? liberoTrim : shirt); // shoulder line
+        torso.box(0f, 0.05f, 0f, 0.22f, 0.12f, 0.36f, shirt);           // waist
+        torso.box(0f, 0.27f, 0f, 0.25f, 0.34f, 0.44f, shirt);           // chest
         if (coach) {
-            torso.box(0.124f, 0.24f, 0f, 0.01f, 0.34f, 0.025f, shirtTrim);   // zip
-            torso.box(0.12f, 0.43f, 0f, 0.03f, 0.06f, 0.16f, NUMBER_PANEL);  // white collar
+            torso.box(0.127f, 0.24f, 0f, 0.01f, 0.36f, 0.025f, shirtTrim);   // zip
+            torso.box(0.127f, 0.41f, 0f, 0.012f, 0.06f, 0.16f, NUMBER_PANEL); // white collar
+            torso.box(0f, 0.30f, -0.222f, 0.26f, 0.03f, 0.01f, shirtTrim);   // shoulder stripes
+            torso.box(0f, 0.30f, 0.222f, 0.26f, 0.03f, 0.01f, shirtTrim);
         } else {
-            torso.box(0.118f, 0.425f, 0f, 0.02f, 0.035f, 0.13f, shirtTrim);   // collar (front)
-            torso.box(-0.126f, 0.25f, 0f, 0.012f, 0.22f, 0.28f, NUMBER_PANEL); // number panel (back)
+            torso.box(0.126f, 0.40f, 0f, 0.01f, 0.06f, 0.14f, shirtTrim);   // collar (front)
+            torso.box(-0.127f, 0.25f, 0f, 0.012f, 0.24f, 0.30f, NUMBER_PANEL); // number panel (back)
             // A light shirt gets dark digits (white on the white panel would vanish).
             Color digits = com.volleyball.game.entities.Team.luminance(shirt) > 0.7f ? DARK_DIGITS : shirt;
             backNumber(torso, Math.max(0, Math.min(99, number)), digits);
+            if (liberoTrim != null) {
+                // Side panels and a band across the shoulders in the team's colour.
+                torso.box(0f, 0.2f, -0.222f, 0.2f, 0.26f, 0.012f, liberoTrim);
+                torso.box(0f, 0.2f, 0.222f, 0.2f, 0.26f, 0.012f, liberoTrim);
+                torso.box(0f, 0.475f, 0f, 0.21f, 0.012f, 0.31f, liberoTrim);
+            }
         }
-        torso.frustum(0.005f, 0f, 0.56f, 0.43f, 0.105f, 0.115f, 0.12f, 0.13f, SKIN); // neck
+        torso.box(0f, 0.43f, 0f, 0.20f, 0.07f, 0.30f, shirt);           // shoulders (trapezius)
+        torso.box(0f, 0.49f, 0f, 0.13f, 0.12f, 0.13f, SKIN);            // neck
 
         GeometryBuilder head = node(HEAD, 0f, 0.52f, 0f, material);
-        head.ellipsoid(0.01f, 0.13f, 0f, 0.215f, 0.24f, 0.19f, SKIN);
-        head.ellipsoid(0.035f, 0.065f, 0f, 0.16f, 0.1f, 0.15f, SKIN);         // jaw and chin
-        head.ellipsoid(-0.005f, 0.13f, -0.098f, 0.05f, 0.065f, 0.025f, SKIN); // ears
-        head.ellipsoid(-0.005f, 0.13f, 0.098f, 0.05f, 0.065f, 0.025f, SKIN);
-        head.ellipsoid(-0.02f, 0.2f, 0f, 0.225f, 0.14f, 0.2f, hair);          // hair: crown...
-        head.ellipsoid(-0.07f, 0.15f, 0f, 0.1f, 0.17f, 0.19f, hair);          // ...and back of the head
-        head.ellipsoid(0.108f, 0.115f, 0f, 0.035f, 0.055f, 0.03f, SKIN);      // nose
-        head.ellipsoid(0.1f, 0.155f, -0.04f, 0.02f, 0.022f, 0.03f, EYE);
-        head.ellipsoid(0.1f, 0.155f, 0.04f, 0.02f, 0.022f, 0.03f, EYE);
-        head.box(0.107f, 0.19f, -0.04f, 0.012f, 0.012f, 0.04f, hair);        // brows
-        head.box(0.107f, 0.19f, 0.04f, 0.012f, 0.012f, 0.04f, hair);
+        head.box(-0.005f, 0.0f, 0f, 0.12f, 0.12f, 0.12f, SKIN);          // top of the neck (inside the head)
+        head.sphere(0.01f, 0.125f, 0f, 0.23f, SKIN);
+        head.box(-0.005f, 0.13f, -0.118f, 0.04f, 0.06f, 0.02f, SKIN);     // ears
+        head.box(-0.005f, 0.13f, 0.118f, 0.04f, 0.06f, 0.02f, SKIN);
+        head.box(-0.025f, 0.235f, 0f, 0.21f, 0.06f, 0.21f, hair);
+        head.box(-0.075f, 0.16f, 0f, 0.1f, 0.14f, 0.2f, hair);          // back of the head
+        head.box(0.125f, 0.12f, 0f, 0.04f, 0.05f, 0.035f, SKIN);         // nose
+        head.box(0.112f, 0.165f, -0.045f, 0.02f, 0.025f, 0.03f, EYE);
+        head.box(0.112f, 0.165f, 0.045f, 0.02f, 0.025f, 0.03f, EYE);
 
         for (int side = -1; side <= 1; side += 2) {
             boolean left = side < 0;
-            Color cap = liberoTrim != null ? liberoTrim : coach ? shirtTrim : shirt;
-            // Upper arm: a rounded shoulder (deltoid) in the shirt, the sleeve, then the arm to the elbow.
             GeometryBuilder upper = node(left ? UPPER_ARM_LEFT : UPPER_ARM_RIGHT, 0f, SHOULDER_HEIGHT, side * SHOULDER_WIDTH, material);
-            upper.ellipsoid(0f, -0.02f, -side * 0.01f, 0.12f, 0.125f, 0.112f, cap);
-            upper.frustum(0f, 0f, -0.02f, -0.15f, 0.118f, 0.112f, 0.108f, 0.104f, shirt);
-            upper.frustum(0f, 0f, -0.14f, -UPPER_ARM_LENGTH, coach ? 0.105f : 0.1f, coach ? 0.105f : 0.097f,
-                    coach ? 0.088f : 0.08f, coach ? 0.088f : 0.077f, sleeve);
-            upper.ellipsoid(0f, -UPPER_ARM_LENGTH, 0f, 0.084f, 0.08f, 0.08f, sleeve); // elbow
-            // Forearm, wrist and hand: palm, fingers together, thumb on the front.
+            upper.box(0f, -0.07f, 0f, 0.115f, 0.15f, 0.115f, shirt);
+            upper.box(0f, -0.01f, 0f, 0.13f, 0.09f, 0.13f, liberoTrim != null ? liberoTrim : shirt); // shoulder cap
+            upper.box(0f, -0.2f, 0f, coach ? 0.1f : 0.085f, 0.17f, coach ? 0.1f : 0.085f, sleeve);
             GeometryBuilder fore = node(left ? FOREARM_LEFT : FOREARM_RIGHT, 0f, -UPPER_ARM_LENGTH, 0f, material);
-            fore.frustum(0f, 0f, -0.01f, -0.24f, coach ? 0.095f : 0.09f, coach ? 0.095f : 0.086f, 0.064f, 0.056f, sleeve);
-            fore.frustum(0.003f, 0f, -0.235f, -0.33f, 0.072f, 0.032f, 0.08f, 0.03f, SKIN);   // palm
-            fore.ellipsoid(0.005f, -0.355f, 0f, 0.075f, 0.065f, 0.026f, SKIN);              // fingers
-            fore.ellipsoid(0.04f, -0.265f, -side * 0.012f, 0.024f, 0.055f, 0.022f, SKIN);   // thumb
+            fore.box(0f, -0.12f, 0f, coach ? 0.09f : 0.075f, coach ? 0.24f : 0.26f, coach ? 0.09f : 0.075f, sleeve);
+            fore.box(0.005f, -0.31f, 0f, 0.075f, 0.11f, 0.05f, SKIN);    // hand
 
-            // Thigh: the shorts' leg, then the bare thigh tapering to the knee.
             GeometryBuilder thigh = node(left ? THIGH_LEFT : THIGH_RIGHT, 0f, -HIP_DROP, side * HIP_WIDTH, material);
-            if (coach) {
-                thigh.frustum(0f, 0f, 0.03f, -THIGH_LENGTH, 0.19f, 0.185f, 0.13f, 0.125f, leg);
-            } else {
-                thigh.frustum(0f, 0f, 0.03f, -0.17f, 0.2f, 0.195f, 0.182f, 0.178f, shorts);
-                thigh.frustum(0.006f, 0f, -0.15f, -THIGH_LENGTH + 0.02f, 0.172f, 0.165f, 0.118f, 0.112f, leg);
-            }
-            thigh.ellipsoid(0.006f, -THIGH_LENGTH, 0f, 0.12f, 0.105f, 0.11f, leg);   // knee
-            // Shin: knee pad, calf (fuller at the back), the ankle in a sock.
+            thigh.box(0f, -0.21f, 0f, coach ? 0.16f : 0.15f, 0.42f, coach ? 0.16f : 0.15f, leg);
             GeometryBuilder shin = node(left ? SHIN_LEFT : SHIN_RIGHT, 0f, -THIGH_LENGTH, 0f, material);
             if (coach) {
-                shin.frustum(0f, 0f, 0f, -SHIN_LENGTH + 0.04f, 0.125f, 0.12f, 0.11f, 0.105f, leg);
+                shin.box(0f, -0.21f, 0f, 0.13f, 0.44f, 0.13f, leg);     // trouser leg down to the shoe
             } else {
-                shin.frustum(0.022f, 0f, 0.02f, -0.1f, 0.135f, 0.13f, 0.125f, 0.12f, KNEE_PAD);
-                shin.frustum(-0.01f, 0f, -0.09f, -0.24f, 0.128f, 0.115f, 0.118f, 0.106f, SKIN);    // calf
-                shin.frustum(-0.004f, 0f, -0.23f, -0.36f, 0.112f, 0.1f, 0.075f, 0.072f, SKIN);
-                shin.frustum(0f, 0f, -0.33f, -SHIN_LENGTH + 0.02f, 0.08f, 0.078f, 0.076f, 0.074f, SOCK);
+                shin.box(0.025f, -0.035f, 0f, 0.13f, 0.11f, 0.135f, KNEE_PAD);
+                shin.box(0f, -0.22f, 0f, 0.115f, 0.34f, 0.115f, SKIN);
+                shin.box(0f, -0.41f, 0f, 0.105f, 0.09f, 0.105f, SOCK);
             }
-            // Shoe: a rounded upper on a flat sole, toe to the front.
             GeometryBuilder foot = node(left ? FOOT_LEFT : FOOT_RIGHT, 0f, -SHIN_LENGTH, 0f, material);
-            foot.ellipsoid(0.055f, 0.0f, 0f, 0.27f, 0.085f, 0.112f, SHOE);
-            foot.ellipsoid(-0.035f, 0.02f, 0f, 0.1f, 0.09f, 0.1f, SHOE);           // heel
-            foot.box(0.045f, -0.032f, 0f, 0.23f, 0.014f, 0.1f, SOLE);
+            foot.box(0.05f, -0.01f, 0f, 0.27f, 0.05f, 0.115f, SHOE);
+            foot.box(0.05f, -0.03f, 0f, 0.275f, 0.012f, 0.12f, SOLE);
         }
         Model model = builder.end();
 
