@@ -34,7 +34,8 @@ import java.util.List;
 public final class PoseGalleryScreen extends ScreenAdapter {
     private static final String[] LABELS = {
             "idle", "run forward", "side shuffle", "backpedal", "ready stance", "celebrate", "block ready",
-            "forearm pass", "overhead set", "spike", "serve", "block jump", "dive", "side fall + roll"};
+            "forearm pass", "overhead set", "spike", "serve", "block jump", "dive (sprawl)", "side fall + roll",
+            "dive (knee drop)"};
     /** The action loops run at this speed (1 = real time). */
     private static final float LOOP_SPEED = 0.6f;
 
@@ -181,7 +182,9 @@ public final class PoseGalleryScreen extends ScreenAdapter {
             case 10 -> serveLoop(p, t, x, z, i);
             case 11 -> blockLoop(p, t);
             case 12 -> {
+                // A defensive specialist: flat on the chest (see FallKind).
                 yaw = -MathUtils.HALF_PI;
+                p.attributes.defense = 90;
                 p.diveDirection.set(0f, 0f, 1f);
                 p.setDiveRoll(false);
                 diveLoop(p, t);
@@ -190,6 +193,14 @@ public final class PoseGalleryScreen extends ScreenAdapter {
                 p.diveDirection.set(0f, 0f, -1f);
                 p.setDiveRoll(true);
                 diveLoop(p, t + 0.6f);
+            }
+            case 14 -> {
+                // Not a specialist: down through the front knee.
+                yaw = -MathUtils.HALF_PI;
+                p.attributes.defense = 40;
+                p.diveDirection.set(0f, 0f, 1f);
+                p.setDiveRoll(false);
+                diveLoop(p, t + 1.2f);
             }
             default -> {
             }
