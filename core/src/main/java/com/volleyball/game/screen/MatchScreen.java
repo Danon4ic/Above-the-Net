@@ -689,8 +689,8 @@ public final class MatchScreen extends ScreenAdapter {
                 actionKeys.add(new String[]{primary, "Toss"});
                 actionKeys.add(new String[]{variants, "Serve type"});
                 if (ServeSpin.applies(handling.serveType(p))) {
-                    int first = ServeType.values().length + 1;
-                    actionKeys.add(new String[]{first + "-" + (first + ServeSpin.values().length - 1), "Spin"});
+                    actionKeys.add(new String[]{keyLabel(com.volleyball.game.input.PlayerAction.SPIN_LEFT) + " / "
+                            + keyLabel(com.volleyball.game.input.PlayerAction.SPIN_RIGHT), "Curve"});
                 }
             } else {
                 if (handling.serveType(p).jump && !p.isAirborne()) {
@@ -814,6 +814,8 @@ public final class MatchScreen extends ScreenAdapter {
         }
         int change = input2.variantChange();
         if (change != 0) world.ballHandling().cycleVariant(p, change);
+        int spin = input2.spinPressed();
+        if (spin != 0) world.ballHandling().toggleServeSpin(p, spin < 0 ? ServeSpin.CURVE_LEFT : ServeSpin.CURVE_RIGHT);
         if (input2.switchPlayerPressed()) {
             world.intent(p).clear();
             drills.switchPlayer(1);
@@ -949,6 +951,8 @@ public final class MatchScreen extends ScreenAdapter {
         }
         int change = input.variantChange();
         if (change != 0) world.ballHandling().cycleVariant(trainee, change);
+        int spin = autoplay ? 0 : input.spinPressed();
+        if (spin != 0) world.ballHandling().toggleServeSpin(trainee, spin < 0 ? ServeSpin.CURVE_LEFT : ServeSpin.CURVE_RIGHT);
         // Number keys: direct choice (0 = Auto). In the ball lab they launch test balls instead.
         if (drills.drill() != Drill.FREE && !altHeld()) {
             for (int n = 0; n <= 9; n++) {
@@ -997,15 +1001,16 @@ public final class MatchScreen extends ScreenAdapter {
                     selectorOptions.add(new com.volleyball.game.ui.ShotSelector.Option(String.valueOf(i + 1), types[i].label, null, true,
                             selected == i + 1, false));
                 }
-                // A power serve also takes a spin, on the numbers after the serve types.
+                // A power serve can be curved (the spin keys; pressed again, back to straight topspin).
                 ServeSpin spin = handling.serveSpin(p);
                 boolean spinnable = ServeSpin.applies(handling.serveType(p));
                 if (spinnable) {
-                    ServeSpin[] spins = ServeSpin.values();
-                    for (int i = 0; i < spins.length; i++) {
-                        selectorOptions.add(new com.volleyball.game.ui.ShotSelector.Option(String.valueOf(types.length + i + 1),
-                                spins[i].label, "Spin", true, spin == spins[i], false));
-                    }
+                    selectorOptions.add(new com.volleyball.game.ui.ShotSelector.Option(
+                            keyLabel(com.volleyball.game.input.PlayerAction.SPIN_LEFT), ServeSpin.CURVE_LEFT.label, "Spin", true,
+                            spin == ServeSpin.CURVE_LEFT, false));
+                    selectorOptions.add(new com.volleyball.game.ui.ShotSelector.Option(
+                            keyLabel(com.volleyball.game.input.PlayerAction.SPIN_RIGHT), ServeSpin.CURVE_RIGHT.label, "Spin", true,
+                            spin == ServeSpin.CURVE_RIGHT, false));
                 }
                 hint = spinnable && spin != ServeSpin.TOPSPIN
                         ? "Curving serve: the ball bends in the air and still lands on your aim; a little less dive, a little more risk."

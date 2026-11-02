@@ -70,6 +70,11 @@ public final class InputController {
         return (keys.justPressed(PlayerAction.VARIANT_NEXT) ? 1 : 0) - (keys.justPressed(PlayerAction.VARIANT_PREVIOUS) ? 1 : 0);
     }
 
+    /** -1 (curve left), +1 (curve right) or 0: a serve spin key pressed this frame. */
+    public int spinPressed() {
+        return (keys.justPressed(PlayerAction.SPIN_RIGHT) ? 1 : 0) - (keys.justPressed(PlayerAction.SPIN_LEFT) ? 1 : 0);
+    }
+
     /** Ball-action buttons, kept free of the mechanics package to avoid a dependency cycle. */
     public enum BallActionPress { PRIMARY, SECONDARY }
 

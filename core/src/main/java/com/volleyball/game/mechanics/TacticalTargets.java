@@ -43,6 +43,16 @@ public final class TacticalTargets {
         return teamPoint(side, SETTER_DEPTH, SETTER_LATERAL, SETTER_HEIGHT, out);
     }
 
+    /**
+     * Where the setter's own first pass goes: high into the middle, about 3 m off the net, so the
+     * libero (who sets the second ball then) can come in under it.
+     */
+    public static Vector3 backupSetterTarget(CourtSide side, Vector3 out) {
+        return teamPoint(side, BACKUP_SETTER_DEPTH, 0f, SETTER_HEIGHT, out);
+    }
+
+    static final float BACKUP_SETTER_DEPTH = 3.0f;
+
     /** Default spot for serves and free balls: deep middle of the opponent's court. */
     public static Vector3 defaultAttackTarget(CourtSide attackingSide, Vector3 out) {
         return teamPoint(attackingSide.opposite(), 6.5f, 0f, 0f, out);

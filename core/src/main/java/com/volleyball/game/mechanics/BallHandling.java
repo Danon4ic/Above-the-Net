@@ -206,6 +206,16 @@ public final class BallHandling {
         states[p.id].serveSpin = spin;
     }
 
+    /**
+     * A spin key while (about to be) serving a power serve: curves that way, or back to straight
+     * topspin when that curve is already chosen. Ignored at any other moment.
+     */
+    public void toggleServeSpin(VolleyballPlayer p, ServeSpin spin) {
+        PlayerState s = states[p.id];
+        if (variantContext(p) != ContactPurpose.SERVE || !ServeSpin.applies(s.serveType)) return;
+        s.serveSpin = s.serveSpin == spin ? ServeSpin.TOPSPIN : spin;
+    }
+
     public SetType setType(VolleyballPlayer p) {
         return states[p.id].setType;
     }
@@ -305,17 +315,11 @@ public final class BallHandling {
 
     /**
      * Direct choice (number keys) in the current context: 0 = Auto (sets and shots), 1..n = the
-     * n-th type. While serving, the numbers after the serve types choose the spin of a power
-     * serve. Out-of-range numbers are ignored.
+     * n-th type. Out-of-range numbers are ignored.
      */
     public void selectVariant(VolleyballPlayer p, int index) {
         ContactPurpose context = variantContext(p);
         PlayerState s = states[p.id];
-        if (context == ContactPurpose.SERVE && index > variantCount(context)) {
-            int spin = index - variantCount(context) - 1;
-            if (ServeSpin.applies(s.serveType) && spin < ServeSpin.values().length) s.serveSpin = ServeSpin.values()[spin];
-            return;
-        }
         if (index < (hasAuto(context) ? 0 : 1) || index > variantCount(context)) return;
         switch (context) {
             case SERVE -> setServeType(p, ServeType.values()[index - 1]);
@@ -602,7 +606,9 @@ public final class BallHandling {
                 TacticalTargets.digTarget(p.side, c.target);
                 c.apex = TacticalTargets.DIG_APEX;
             } else {
-                TacticalTargets.setterTarget(p.side, c.target);
+                // The setter passing the first ball sends it to the middle, for the libero to set.
+                if (p.role == PlayerRole.SETTER) TacticalTargets.backupSetterTarget(p.side, c.target);
+                else TacticalTargets.setterTarget(p.side, c.target);
                 // The worse the contact, the further off the net the pass is aimed, so that an
                 // inaccurate pass does not end in the net or go over it.
                 float margin = PASS_NET_MARGIN + (1f - c.quality) * PASS_NET_MARGIN_POOR;

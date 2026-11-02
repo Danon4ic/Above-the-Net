@@ -76,8 +76,9 @@ public final class HelpMenu implements Disposable {
         topic("Shots and sets", "The bar at the bottom of the screen shows the options of the moment.",
                 row("1 - 9", "Choose directly: serve type, set (with the hitter it goes to), shot, block line or diagonal."),
                 row("0", "Auto: the game picks the set or shot from the pass, the block and the defence (blue dot)."),
-                row("6 - 8", "Power serves (3, 5): straight topspin, curve left or curve right. A curving serve bends in the air "
-                        + "and still lands on the aim, with a little less dive and a little more risk."),
+                row(key(keys, PlayerAction.SPIN_LEFT) + " / " + key(keys, PlayerAction.SPIN_RIGHT),
+                        "Power serves (3, 5): curve left or right; the same key again, straight topspin. A curving serve bends "
+                        + "in the air and still lands on the aim, with a little less dive and a little more risk."),
                 row(key(keys, PlayerAction.VARIANT_PREVIOUS) + " / " + key(keys, PlayerAction.VARIANT_NEXT),
                         "Step through the same options."),
                 row("Shots", "Power, cut (sharp angle), roll, tip (over the block; the setter's dump), tool (off the block, out)."),

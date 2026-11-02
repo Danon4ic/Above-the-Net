@@ -476,6 +476,15 @@ public final class TeamAI implements BallTouchListener {
         world.predictor().predict(ball, 6f, forecast);
         TrajectoryPredictor.dropAtNet(forecast, world.court().net().topHeight(), ball.position.x);
         forecast.watchHeight = Float.NaN;
+        // A ball already below that height but still in the air on our side (a steep one reaches
+        // the forearms only at about 0.75 m) is still ours, coming down right here: the player
+        // under it must not be called off at the last moment.
+        if (!forecast.reachesWatchHeight && ball.isActive() && ball.velocity.y < 0f && ball.position.y > LOW_BALL_HEIGHT
+                && CourtDimensions.sideOf(ball.position.x) == side) {
+            forecast.reachesWatchHeight = true;
+            forecast.descentPoint.set(ball.position);
+            forecast.timeToDescent = 0f;
+        }
         boolean comingToUs = forecast.reachesWatchHeight && CourtDimensions.sideOf(forecast.descentPoint.x) == side;
         boolean ourPossession = handling.lastTouchSide() == side;
         int touches = handling.teamTouches(side);
@@ -844,6 +853,12 @@ public final class TeamAI implements BallTouchListener {
                                   Collection<VolleyballPlayer> humans) {
         int lastToucher = world.ballHandling().lastToucherId();
         if (touches == 1 && setter != null && setter.id != lastToucher && setter.isUpright() && setter.isOnCourt()) return setter.id;
+        // The setter took the first ball (or is down): the libero comes in and sets, as long as it can get there.
+        VolleyballPlayer libero = team.libero();
+        if (touches == 1 && libero != null && libero.isOnCourt() && libero.isUpright() && libero.id != lastToucher
+                && !humans.contains(libero) && reach(libero, forecast.timeToDescent, forecast.descentPoint) > LIBERO_SETS_FROM) {
+            return libero.id;
+        }
         float bestAi = 0f;
         for (VolleyballPlayer p : court) {
             if (p.id == lastToucher || humans.contains(p)) continue;
@@ -961,12 +976,20 @@ public final class TeamAI implements BallTouchListener {
         return (float) Math.sqrt(dx * dx + dz * dz);
     }
 
+    /** Below this height a falling ball is left to the floor (no contact technique reaches it). */
+    static final float LOW_BALL_HEIGHT = 0.25f;
+    /** The libero takes the second ball from the setter when its chance of getting there is above this. */
+    static final float LIBERO_SETS_FROM = 0.25f;
+    /** How much further the libero gets to a ball than its run alone (it dives for the last metre). */
+    static final float LIBERO_DIVE_REACH = 1.2f;
+
     /** Chance (0..1) of getting to the ball in time: reaction + start-up + run against the time left. */
     private float reach(VolleyballPlayer p, float timeAvailable, Vector3 point) {
         if (!p.isUpright()) return 0f;
         float dx = point.x - p.position.x;
         float dz = point.z - p.position.z;
-        float distance = Math.max(0f, (float) Math.sqrt(dx * dx + dz * dz) - 0.6f);
+        float stretch = 0.6f + (p.role == PlayerRole.LIBERO ? LIBERO_DIVE_REACH : 0f);
+        float distance = Math.max(0f, (float) Math.sqrt(dx * dx + dz * dz) - stretch);
         Brain brain = brains.get(p.id);
         float reaction = brain == null ? 0.1f : brain.motor.skill().reaction();
         float needed = reaction + 0.25f + distance / PlayerLocomotion.maxRunSpeed(p.attributes) + (p.isAirborne() ? 0.35f : 0f);
@@ -1038,6 +1061,16 @@ public final class TeamAI implements BallTouchListener {
         VolleyballPlayer hitter = playCaller.chosenHitter(from);
         attackerId = hitter == null ? -1 : hitter.id;
         if (whoSets != null && !humans.contains(whoSets) && o != null && !o.dump()) world.ballHandling().setSetType(whoSets, o.set());
+        if (whoSets != null && whoSets.role != PlayerRole.SETTER) {
+            // Anyone but the setter (the libero after the setter's own pass) puts up a high ball to
+            // a wing: a bump set has no tempo for a quick or a combination.
+            SetType high = lanes.get(SetType.Lane.OUTSIDE) != null ? SetType.HIGH_OUTSIDE : SetType.BACK_SET;
+            plannedSet = high;
+            playCaller.followSet(high, playbook, lanes);
+            VolleyballPlayer wing = lanes.get(high.lane);
+            attackerId = wing == null ? -1 : wing.id;
+            if (!humans.contains(whoSets)) world.ballHandling().setSetType(whoSets, high);
+        }
     }
 
     /**

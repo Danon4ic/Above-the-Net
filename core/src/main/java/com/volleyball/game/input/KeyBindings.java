@@ -32,6 +32,8 @@ public final class KeyBindings {
         bindings.bind(PlayerAction.SECONDARY_ACTION, mouse(Input.Buttons.RIGHT));
         bindings.bind(PlayerAction.VARIANT_PREVIOUS, Input.Keys.Q);
         bindings.bind(PlayerAction.VARIANT_NEXT, Input.Keys.E);
+        bindings.bind(PlayerAction.SPIN_LEFT, Input.Keys.Z);
+        bindings.bind(PlayerAction.SPIN_RIGHT, Input.Keys.X);
         bindings.bind(PlayerAction.PAUSE, Input.Keys.ESCAPE);
         return bindings;
     }
@@ -54,6 +56,8 @@ public final class KeyBindings {
         bindings.bind(PlayerAction.SECONDARY_ACTION, Input.Keys.PERIOD);
         bindings.bind(PlayerAction.VARIANT_PREVIOUS, Input.Keys.LEFT_BRACKET);
         bindings.bind(PlayerAction.VARIANT_NEXT, Input.Keys.RIGHT_BRACKET);
+        bindings.bind(PlayerAction.SPIN_LEFT, Input.Keys.L);
+        bindings.bind(PlayerAction.SPIN_RIGHT, Input.Keys.SEMICOLON);
         bindings.bind(PlayerAction.PAUSE, Input.Keys.ESCAPE);
         return bindings;
     }

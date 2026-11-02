@@ -554,8 +554,8 @@ public final class PlayerRenderer implements Disposable {
         if (!airborne && action == ActionPose.NONE) {
             // Inertia: the trunk leans into an acceleration and back against braking, and banks
             // into a change of direction (the feet push sideways, the body leans in).
-            lean += MathUtils.clamp(-0.04f * f.accelForward, -0.2f, 0.16f);
-            roll += MathUtils.clamp(0.03f * f.accelSide, -0.16f, 0.16f);
+            lean += MathUtils.clamp(-0.025f * f.accelForward, -0.12f, 0.1f);
+            roll += MathUtils.clamp(0.015f * f.accelSide, -0.07f, 0.07f);
         }
 
         // ---- ball actions override
@@ -1094,7 +1094,8 @@ public final class PlayerRenderer implements Disposable {
         }
         float forward = MathUtils.clamp(ax * cos - az * sin, -25f, 25f);
         float side = MathUtils.clamp(ax * sin + az * cos, -25f, 25f);
-        float k = 1f - (float) Math.exp(-8f * dt);
+        // Smoothed over about a quarter of a second: the small corrections of a run must not rock the trunk.
+        float k = 1f - (float) Math.exp(-4f * dt);
         f.accelForward += (forward - f.accelForward) * k;
         f.accelSide += (side - f.accelSide) * k;
         if (!Float.isNaN(f.lastYaw)) f.turnRate += (wrap(yaw - f.lastYaw) / dt - f.turnRate) * k;
@@ -1152,16 +1153,16 @@ public final class PlayerRenderer implements Disposable {
             }
             case SHUFFLE -> {
                 // Low and square to the ball, arms ready: the feet push sideways, the body leans into it.
-                drop = (player.isCrouching() ? CROUCH_DROP : 0.13f) + 0.02f * bob;
+                drop = (player.isCrouching() ? CROUCH_DROP : 0.13f) + 0.012f * bob;
                 lean = -0.24f;
-                roll = MathUtils.clamp(sideSpeed / 3f, -1f, 1f) * 0.06f;
+                roll = MathUtils.clamp(sideSpeed / 3f, -1f, 1f) * 0.035f;
                 leftArm.set(0.55f, 0.25f, 0.95f);
                 rightArm.set(0.55f, 0.25f, 0.95f);
                 stance = 1f;
             }
             case BACKPEDAL -> {
                 // Short quick steps backwards, chest still over the feet, hands low in front.
-                drop = 0.09f + 0.02f * bob;
+                drop = 0.09f + 0.012f * bob;
                 lean = -0.06f;
                 leftArm.set(0.45f + 0.2f * swing, 0.15f, 0.85f);
                 rightArm.set(0.45f - 0.2f * swing, 0.15f, 0.85f);
@@ -1174,10 +1175,10 @@ public final class PlayerRenderer implements Disposable {
                 float elbow = sprint ? 1.35f : 0.3f + 0.75f * speedFactor;
                 leftArm.set(0.1f + amplitude * swing, 0.1f, elbow);
                 rightArm.set(0.1f - amplitude * swing, 0.1f, elbow);
-                drop = 0.06f * speedFactor + 0.03f * bob * speedFactor;
+                drop = 0.06f * speedFactor + 0.018f * bob * speedFactor;
                 lean = -0.12f * speedFactor - (sprint ? 0.1f : 0f) - (approach ? 0.12f : 0f);
                 // The shoulders counter-rotate against the hips.
-                twist = -(sprint ? 0.18f : 0.14f) * swing * speedFactor;
+                twist = -(sprint ? 0.11f : 0.08f) * swing * speedFactor;
             }
             case JUMP_PREP -> {
                 // Loading the jump: hips back and down, arms swing back.

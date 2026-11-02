@@ -17,5 +17,8 @@ public enum PlayerAction {
     /** Previous / next variant of the current action (serve type, set type, attack shot). */
     VARIANT_PREVIOUS,
     VARIANT_NEXT,
+    /** Curve a power serve to the left / right (pressed again: back to straight topspin). */
+    SPIN_LEFT,
+    SPIN_RIGHT,
     PAUSE
 }

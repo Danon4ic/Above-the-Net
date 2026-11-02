@@ -90,16 +90,19 @@ class ServeSpinTest {
     }
 
     @Test
-    void numberKeysAfterTheServeTypesChooseTheSpin() {
+    void spinKeysCurveThePowerServeAndPressedAgainStraightenIt() {
         Harness h = new Harness(5);
         VolleyballPlayer server = h.home(0);
         h.handling.prepareServe(server, ServeType.FLOAT);
-        int first = ServeType.values().length + 1;
-        h.handling.selectVariant(server, first + 1);
+        h.handling.toggleServeSpin(server, ServeSpin.CURVE_LEFT);
         assertEquals(ServeSpin.TOPSPIN, h.handling.serveSpin(server), "a float serve takes no spin choice");
         h.handling.selectVariant(server, ServeType.POWER.ordinal() + 1);
-        h.handling.selectVariant(server, first + 2);
+        h.handling.toggleServeSpin(server, ServeSpin.CURVE_RIGHT);
         assertEquals(ServeType.POWER, h.handling.serveType(server));
         assertEquals(ServeSpin.CURVE_RIGHT, h.handling.serveSpin(server));
+        h.handling.toggleServeSpin(server, ServeSpin.CURVE_LEFT);
+        assertEquals(ServeSpin.CURVE_LEFT, h.handling.serveSpin(server), "the other key switches the curve");
+        h.handling.toggleServeSpin(server, ServeSpin.CURVE_LEFT);
+        assertEquals(ServeSpin.TOPSPIN, h.handling.serveSpin(server), "the same key again: straight topspin");
     }
 }

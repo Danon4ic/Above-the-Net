@@ -1,5 +1,6 @@
 package com.volleyball.game.ai;
 
+import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.math.Vector3;
 import com.volleyball.game.entities.VolleyballPlayer;
@@ -276,7 +277,9 @@ public final class AutoPlayer {
     /** Moves so the ideal contact point meets the ball's descent, then requests the contact. */
     private void play(VolleyballPlayer p, MoveIntent intent, BallHandling handling, ContactType type, ActionKind kind,
                       double now) {
-        ContactZone.idealPoint(p, type, null, ideal);
+        boolean forearm = type == ContactType.FOREARM_PASS;
+        if (forearm) idealSquareToNet(p, type, ideal);
+        else ContactZone.idealPoint(p, type, null, ideal);
         forecast.watchHeight = ideal.y - p.position.y;
         world.predictor().predict(world.ball(), 6f, forecast);
         TrajectoryPredictor.dropAtNet(forecast, world.court().net().topHeight(), world.ball().position.x);
@@ -287,9 +290,64 @@ public final class AutoPlayer {
             return;
         }
         float t = forecast.timeToDescent;
-        moveTowards(p, intent, awayFromNet(p, forecast.descentPoint.x - (ideal.x - p.position.x) + readX(t), PLAY_NET_DISTANCE),
-                forecast.descentPoint.z - (ideal.z - p.position.z) + readZ(t));
+        float targetX = forecast.descentPoint.x - (ideal.x - p.position.x) + readX(t);
+        float targetZ = forecast.descentPoint.z - (ideal.z - p.position.z) + readZ(t);
+        // A pass or dig that cannot be reached on foot is not given up: dive for it.
+        if (forearm && diveIfOutOfReach(p, intent, handling, now, targetX, targetZ, t)) return;
+        moveTowards(p, intent, awayFromNet(p, targetX, PLAY_NET_DISTANCE), targetZ);
+        if (forearm) squareUpWhenClose(p, intent, targetX, targetZ);
         if (t < ARM_LEAD || arrivingSoon(p)) handling.arm(p, kind, now);
+    }
+
+    /**
+     * The ideal contact point as it will be at the contact, when the player is square to the net
+     * (a forearm ball is played forwards, to the setter or the hitters). Running to a ball behind
+     * them the player faces the run; aiming with that facing would put the arms a metre off once
+     * they turn back at the end.
+     */
+    private static void idealSquareToNet(VolleyballPlayer p, ContactType type, Vector3 out) {
+        ContactZone.idealPoint(p, type, null, out);
+        float delta = VolleyballPlayer.facingNetYaw(p.side) - p.facingYaw;
+        float c = MathUtils.cos(delta);
+        float s = MathUtils.sin(delta);
+        float ox = out.x - p.position.x;
+        float oz = out.z - p.position.z;
+        out.x = p.position.x + ox * c + oz * s;
+        out.z = p.position.z - ox * s + oz * c;
+    }
+
+    /** Within the last steps the player turns square to the net, matching {@link #idealSquareToNet}. */
+    private static void squareUpWhenClose(VolleyballPlayer p, MoveIntent intent, float targetX, float targetZ) {
+        float dx = targetX - p.position.x;
+        float dz = targetZ - p.position.z;
+        if (dx * dx + dz * dz < SQUARE_UP_DISTANCE * SQUARE_UP_DISTANCE) intent.facingYaw = VolleyballPlayer.facingNetYaw(p.side);
+    }
+
+    static final float SQUARE_UP_DISTANCE = 1.5f;
+
+    /** How far from the ball a dive still gets there (m): the libero throws itself the furthest. */
+    static final float DIVE_RANGE = 3.2f;
+    static final float LIBERO_DIVE_RANGE = 3.6f;
+
+    /**
+     * The ball comes down at {@code targetX, targetZ} in {@code timeLeft} seconds: when the run
+     * will not get there in time but a dive will, dive at it and play it from the floor.
+     *
+     * @return whether the player dived
+     */
+    private boolean diveIfOutOfReach(VolleyballPlayer p, MoveIntent intent, BallHandling handling, double now, float targetX,
+                                     float targetZ, float timeLeft) {
+        if (p.isAirborne() || !p.isUpright()) return false;
+        float dx = targetX - p.position.x;
+        float dz = targetZ - p.position.z;
+        float distance = (float) Math.sqrt(dx * dx + dz * dz);
+        float reachable = PlayerLocomotion.maxRunSpeed(p.attributes) * Math.max(0f, timeLeft - 0.1f) * 0.7f;
+        float range = p.role == com.volleyball.game.entities.PlayerRole.LIBERO ? LIBERO_DIVE_RANGE : DIVE_RANGE;
+        if (distance <= reachable + 0.9f || distance <= 1.3f || distance >= range) return false;
+        intent.direction.set(dx / distance, dz / distance);
+        intent.dive = true;
+        handling.arm(p, ActionKind.PRIMARY, now);
+        return true;
     }
 
     /**
@@ -398,7 +456,7 @@ public final class AutoPlayer {
 
     /** Runs to the ball (diving for one out of reach on foot) and arms the contact in time. */
     private void chase(VolleyballPlayer p, MoveIntent intent, BallHandling handling, double now, boolean letOutBallsGo) {
-        ContactZone.idealPoint(p, ContactType.FOREARM_PASS, null, ideal);
+        idealSquareToNet(p, ContactType.FOREARM_PASS, ideal);
         forecast.watchHeight = ideal.y - p.position.y;
         world.predictor().predict(world.ball(), 6f, forecast);
         TrajectoryPredictor.dropAtNet(forecast, world.court().net().topHeight(), world.ball().position.x);
@@ -408,17 +466,12 @@ public final class AutoPlayer {
         if (letOutBallsGo && forecast.lands && !CourtDimensions.isInsideCourt(forecast.landing.x, forecast.landing.z, 0.2f)) return;
         float targetX = forecast.descentPoint.x - (ideal.x - p.position.x) + readX(forecast.timeToDescent);
         float targetZ = forecast.descentPoint.z - (ideal.z - p.position.z) + readZ(forecast.timeToDescent);
+        if (diveIfOutOfReach(p, intent, handling, now, targetX, targetZ, forecast.timeToDescent)) return;
         float dx = targetX - p.position.x;
         float dz = targetZ - p.position.z;
         float distance = (float) Math.sqrt(dx * dx + dz * dz);
-        float reachable = PlayerLocomotion.maxRunSpeed(p.attributes) * Math.max(0f, forecast.timeToDescent - 0.1f) * 0.7f;
-        if (!p.isAirborne() && distance > reachable + 0.9f && distance > 1.3f && distance < 3.2f) {
-            intent.direction.set(dx / distance, dz / distance);
-            intent.dive = true;
-            handling.arm(p, ActionKind.PRIMARY, now);
-            return;
-        }
         moveTowards(p, intent, awayFromNet(p, targetX, PLAY_NET_DISTANCE), targetZ);
+        squareUpWhenClose(p, intent, targetX, targetZ);
         intent.crouch = distance < 0.8f;
         if (forecast.timeToDescent < ARM_LEAD || arrivingSoon(p)) handling.arm(p, ActionKind.PRIMARY, now);
     }

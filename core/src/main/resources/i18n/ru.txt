@@ -1133,4 +1133,5 @@ CURVE LEFT => КРУТКА ВЛЕВО
 CURVE RIGHT => КРУТКА ВПРАВО
 Spin => Вращение
 Curving serve: the ball bends in the air and still lands on your aim; a little less dive, a little more risk. => Кручёная подача: мяч уходит дугой и всё равно приходит в точку прицела; чуть меньше нырка, чуть больше риска.
-Power serves (3, 5): straight topspin, curve left or curve right. A curving serve bends in the air and still lands on the aim, with a little less dive and a little more risk. => Силовые подачи (3, 5): прямой топспин, крутка влево или вправо. Кручёная подача уходит дугой и всё равно приходит в точку прицела, но ныряет чуть меньше и рискованнее.
+Power serves (3, 5): curve left or right; the same key again, straight topspin. A curving serve bends in the air and still lands on the aim, with a little less dive and a little more risk. => Силовые подачи (3, 5): крутка влево или вправо, повторное нажатие той же клавиши — снова прямой топспин. Кручёная подача уходит дугой и всё равно приходит в точку прицела, но ныряет чуть меньше и рискованнее.
+Curve => Крутка
