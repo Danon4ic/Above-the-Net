@@ -1155,11 +1155,6 @@ public final class TeamAI implements BallTouchListener {
         brain(p).state = AiState.JUMPING;
     }
 
-    /** The on-court front-row player of a role (not the setter), or null. */
-    private VolleyballPlayer frontRole(RotationManager rotation, PlayerRole role, VolleyballPlayer setter) {
-        return frontRole(court, side, rotation, role, setter);
-    }
-
     /** The front-row player of {@code side} with the role (other than {@code setter}), or null. */
     static VolleyballPlayer frontRole(List<VolleyballPlayer> court, CourtSide side, RotationManager rotation,
                                       PlayerRole role, VolleyballPlayer setter) {
@@ -1768,6 +1763,9 @@ public final class TeamAI implements BallTouchListener {
         float ring = won ? 0.55f : 0.65f;
         moveTo(p, cx + (float) Math.cos(angle) * ring, cz + (float) Math.sin(angle) * ring, false);
         world.intent(p).sprint = false;
+        // A lost point: first a moment of disappointment (hands to the head), then the team picks itself up.
+        boolean justEnded = brain(p).state != AiState.CELEBRATING;
+        if (!won && justEnded && p.actionPose() == ActionPose.NONE) p.setActionPose(ActionPose.DISAPPOINTED, DISAPPOINTED_TIME);
         brain(p).state = AiState.CELEBRATING;
         VolleyballPlayer mate = null;
         for (VolleyballPlayer o : court) {
@@ -1779,6 +1777,9 @@ public final class TeamAI implements BallTouchListener {
         world.intent(p).facingYaw = (float) Math.atan2(-(mate.position.z - p.position.z), mate.position.x - p.position.x);
         p.setActionPose(won ? ActionPose.HIGH_FIVE : ActionPose.CLAP, won ? 0.55f : 0.8f);
     }
+
+    /** How long a player hangs its head after a lost point (s). */
+    static final float DISAPPOINTED_TIME = 1.1f;
 
     /** A timeout: the team gathers in a circle in front of its bench (standing, the arms down). */
     public void huddle(RotationManager rotation, Collection<VolleyballPlayer> humans) {
@@ -1904,13 +1905,6 @@ public final class TeamAI implements BallTouchListener {
             case SIX_TWO -> back != null ? back : first;
             case FIVE_ONE -> first;
         };
-    }
-
-    /** The front-row player in a zone who can attack (not the setter / libero), or null. */
-    private VolleyballPlayer attackerIn(RotationManager rotation, int zone, VolleyballPlayer setter) {
-        VolleyballPlayer p = world.player(rotation.playerInZone(side, zone));
-        if (p == null || p == setter || p.role == PlayerRole.LIBERO) return null;
-        return p;
     }
 
     private List<VolleyballPlayer> opponents() {

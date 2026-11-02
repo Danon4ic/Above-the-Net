@@ -730,7 +730,6 @@ TOUCHES => КАСАНИЯ
 RALLY => РОЗЫГРЫШ
 ROTATION => РАССТАНОВКА
 Timeouts left: {} => Осталось тайм-аутов: {}
-Net at the top => Сетка сверху
 OFFENSE => НАПАДЕНИЕ
 DEFENSE => ЗАЩИТА
 Resume => Продолжить
