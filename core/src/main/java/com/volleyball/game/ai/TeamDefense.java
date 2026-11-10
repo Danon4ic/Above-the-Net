@@ -37,6 +37,16 @@ final class TeamDefense {
     static final float TRIPLE_REACH = 3.5f;
     /** Distance (m) between neighbouring blockers' block positions in a group block. */
     static final float BLOCK_SPACING = 0.7f;
+    /** Lateral distance (m) from the centre line of the off-blockers' spots when two do not block. */
+    static final float OFF_BLOCKER_LATERAL = 2.6f;
+    /** How exactly each level keeps its formation spot (the rest is the plain base position). */
+    static float formationPrecision(Difficulty d) {
+        return switch (d) {
+            case BEGINNER -> 0.35f;
+            case INTERMEDIATE -> 0.75f;
+            case PROFESSIONAL -> 1f;
+        };
+    }
 
     private final GameWorld world;
     private final CourtSide side;
@@ -133,7 +143,18 @@ final class TeamDefense {
         blockReady = now - lastTouchAt >= readDelay;
         habit = habitOfHitter();
         planFormation(rotation, court, attackComing && opponentTouches >= 1, humans);
+        offBlockers.clear();
+        if (opponentHas) {
+            for (VolleyballPlayer p : court) {
+                if (rotation.isFrontRow(side, p.id) && p.role != PlayerRole.LIBERO && !block.contains(p)) offBlockers.add(p);
+            }
+            // Left to right (team frame): each one keeps its own side of the court.
+            offBlockers.sort((a, b) -> Float.compare(lateral(a.position.z), lateral(b.position.z)));
+        }
     }
+
+    /** Front-row players who do not block this step (people included), left to right. */
+    private final List<VolleyballPlayer> offBlockers = new ArrayList<>(3);
 
     /** The opponent touched the ball last (it is theirs, or coming over from them). */
     boolean opponentHas() {
@@ -233,6 +254,25 @@ final class TeamDefense {
     Vector3 offBlockerSpot(VolleyballPlayer p) {
         float lateral = lateral(p.position.z);
         float depth = 3.2f;
+        int i = offBlockers.indexOf(p);
+        if (offBlockers.size() >= 2 && i >= 0) {
+            // Two (or three) players off the block: each pulls off the net on its own side, to the
+            // attack line, for the sharp cross and the tip; with a cover scheme the one nearest
+            // the hit comes in right behind the block. Never both to the same spot.
+            VolleyballPlayer nearest = offBlockers.get(0);
+            for (VolleyballPlayer o : offBlockers) {
+                if (Math.abs(lateral(o.position.z) - hitLateral) < Math.abs(lateral(nearest.position.z) - hitLateral)) nearest = o;
+            }
+            if (formationActive && scheme.tipCover && p == nearest) {
+                lateral = hitLateral * 0.5f;
+                depth = 2.3f;
+            } else {
+                float slot = offBlockers.size() == 2 ? (i == 0 ? -1f : 1f) : i - 1f;
+                lateral = slot * OFF_BLOCKER_LATERAL;
+                depth = slot == 0f ? 3.6f : 3.0f;
+            }
+            return TacticalTargets.teamPoint(side, depth, lateral, 0f, target);
+        }
         if (formationActive && scheme.tipCover) {
             // Covering the block: right behind it, for tips and deflections.
             lateral = hitLateral * 0.5f;
@@ -270,32 +310,42 @@ final class TeamDefense {
      */
     private void planFormation(RotationManager rotation, List<VolleyballPlayer> court, boolean attackComing,
                                Collection<VolleyballPlayer> humans) {
-        DefenseScheme commanded = tactics.defenseScheme();
-        // Professionals play a formation; any team plays one when the coach commands a scheme.
-        formationActive = attackComing && (difficulty == Difficulty.PROFESSIONAL || commanded != null);
+        // Every team plays a formation (each back-row defender owns a spot, so nobody ends up on the
+        // same ball line as a teammate); how exactly it is kept depends on the level.
+        formationActive = attackComing;
         scheme = chooseScheme();
+        hitLateral = lateral(setRead.descentPoint.z);
         back.clear();
         for (VolleyballPlayer p : court) {
-            if (humans.contains(p)) continue;
-            if (!formationActive || block.contains(p) || rotation.isFrontRow(side, p.id) && p.role != PlayerRole.LIBERO) {
-                brains.get(p.id).motor.setDefenseSpot(Float.NaN, Float.NaN);
+            boolean backRow = !block.contains(p) && (!rotation.isFrontRow(side, p.id) || p.role == PlayerRole.LIBERO);
+            if (!opponentHas || !backRow) {
+                if (!humans.contains(p)) brains.get(p.id).motor.setDefenseSpot(Float.NaN, Float.NaN);
                 continue;
             }
+            // People stay in the list (an AI defender must not be sent to their spot), but are not moved.
             back.add(p);
         }
-        if (!formationActive || back.isEmpty()) return;
-        hitLateral = lateral(setRead.descentPoint.z);
+        if (back.isEmpty()) return;
+        back.sort((a, b) -> Float.compare(defenseOrder(a), defenseOrder(b)));
+        if (!formationActive) {
+            // The opponent passes or sets: the back row waits in its base positions, spread over the court.
+            for (int i = 0; i < back.size(); i++) {
+                float slot = slotOf(i);
+                place(back.get(i), humans, slot == 0f ? READY_MIDDLE_DEPTH : READY_DEPTH, slot * READY_LATERAL, 1f);
+            }
+            return;
+        }
         // After the serve the back row switches to its specialities: the libero to middle back
         // (zone 6, deep in the middle, from where it reaches both sides and digs the most balls),
         // the setter to right back (zone 1, the shortest way to the net), the other to left back.
-        back.sort((a, b) -> Float.compare(defenseOrder(a), defenseOrder(b)));
         boolean middleAttack = Math.abs(hitLateral) < 1.2f;
         float s = hitLateral >= 0f ? 1f : -1f;
         boolean rotational = scheme.upLine;
+        float precision = tactics.defenseScheme() != null ? Math.max(0.75f, formationPrecision(difficulty)) : formationPrecision(difficulty);
         for (int i = 0; i < back.size(); i++) {
             VolleyballPlayer p = back.get(i);
             // Position in the lateral order: -1 left, 0 middle, +1 right (two defenders: left and right).
-            float slot = back.size() == 1 ? 0f : back.size() == 2 ? (i == 0 ? -1f : 1f) : i - 1f;
+            float slot = slotOf(i);
             float depth;
             float lateral;
             if (middleAttack) {
@@ -318,18 +368,50 @@ final class TeamDefense {
             float weight = tactics.defenseScheme() == scheme ? 1f : 0.55f;
             if (!(rotational && slot == s && !middleAttack)) depth = Math.max(2.5f, Math.min(8.6f, depth + scheme.depthShift * weight));
             if (!middleAttack) lateral = Math.max(-4.2f, Math.min(4.2f, lateral - s * scheme.crossShift * weight));
-            TacticalTargets.teamPoint(side, depth, lateral, 0f, target);
-            TeamAI.Brain brain = brains.get(p.id);
-            brain.motor.setDefenseSpot(target.x + brain.positionError.x * 0.5f, target.z + brain.positionError.y * 0.5f);
+            place(p, humans, depth, lateral, precision);
         }
     }
 
-    /** Left-to-right order of the back-row defenders: the others (zone 5), libero (zone 6), setter (zone 1). */
+    /** Back-row base positions while the opponent passes or sets (depth and lateral, m). */
+    static final float READY_DEPTH = 5.6f;
+    static final float READY_MIDDLE_DEPTH = 6.6f;
+    static final float READY_LATERAL = 2.8f;
+
+    /** Lateral slot of the i-th back-row defender: -1 left, 0 middle, +1 right (two: left and right). */
+    private float slotOf(int i) {
+        return back.size() == 1 ? 0f : back.size() == 2 ? (i == 0 ? -1f : 1f) : i - 1f;
+    }
+
+    /**
+     * Gives an AI defender its formation spot: {@code precision} of the way from the plain base
+     * position of its slot to the planned spot (weaker teams adjust less), with half of this
+     * rally's positioning error.
+     */
+    private void place(VolleyballPlayer p, Collection<VolleyballPlayer> humans, float depth, float lateral, float precision) {
+        if (humans.contains(p)) return;
+        int i = back.indexOf(p);
+        float slot = slotOf(i);
+        float baseDepth = slot == 0f ? READY_MIDDLE_DEPTH : READY_DEPTH;
+        float baseLateral = slot * READY_LATERAL;
+        depth = baseDepth + (depth - baseDepth) * precision;
+        lateral = baseLateral + (lateral - baseLateral) * precision;
+        TacticalTargets.teamPoint(side, depth, lateral, 0f, target);
+        TeamAI.Brain brain = brains.get(p.id);
+        brain.motor.setDefenseSpot(target.x + brain.positionError.x * 0.5f, target.z + brain.positionError.y * 0.5f);
+    }
+
+    /**
+     * Left-to-right order of the back-row defenders by the zone their role defends after the
+     * switch: outside hitter zone 5, libero / middle zone 6, setter / opposite zone 1 (two players
+     * of one zone: by where they stand).
+     */
     private float defenseOrder(VolleyballPlayer p) {
-        if (p.role == PlayerRole.LIBERO) return 0f;
-        if (p.role == PlayerRole.SETTER) return 100f;
-        // With the libero in the middle the others take the left side (zone 5).
-        return -100f + lateral(p.position.z);
+        float column = switch (RolePlan.roleZone(p, false)) {
+            case 5 -> -1f;
+            case 1 -> 1f;
+            default -> 0f;
+        };
+        return column * 100f + lateral(p.position.z);
     }
 
     /**

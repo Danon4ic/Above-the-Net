@@ -155,6 +155,8 @@ public final class TeamAI implements BallTouchListener {
         final AutoPlayer motor;
         AiState state = AiState.IDLE;
         final Vector2 targetPosition = new Vector2();
+        /** World time the target position was last given (this step's: the player is heading there). */
+        double targetTime = Double.NaN;
         /** Positioning mistake of this rally (difficulty), added to tactical positions. */
         final Vector2 positionError = new Vector2();
         float reachChance;
@@ -367,6 +369,8 @@ public final class TeamAI implements BallTouchListener {
         offBlock = false;
         ourAttackAt = -10;
         ourAttackerId = -1;
+        coverFor = -1;
+        coverSlots.clear();
         memory.newRally();
         coach.newRally();
         ourServeInPlay = false;
@@ -488,6 +492,7 @@ public final class TeamAI implements BallTouchListener {
         boolean comingToUs = forecast.reachesWatchHeight && CourtDimensions.sideOf(forecast.descentPoint.x) == side;
         boolean ourPossession = handling.lastTouchSide() == side;
         int touches = handling.teamTouches(side);
+        setterRunningId = -1;
 
         if (handling.lastToucherId() != responsibleForToucher) {
             responsibleForToucher = handling.lastToucherId();
@@ -511,6 +516,7 @@ public final class TeamAI implements BallTouchListener {
         } else {
             defendOrWait(now, rotation, humans);
         }
+        separateSpots(humans);
         avoidCollisions(humans);
         keepOffTheNet(humans);
         updateBodyStates(humans);
@@ -637,6 +643,7 @@ public final class TeamAI implements BallTouchListener {
                 TacticalTargets.setterTarget(side, target);
                 moveTo(p, target.x - side.sign() * 0.2f, target.z, false);
                 brain.state = AiState.POSITIONING;
+                setterRunningId = p.id;
             } else if (touches == 0 && receivingServe && receptionLanes.containsKey(p.id)) {
                 // A receiver whose lane the serve is not in holds the lane, ready.
                 receptionSpot(p);
@@ -1383,22 +1390,95 @@ public final class TeamAI implements BallTouchListener {
         moveTo(p, target.x, target.z, true);
     }
 
-    /** Cover: a half circle 1.5–2.5 m behind the own hitter, for balls coming back off the block. */
+    /**
+     * Cover of the own hitter, for balls coming back off the block, in two rings as real teams
+     * cover: three players close (a cup about 1.4-2 m behind the hitter, left, behind and right) and
+     * the other two deeper (about 3.7 m, in the gaps of the cup). Every coverer gets its own slot,
+     * kept for the whole attack, so nobody covers the same spot as a teammate.
+     */
     private void coverHitter(VolleyballPlayer p, VolleyballPlayer hitter) {
         if (hitter == null) {
             brain(p).state = AiState.POSITIONING;
             return;
         }
         if (brain(p).state == AiState.JUMPING && p.isAirborne()) return;
-        // Professionals close in (1.2-2.2 m, a tight arc); the others stay looser.
+        assignCover(hitter);
+        Integer slot = coverSlots.get(p.id);
+        if (slot == null) {
+            brain(p).state = AiState.POSITIONING;
+            return;
+        }
+        // Professionals close in tight; the others stay a little looser.
         boolean pro = difficulty == Difficulty.PROFESSIONAL;
-        float behind = (pro ? 1.3f : 1.8f) + (p.id % 3) * (pro ? 0.45f : 0.4f);
-        float sideways = ((p.id % 3) - 1) * (pro ? 1.3f : 1.6f);
-        float x = hitter.position.x + side.sign() * behind;
-        float z = hitter.position.z + sideways;
-        moveTo(p, x, clampZ(z), true);
+        coverSpot(hitter, slot, pro ? 0f : 0.4f, target);
+        moveTo(p, target.x, target.z, true);
         world.intent(p).crouch = true;
         brain(p).state = AiState.COVERING;
+    }
+
+    /** Cover slots: depth behind the hitter and lateral offset (team frame), close cup first. */
+    static final float[][] COVER_SLOTS = {{1.4f, -1.5f}, {1.4f, 1.5f}, {2.1f, 0f}, {3.7f, -2.1f}, {3.7f, 2.1f}};
+    /** Coverer id → slot index, for the attack of {@link #coverFor}. */
+    private final Map<Integer, Integer> coverSlots = new HashMap<>();
+    private int coverFor = -1;
+    private int coverPhase = Integer.MIN_VALUE;
+
+    /** Where a cover slot is now: behind the hitter (kept inside the court and off the net). */
+    private void coverSpot(VolleyballPlayer hitter, int slot, float looser, Vector3 out) {
+        float hitterDepth = hitter.position.x * side.sign();
+        // Near the antenna the cup slides inwards, so no slot ends up outside the sideline.
+        float hitterLateral = Math.max(-2.6f, Math.min(2.6f, lateral(hitter.position.z)));
+        float depth = Math.max(1.2f, hitterDepth) + COVER_SLOTS[slot][0] + looser;
+        float lat = hitterLateral + COVER_SLOTS[slot][1] * (1f + looser * 0.5f);
+        TacticalTargets.teamPoint(side, Math.min(depth, CourtDimensions.HALF_LENGTH - 0.5f),
+                Math.max(-CourtDimensions.HALF_WIDTH + 0.4f, Math.min(CourtDimensions.HALF_WIDTH - 0.4f, lat)), 0f, out);
+    }
+
+    /**
+     * Shares the cover slots out once per attack: the closest coverer to the close cup first
+     * (cheapest total run, greedy), people included so nobody is sent to a person's spot.
+     */
+    private void assignCover(VolleyballPlayer hitter) {
+        if (coverFor == hitter.id && ballPhase - coverPhase <= 1) return;
+        coverFor = hitter.id;
+        coverPhase = ballPhase;
+        coverSlots.clear();
+        List<VolleyballPlayer> coverers = new java.util.ArrayList<>();
+        for (VolleyballPlayer o : court) if (o != hitter) coverers.add(o);
+        int n = Math.min(coverers.size(), COVER_SLOTS.length);
+        if (n == 0) return;
+        // Cost of each player to each slot: the squared run (no one gets sent across the court).
+        float[][] cost = new float[n][COVER_SLOTS.length];
+        Vector3 slotSpot = new Vector3();
+        for (int s = 0; s < COVER_SLOTS.length; s++) {
+            coverSpot(hitter, s, 0f, slotSpot);
+            for (int i = 0; i < n; i++) {
+                float d = horizontalDistance(coverers.get(i), slotSpot);
+                cost[i][s] = d * d;
+            }
+        }
+        // Few players and slots: try every assignment, keep the one with the least running.
+        int[] best = new int[n];
+        int[] current = new int[n];
+        float[] bestCost = {Float.MAX_VALUE};
+        assignSlots(cost, 0, new boolean[COVER_SLOTS.length], current, 0f, best, bestCost);
+        for (int i = 0; i < n; i++) coverSlots.put(coverers.get(i).id, best[i]);
+    }
+
+    private static void assignSlots(float[][] cost, int i, boolean[] used, int[] current, float sum, int[] best, float[] bestCost) {
+        if (sum >= bestCost[0]) return;
+        if (i == current.length) {
+            bestCost[0] = sum;
+            System.arraycopy(current, 0, best, 0, current.length);
+            return;
+        }
+        for (int s = 0; s < used.length; s++) {
+            if (used[s]) continue;
+            used[s] = true;
+            current[i] = s;
+            assignSlots(cost, i + 1, used, current, sum + cost[i][s], best, bestCost);
+            used[s] = false;
+        }
     }
 
     // ------------------------------------------------------------------ opponent's ball
@@ -1874,8 +1954,134 @@ public final class TeamAI implements BallTouchListener {
         }
         // Never closer than 0.4 m to the net while positioning.
         if (x * side.sign() < 0.4f) x = side.sign() * 0.4f;
+        z = clampZ(z);
         brain.targetPosition.set(x, z);
-        brain.motor.moveTo(p, x, clampZ(z));
+        brain.targetTime = world.time();
+        steer(p, x, z);
+    }
+
+    /** A teammate this close (m) to the straight way to a spot is walked around, not through. */
+    static final float DETOUR_CLEARANCE = 1.1f;
+    /** How far to the side of that teammate the way goes (m). */
+    static final float DETOUR_OFFSET = 1.4f;
+    /** Two players' spots are never closer than this (m) unless both have a reason to be there. */
+    static final float MIN_SPOT_GAP = 1.6f;
+
+    /**
+     * Runs to a spot the way players do: around a teammate standing in the way (on the side away
+     * from them; when they stand right on the line, on the own right, so two players crossing pass
+     * each other cleanly, as in the switch after the serve) instead of straight through them.
+     */
+    private void steer(VolleyballPlayer p, float x, float z) {
+        Brain brain = brain(p);
+        float dx = x - p.position.x;
+        float dz = z - p.position.z;
+        float len = (float) Math.sqrt(dx * dx + dz * dz);
+        float wx = x;
+        float wz = z;
+        if (len > 1.2f && p.isUpright() && !p.isAirborne()) {
+            float ux = dx / len;
+            float uz = dz / len;
+            float first = Float.MAX_VALUE;
+            for (VolleyballPlayer q : court) {
+                if (q == p) continue;
+                float qx = q.position.x - p.position.x;
+                float qz = q.position.z - p.position.z;
+                float along = qx * ux + qz * uz;
+                if (along < 0.5f || along > len - 0.4f || along >= first) continue;
+                // Signed distance from the way (+ = to the left of the run, (-uz, ux)).
+                float across = -qx * uz + qz * ux;
+                if (Math.abs(across) > DETOUR_CLEARANCE) continue;
+                first = along;
+                float pass = Math.abs(across) < 0.25f ? -1f : -Math.signum(across);
+                wx = q.position.x - uz * pass * DETOUR_OFFSET;
+                wz = q.position.z + ux * pass * DETOUR_OFFSET;
+            }
+            if (wx * side.sign() < 0.4f) wx = side.sign() * 0.4f;
+            wz = clampZ(wz);
+        }
+        brain.motor.moveTo(p, wx, wz);
+        // The detour is part of a longer run: keep the pace of the whole way.
+        if (wx != x || wz != z) world.intent(p).sprint = len > 2.5f;
+    }
+
+    /** The setter on its way to the setting spot this step (its spot is not to be taken), or -1. */
+    private int setterRunningId = -1;
+
+    /**
+     * How firmly a player holds its spot this step: the ball player, people, players in the air
+     * or on the floor, blockers, hitters on their approach and the setter on its way to the
+     * setting spot keep theirs; receivers next, then covering and defending players, then the
+     * rest. A player gives way to anyone holding their spot more firmly.
+     */
+    private int spotPriority(VolleyballPlayer p, Collection<VolleyballPlayer> humans) {
+        if (p.id == responsibleId || humans.contains(p) || p.isAirborne() || !p.isUpright() || p.id == setterRunningId) return 10;
+        return switch (brain(p).state) {
+            case BLOCKING, SETTING, ATTACKING, PASSING, DIVING -> 6;
+            case APPROACHING, JUMPING, MOVING_TO_BALL -> 5;
+            case READY_TO_RECEIVE -> 3;
+            case COVERING, DEFENDING -> 2;
+            default -> 1;
+        };
+    }
+
+    /**
+     * Spreads the players over the court: when two players' spots this step are closer than
+     * {@link #MIN_SPOT_GAP} (two base positions meeting a hitter's run-up, a cover spot on a
+     * defender's), the one holding its spot less firmly moves its spot off. Players with an
+     * unmovable spot (priority 5 and up) are only obstacles.
+     */
+    private void separateSpots(Collection<VolleyballPlayer> humans) {
+        double now = world.time();
+        List<VolleyballPlayer> order = new java.util.ArrayList<>(court);
+        Map<Integer, Integer> priority = new HashMap<>();
+        for (VolleyballPlayer p : order) priority.put(p.id, spotPriority(p, humans));
+        order.sort((a, b) -> priority.get(a.id).equals(priority.get(b.id)) ? Integer.compare(a.id, b.id)
+                : Integer.compare(priority.get(b.id), priority.get(a.id)));
+        for (int i = 0; i < order.size(); i++) {
+            VolleyballPlayer p = order.get(i);
+            Brain brain = brain(p);
+            if (brain == null || priority.get(p.id) >= 5 || brain.targetTime != now) continue;
+            float tx = brain.targetPosition.x;
+            float tz = brain.targetPosition.y;
+            boolean moved = false;
+            for (int pass = 0; pass < 2; pass++) {
+                for (int j = 0; j < order.size(); j++) {
+                    VolleyballPlayer q = order.get(j);
+                    if (q == p) continue;
+                    Brain qb = brain(q);
+                    boolean qHasSpot = qb != null && qb.targetTime == now && priority.get(q.id) < 5;
+                    // Players with a spot that give way to this one are moved later, not the other way round.
+                    if (qHasSpot && j > i) continue;
+                    float qx = qHasSpot ? qb.targetPosition.x : q.position.x;
+                    float qz = qHasSpot ? qb.targetPosition.y : q.position.z;
+                    float dx = tx - qx;
+                    float dz = tz - qz;
+                    float d = (float) Math.sqrt(dx * dx + dz * dz);
+                    if (d >= MIN_SPOT_GAP) continue;
+                    if (d < 0.05f) {
+                        // Same spot: step aside towards where the player now is (or sideways).
+                        dx = p.position.x - qx;
+                        dz = p.position.z - qz;
+                        d = (float) Math.sqrt(dx * dx + dz * dz);
+                        if (d < 0.05f) {
+                            dx = 0f;
+                            dz = p.id % 2 == 0 ? 1f : -1f;
+                            d = 1f;
+                        }
+                    }
+                    tx = qx + dx / d * MIN_SPOT_GAP;
+                    tz = clampZ(qz + dz / d * MIN_SPOT_GAP);
+                    if (tx * side.sign() < 0.4f) tx = side.sign() * 0.4f;
+                    moved = true;
+                }
+            }
+            if (!moved) continue;
+            boolean crouch = world.intent(p).crouch;
+            brain.targetPosition.set(tx, tz);
+            steer(p, tx, tz);
+            world.intent(p).crouch = crouch;
+        }
     }
 
     private static float clampZ(float z) {
