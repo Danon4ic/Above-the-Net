@@ -10,6 +10,8 @@ import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.utils.Align;
 import com.volleyball.game.config.GameConfig;
 import com.volleyball.game.i18n.Lang;
+import com.volleyball.game.input.KeyBindings;
+import com.volleyball.game.input.PlayerAction;
 import com.volleyball.game.render.CameraMode;
 import com.volleyball.game.render.GraphicsQuality;
 import com.volleyball.game.world.CourtTheme;
@@ -19,13 +21,13 @@ import com.volleyball.game.world.Venue;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 
 /**
- * The settings screen: five categories (graphics, sound, controls, interface, gameplay), each a
- * list of settings with fitting controls — switches, sliders and drop-down lists. Changes go to
+ * Settings categories with switches, sliders, drop-down lists and input bindings. Changes go to
  * a draft; Apply puts them into effect and saves them, Cancel returns to the saved values,
  * Defaults resets the shown category, Back leaves (asking first when there are unapplied
  * changes). Settings that need a restart say so.
@@ -35,6 +37,8 @@ import java.util.function.Function;
  * click the tabs, switches and lists, drag the sliders; every setting has a tooltip.
  */
 public final class SettingsView {
+    private static final float PANEL_WIDTH = 960f;
+
     /** What the screen around it has to do. */
     public interface Host {
         /** The committed settings have changed (they are in the config now): put them into effect. */
@@ -42,7 +46,8 @@ public final class SettingsView {
     }
 
     enum Category {
-        GRAPHICS("Graphics"), SOUND("Sound"), CONTROLS("Controls"), INTERFACE("Interface"), GAMEPLAY("Gameplay");
+        GRAPHICS("Graphics"), SOUND("Sound"), CONTROLS("Controls"), INTERFACE("Interface"), GAMEPLAY("Gameplay"),
+        KEYS_ONE("Keys P1"), KEYS_TWO("Keys P2");
 
         final String label;
 
@@ -175,6 +180,31 @@ public final class SettingsView {
         }
     }
 
+    static final class Binding extends Setting<String> {
+        final PlayerAction action;
+
+        Binding(Category category, PlayerAction action, String label) {
+            super(category, label, c -> "Select to assign a key or mouse button.", false,
+                    c -> names(c, category).get(action.name()),
+                    (c, value) -> names(c, category).put(action.name(), value));
+            this.action = action;
+        }
+
+        private static Map<String, String> names(GameConfig config, Category category) {
+            return category == Category.KEYS_ONE ? config.keyBindings : config.keyBindingsPlayer2;
+        }
+
+        @Override
+        String display(GameConfig c) {
+            return getter.apply(c);
+        }
+
+        @Override
+        void step(GameConfig c, int direction) {
+            // Binding changes begin with explicit activation.
+        }
+    }
+
     /** Every setting of the screen, in the order shown. */
     static List<Setting<?>> buildSettings(List<int[]> resolutions) {
         List<Setting<?>> list = new ArrayList<>();
@@ -202,7 +232,7 @@ public final class SettingsView {
                     c.windowHeight = Integer.parseInt(p[1]);
                 }));
         list.add(new Toggle(Category.GRAPHICS, "Fullscreen", c -> "Fullscreen at the monitor's resolution, or a window. F11 or "
-                + "Alt+Enter switch it at any time.", false, c -> c.fullscreen, (c, v) -> c.fullscreen = v));
+                + "Alt+Enter switch it outside Settings.", false, c -> c.fullscreen, (c, v) -> c.fullscreen = v));
         list.add(new Toggle(Category.GRAPHICS, "Vertical sync", c -> "Matches the frames to the monitor: no tearing, the frame rate "
                 + "follows the screen.", false, c -> c.vsync, (c, v) -> c.vsync = v));
         list.add(new Choice<>(Category.GRAPHICS, "FPS limit", c -> "The highest frame rate. A lower cap keeps the computer cooler.",
@@ -266,6 +296,29 @@ public final class SettingsView {
                 names(LightingPreset.values()), lightingLabels(), c -> c.lighting, (c, v) -> c.lighting = v));
         list.add(new Choice<>(Category.GAMEPLAY, "Net height", c -> "Men 2.43 m or women 2.24 m.", false,
                 names(NetCategory.values()), List.of("Men (2.43 m)", "Women (2.24 m)"), c -> c.netCategory, (c, v) -> c.netCategory = v));
+        for (Category player : List.of(Category.KEYS_ONE, Category.KEYS_TWO)) {
+            for (PlayerAction action : PlayerAction.values()) {
+                if (action == PlayerAction.PAUSE) continue;
+                String label = switch (action) {
+                    case MOVE_FORWARD -> "Move forward";
+                    case MOVE_BACK -> "Move backward";
+                    case MOVE_LEFT -> "Move left";
+                    case MOVE_RIGHT -> "Move right";
+                    case JUMP -> "Jump";
+                    case SPRINT -> "Sprint";
+                    case CROUCH -> "Low stance";
+                    case SWITCH_PLAYER -> "Switch player";
+                    case PRIMARY_ACTION -> "Play the ball";
+                    case SECONDARY_ACTION -> "Overhead pass / tip";
+                    case VARIANT_PREVIOUS -> "Previous variant";
+                    case VARIANT_NEXT -> "Next variant";
+                    case SPIN_LEFT -> "Curve serve left";
+                    case SPIN_RIGHT -> "Curve serve right";
+                    case PAUSE -> throw new IllegalStateException();
+                };
+                list.add(new Binding(player, action, label));
+            }
+        }
         return list;
     }
 
@@ -347,6 +400,8 @@ public final class SettingsView {
     private String status;
     private float statusTime = -10f;
     private boolean statusWarning;
+    private Binding capturing;
+    private boolean capturedInput;
     // Confirmation when leaving with changes that were not applied.
     private boolean confirming;
     private int confirmFocus;
@@ -354,8 +409,8 @@ public final class SettingsView {
     private static final String[] CONFIRM = {"Apply", "Discard", "Stay"};
     // Animations: per-row highlight, switch knobs, slider knobs, the tab underline.
     private final float[] rowHighlight = new float[16];
-    private final float[] knob = new float[64];
-    private final float[] sliderShown = new float[64];
+    private final float[] knob;
+    private final float[] sliderShown;
     private final float[] buttonHighlight = new float[BUTTONS.length];
     private final float[] buttonPress = new float[BUTTONS.length];
     private float tabLineX = Float.NaN;
@@ -376,6 +431,8 @@ public final class SettingsView {
         this.host = host;
         this.dropdown = new DropdownMenu(fonts);
         this.settings = buildSettings(resolutions);
+        knob = new float[settings.size()];
+        sliderShown = new float[settings.size()];
     }
 
     /** Opens the screen on the saved settings. */
@@ -385,6 +442,15 @@ public final class SettingsView {
         category = Category.GRAPHICS;
         focus = 0;
         confirming = false;
+        capturing = null;
+        capturedInput = false;
+        status = null;
+        hoverRow = hoverButton = hoverTab = pressedButton = -1;
+        dragging = null;
+        rowRects.clear();
+        controlRects.clear();
+        java.util.Arrays.fill(tabRects, null);
+        java.util.Arrays.fill(buttonRects, null);
         dropdown.close();
         categoryTime = 0f;
         tabLineX = Float.NaN;
@@ -417,7 +483,17 @@ public final class SettingsView {
 
     /** Key hints for the footer. */
     public String footerHints() {
+        if (capturing != null) return "Press a key or mouse button. Esc cancels.";
         return "TAB  category      ↑ ↓  choose      ← →  change      ENTER  select      ESC  back";
+    }
+
+    /** Keeps the panel usable when the window is small or the general interface scale is large. */
+    public static float layoutScale(int width, int height) {
+        return Math.min(UiFonts.uiScale(height), Math.min(width / (PANEL_WIDTH + 120f), height / 900f));
+    }
+
+    public static float centeredLeft(int width, float scale) {
+        return (width - PANEL_WIDTH * scale) / 2f;
     }
 
     // ------------------------------------------------------------------ actions
@@ -441,6 +517,12 @@ public final class SettingsView {
 
     private void defaults() {
         GameConfig defaults = new GameConfig();
+        if (category == Category.KEYS_ONE || category == Category.KEYS_TWO) {
+            // Reset the two layouts together so the default keys cannot collide.
+            for (Setting<?> setting : settings) if (setting instanceof Binding) setting.copy(defaults, draft);
+            showStatus("Both key layouts reset. Apply to save.", false);
+            return;
+        }
         // Keep the window size as it is: the default may not fit this monitor.
         for (Setting<?> st : rows()) if (!"Resolution".equals(st.label)) st.copy(defaults, draft);
         showStatus(Lang.f("%s: default values (not applied yet)", Lang.t(category.label)), false);
@@ -519,7 +601,8 @@ public final class SettingsView {
         List<Setting<?>> rows = rows();
         if (focus < rows.size()) {
             Setting<?> st = rows.get(focus);
-            if (st instanceof Choice<?> ch) openDropdown(ch, controlRects.get(focus));
+            if (st instanceof Binding binding) beginCapture(binding);
+            else if (st instanceof Choice<?> ch && focus < controlRects.size()) openDropdown(ch, controlRects.get(focus));
             else st.step(draft, 1);
         }
     }
@@ -528,10 +611,66 @@ public final class SettingsView {
         dropdown.open(ch, ch.labels, ch.index(draft), r[0], r[1], r[2], r[3], s, index -> ch.pick(draft, index));
     }
 
+    private void beginCapture(Binding binding) {
+        capturing = binding;
+        status = null;
+        tooltips.dismiss();
+    }
+
+    public boolean keyDown(int key) {
+        if (capturing == null) return false;
+        capturedInput = true;
+        if (key == Input.Keys.ESCAPE) {
+            capturing = null;
+            status = null;
+        } else assign(key);
+        return true;
+    }
+
+    private void assign(int code) {
+        String name = KeyBindings.nameOf(code);
+        if (name == null || KeyBindings.codeOf(name) != code || reserved(code)) {
+            showStatus("This input is reserved or unavailable.", true);
+            return;
+        }
+        if (name.equals(capturing.display(draft))) {
+            status = null;
+            capturing = null;
+            return;
+        }
+        for (Setting<?> setting : settings) {
+            if (setting instanceof Binding other && other != capturing && KeyBindings.codeOf(other.display(draft)) == code) {
+                showStatus(Lang.f("Already assigned: %s · %s", Lang.t(other.category.label), Lang.t(other.label)), true);
+                return;
+            }
+        }
+        capturing.setter.accept(draft, name);
+        status = null;
+        capturing = null;
+    }
+
+    private static boolean reserved(int code) {
+        return (code >= Input.Keys.NUM_0 && code <= Input.Keys.NUM_9)
+                || (code >= Input.Keys.NUMPAD_0 && code <= Input.Keys.NUMPAD_9)
+                || (code >= Input.Keys.F1 && code <= Input.Keys.F12)
+                || switch (code) {
+                    case Input.Keys.UNKNOWN, Input.Keys.ESCAPE, Input.Keys.ALT_LEFT, Input.Keys.ALT_RIGHT,
+                            Input.Keys.B, Input.Keys.C, Input.Keys.G, Input.Keys.H, Input.Keys.I, Input.Keys.J,
+                            Input.Keys.K, Input.Keys.M, Input.Keys.N, Input.Keys.R, Input.Keys.T, Input.Keys.U,
+                            Input.Keys.V, Input.Keys.MINUS, Input.Keys.PLUS, Input.Keys.EQUALS -> true;
+                    default -> code == KeyBindings.mouse(Input.Buttons.MIDDLE);
+                };
+    }
+
     // ------------------------------------------------------------------ keyboard
 
     /** Keyboard; returns true when the screen should be left. */
     public boolean handleKeys() {
+        if (capturedInput) {
+            capturedInput = false;
+            return false;
+        }
+        if (capturing != null) return false;
         if (confirming) {
             if (Gdx.input.isKeyJustPressed(Input.Keys.LEFT) || Gdx.input.isKeyJustPressed(Input.Keys.A)) confirmFocus = Math.max(0, confirmFocus - 1);
             if (Gdx.input.isKeyJustPressed(Input.Keys.RIGHT) || Gdx.input.isKeyJustPressed(Input.Keys.D)) confirmFocus = Math.min(2, confirmFocus + 1);
@@ -583,6 +722,7 @@ public final class SettingsView {
     // ------------------------------------------------------------------ mouse
 
     public void mouseMoved(float x, float y) {
+        if (capturing != null) return;
         keyboard = false;
         if (dropdown.isOpen()) {
             dropdown.mouseMoved(x, y);
@@ -597,6 +737,10 @@ public final class SettingsView {
 
     /** A press; returns true when the screen should be left. */
     public boolean touchDown(float x, float y, int button) {
+        if (capturing != null) {
+            assign(KeyBindings.mouse(button));
+            return false;
+        }
         keyboard = false;
         if (confirming) {
             int c = indexAt(confirmRects, x, y);
@@ -605,8 +749,13 @@ public final class SettingsView {
         if (dropdown.isOpen()) {
             int row = indexAt(controlRects, x, y);
             boolean sameField = row >= 0 && row < rows().size() && dropdown.isOpenFor(rows().get(row));
-            if (sameField) dropdown.close();
-            else dropdown.touchDown(x, y);
+            if (sameField) {
+                dropdown.close();
+                return false;
+            }
+            boolean inList = dropdown.contains(x, y);
+            dropdown.touchDown(x, y);
+            if (inList) return false;
             return false;
         }
         int tab = indexAt(tabRects, x, y);
@@ -626,7 +775,9 @@ public final class SettingsView {
         Setting<?> st = rows().get(row);
         float[] c = controlRects.get(row);
         int dir = button == Input.Buttons.RIGHT ? -1 : 1;
-        if (st instanceof Slider sl) {
+        if (st instanceof Binding binding) {
+            beginCapture(binding);
+        } else if (st instanceof Slider sl) {
             if (inside(c, x, y)) {
                 dragging = sl;
                 dragSlider(x);
@@ -690,7 +841,7 @@ public final class SettingsView {
         categoryTime += delta;
         confirmTime += delta;
         dropdown.update(delta);
-        float panelW = Math.min(800f * s, width * 0.6f);
+        float panelW = PANEL_WIDTH * s;
         float panelX = left;
         float panelH = top - bottom;
         float pad = 28f * s;
@@ -709,15 +860,18 @@ public final class SettingsView {
         float tx = panelX + pad;
         float activeX = 0f;
         float activeW = 0f;
+        float tabTextWidth = 0f;
+        for (Category c : Category.values()) tabTextWidth += UiKit.width(tabFont, tabLabel(c));
+        float gap = Math.min(30f * s, (panelW - 2f * pad - tabTextWidth) / (tabRects.length - 1));
+        float tabInset = Math.max(0f, Math.min(8f * s, gap / 2f));
         for (Category c : Category.values()) {
-            String label = Lang.t(c.label).toUpperCase(Lang.current() == Lang.Language.RU ? java.util.Locale.forLanguageTag("ru") : java.util.Locale.ROOT);
-            float w = UiKit.width(tabFont, label);
-            tabRects[c.ordinal()] = new float[]{tx - 8f * s, tabY - 26f * s, w + 16f * s, 36f * s};
+            float w = UiKit.width(tabFont, tabLabel(c));
+            tabRects[c.ordinal()] = new float[]{tx - tabInset, tabY - 26f * s, w + 2f * tabInset, 36f * s};
             if (c == category) {
                 activeX = tx;
                 activeW = w;
             }
-            tx += w + 30f * s;
+            tx += w + gap;
         }
         if (Float.isNaN(tabLineX)) {
             tabLineX = activeX;
@@ -728,7 +882,8 @@ public final class SettingsView {
         tabLineW += (activeW - tabLineW) * f;
 
         // Rows.
-        float rowH = 46f * s;
+        float rowsAvailable = top - bottom - 204f * s;
+        float rowH = Math.min(46f * s, rowsAvailable / Math.max(1, rows.size()));
         float rowsTop = tabY - 44f * s;
         float controlW = Math.min(300f * s, panelW * 0.42f);
         float controlX = panelX + panelW - pad - controlW;
@@ -738,7 +893,8 @@ public final class SettingsView {
         for (int i = 0; i < rows.size(); i++) {
             float ry = rowsTop - (i + 1) * rowH;
             rowRects.add(new float[]{panelX + pad - 12f * s, ry, panelW - 2f * pad + 24f * s, rowH - 4f * s});
-            float ch = rows.get(i) instanceof Choice<?> ? 32f * s : rowH - 4f * s;
+            float ch = Math.min(32f * s, rowH - 4f * s);
+            if (rows.get(i) instanceof Slider || rows.get(i) instanceof Toggle) ch = rowH - 4f * s;
             controlRects.add(new float[]{controlX, ry + (rowH - 4f * s - ch) / 2f, controlW, ch});
             rowHighlight[i] = approach(rowHighlight[i], i == focus ? 1f : 0f, delta / 0.14f);
         }
@@ -776,9 +932,8 @@ public final class SettingsView {
         batch.begin();
         for (Category c : Category.values()) {
             float[] r = tabRects[c.ordinal()];
-            String label = Lang.t(c.label).toUpperCase(java.util.Locale.forLanguageTag("ru"));
             Color col = c == category ? UiKit.TEXT : c.ordinal() == hoverTab ? UiKit.TEXT : UiKit.TEXT_DIM;
-            UiKit.text(batch, tabFont, label, r[0] + 8f * s, tabY, col, alpha);
+            UiKit.text(batch, tabFont, tabLabel(c), r[0] + tabInset, tabY, col, alpha);
         }
         for (int i = 0; i < rows.size(); i++) {
             Setting<?> st = rows.get(i);
@@ -823,6 +978,10 @@ public final class SettingsView {
         if (confirming) drawConfirm(shapes, batch, width, height);
     }
 
+    private static String tabLabel(Category category) {
+        return Lang.t(category.label).toUpperCase(java.util.Locale.ROOT);
+    }
+
     private boolean enabled(int button, boolean dirty) {
         return switch (button) {
             case APPLY, CANCEL -> dirty;
@@ -831,6 +990,7 @@ public final class SettingsView {
     }
 
     private String focusHelp(List<Setting<?>> rows) {
+        if (capturing != null) return Lang.t("Press a key or mouse button. Esc cancels.");
         if (focus < rows.size()) {
             Setting<?> st = rows.get(focus);
             String help = Lang.t(st.help.apply(draft));
@@ -839,13 +999,14 @@ public final class SettingsView {
         return switch (focus - rows.size()) {
             case APPLY -> Lang.t("Puts the changes into effect and saves them.");
             case CANCEL -> Lang.t("Returns to the saved values.");
-            case DEFAULTS -> Lang.t("Default values for this category (apply them to keep them).");
+            case DEFAULTS -> Lang.t(category == Category.KEYS_ONE || category == Category.KEYS_TWO
+                    ? "Reset both key layouts (apply to save)." : "Default values for this category (apply them to keep them).");
             default -> Lang.t("Back to the menu.");
         };
     }
 
     private void hoverTooltips(List<Setting<?>> rows) {
-        if (keyboard || dropdown.isOpen() || confirming || dragging != null) return;
+        if (keyboard || dropdown.isOpen() || confirming || capturing != null || dragging != null) return;
         if (hoverRow >= 0 && hoverRow < rows.size()) {
             Setting<?> st = rows.get(hoverRow);
             float[] r = rowRects.get(hoverRow);
@@ -895,6 +1056,8 @@ public final class SettingsView {
             boolean open = dropdown.isOpenFor(st);
             UiKit.field(shapes, c[0], c[1], c[2], c[3], i == hoverRow || (keyboard && i == focus) ? 1f : 0f, open, a);
             UiKit.chevron(shapes, c[0] + c[2] - 18f * s, c[1] + c[3] / 2f, 5f * s, open, UiKit.TEXT_DIM, a);
+        } else if (st instanceof Binding) {
+            UiKit.field(shapes, c[0], c[1], c[2], c[3], i == focus ? 1f : 0f, capturing == st, a);
         }
     }
 
@@ -911,6 +1074,9 @@ public final class SettingsView {
         } else if (st instanceof Choice<?> ch) {
             UiKit.text(batch, font, UiKit.fit(font, ch.display(draft), c[2] - 44f * s), c[0] + 14f * s, ty,
                     dropdown.isOpenFor(st) ? UiKit.JADE : UiKit.TEXT, a);
+        } else if (st instanceof Binding binding) {
+            String value = capturing == binding ? "Waiting for input…" : binding.display(draft);
+            UiKit.text(batch, font, value, c[0] + 14f * s, ty, capturing == binding ? UiKit.JADE : UiKit.TEXT, a);
         }
     }
 

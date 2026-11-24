@@ -3,6 +3,7 @@ package com.volleyball.game.ai;
 import com.volleyball.game.entities.VolleyballPlayer;
 import com.volleyball.game.match.MatchController;
 import com.volleyball.game.mechanics.BallTouch;
+import com.volleyball.game.mechanics.ContactPurpose;
 import com.volleyball.game.mechanics.ContactType;
 import com.volleyball.game.mechanics.PassRating;
 import com.volleyball.game.mechanics.ServeType;
@@ -14,6 +15,7 @@ import com.volleyball.game.tactics.Combination;
 import com.volleyball.game.tactics.Playbook;
 import com.volleyball.game.tactics.TeamCommand;
 import com.volleyball.game.tactics.TeamTactics;
+import com.volleyball.game.ui.TacticalCard;
 import com.volleyball.game.world.CourtSide;
 import com.volleyball.game.world.NetCategory;
 import com.volleyball.game.world.VolleyballCourt;
@@ -144,11 +146,21 @@ class CombinationsAndTacticsTest {
     @Test
     void inAMatchTheTeamsRunPlaysWithDecoysAndDevelopments() {
         GameWorld world = GameWorld.withDefaultTeams(new VolleyballCourt(NetCategory.MEN), 21);
-        MatchController match = new MatchController(world, SHORT, 21, Difficulty.PROFESSIONAL, Difficulty.PROFESSIONAL);
+        MatchFormat oneSet = new MatchFormat(1, 25, 25, 2, RuleMode.OFFICIAL, 8f);
+        MatchController match = new MatchController(world, oneSet, 21, Difficulty.PROFESSIONAL, Difficulty.PROFESSIONAL);
         Set<String> plays = new HashSet<>();
         int[] decoyJumps = new int[1];
         int[] attacks = new int[1];
+        int[] jumpSets = new int[1];
+        int[] standingSets = new int[1];
+        BallTouch[] latestTouch = new BallTouch[1];
         world.ballHandling().addListener((BallTouch t) -> {
+            latestTouch[0] = t;
+            if (t.purpose() == ContactPurpose.SET && world.player(t.playerId()).role
+                    == com.volleyball.game.entities.PlayerRole.SETTER) {
+                if (t.airborne()) jumpSets[0]++;
+                else standingSets[0]++;
+            }
             if (t.type() == ContactType.ATTACK) {
                 attacks[0]++;
                 Combination c = match.ai(t.side()).currentPlay();
@@ -157,9 +169,27 @@ class CombinationsAndTacticsTest {
         });
         match.start(CourtSide.HOME);
         boolean[] wasAirborne = new boolean[world.players().size() + 1];
+        boolean sawRedirectedSet = false;
         for (long steps = 0; match.phase() != MatchController.Phase.FINISHED && steps < 120L * 60 * 15; steps++) {
             world.step(DT);
             match.update(DT, List.of());
+            BallTouch touch = latestTouch[0];
+            if (!sawRedirectedSet && touch != null && touch.purpose() == ContactPurpose.SET && world.ball().isActive()) {
+                TeamAI team = match.ai(touch.side());
+                Combination play = team.currentPlay();
+                VolleyballPlayer setter = world.player(touch.playerId());
+                if (play != null && !play.emergency()
+                        && (play.options().get(0).dump() || !play.options().get(0).set().label.equals(touch.variant()))) {
+                    TeamAI.PlayAssignment assignment = team.playAssignment(setter);
+                    if (assignment != null && assignment.hitter() != null && assignment.hitter() != setter) {
+                        assertTrue(assignment.committed());
+                        assertTrue(assignment.alternate());
+                        assertEquals(touch.variant(), assignment.set().label);
+                        assertTrue(TacticalCard.forPlayer(assignment, setter).assignment().contains("Cover #"));
+                        sawRedirectedSet = true;
+                    }
+                }
+            }
             // A middle blocker jumping on their own side while the own team sets: a decoy (or the quick).
             for (VolleyballPlayer p : world.players()) {
                 if (p.isAirborne() && !wasAirborne[p.id] && match.ai(p.side).state(p) == AiState.JUMPING) decoyJumps[0]++;
@@ -170,6 +200,9 @@ class CombinationsAndTacticsTest {
         assertTrue(attacks[0] > 20);
         assertTrue(plays.size() >= 5, "several plays were run: " + plays);
         assertTrue(decoyJumps[0] > 0, "decoys jumped");
+        assertTrue(jumpSets[0] > 0, "setters expedite a good pass with an actual airborne second touch");
+        assertTrue(standingSets[0] > 0, "setters still manage other passes from the ground");
+        assertTrue(sawRedirectedSet, "a delivered alternative should reach the tactical card");
     }
 
     @Test

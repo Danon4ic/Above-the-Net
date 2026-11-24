@@ -6,6 +6,8 @@ import com.volleyball.game.mechanics.AttackType;
 import com.volleyball.game.mechanics.BallTouch;
 import com.volleyball.game.mechanics.ContactPurpose;
 import com.volleyball.game.mechanics.ContactType;
+import com.volleyball.game.mechanics.ServeSpin;
+import com.volleyball.game.mechanics.ServeType;
 import com.volleyball.game.physics.BallContact;
 import com.volleyball.game.physics.ColliderKind;
 import com.volleyball.game.rules.Fault;
@@ -13,6 +15,8 @@ import com.volleyball.game.rules.MatchRules;
 import com.volleyball.game.rules.RallyOutcome;
 import com.volleyball.game.simulation.GameWorld;
 import com.volleyball.game.world.CourtSide;
+import com.volleyball.game.world.CourtTheme;
+import com.volleyball.game.world.Venue;
 import com.volleyball.game.world.NetCategory;
 import com.volleyball.game.world.VolleyballCourt;
 import org.junit.jupiter.api.BeforeEach;
@@ -80,6 +84,28 @@ class SoundDirectorTest {
     }
 
     @Test
+    void eachServeTechniqueHasItsOwnSoundEvenWithCurve() {
+        SoundId[] sounds = {SoundId.SERVE_UNDERHAND, SoundId.SERVE_FLOAT, SoundId.SERVE_POWER,
+                SoundId.SERVE_JUMP_FLOAT, SoundId.SERVE_JUMP_TOPSPIN};
+        for (ServeType type : ServeType.values()) {
+            String variant = type == ServeType.POWER || type == ServeType.JUMP_TOPSPIN
+                    ? type.label + " · " + ServeSpin.CURVE_LEFT.label : type.label;
+            director.onBallTouch(touch(ContactType.SERVE, variant, 19f, -1f, 0));
+            assertNotNull(sink.last(sounds[type.ordinal()]), type.label);
+        }
+    }
+
+    @Test
+    void tossingTheServePlaysThePreparationSound() {
+        director.attach();
+        var handling = world.ballHandling();
+        handling.prepareServe(world.home().players().getFirst(), ServeType.FLOAT);
+        assertTrue(handling.toss(0));
+        assertNotNull(sink.last(SoundId.SERVE_TOSS));
+        assertNull(sink.last(SoundId.SERVE_FLOAT));
+    }
+
+    @Test
     void ballContactsMapToTheirSurfacesAndRollingIsSilent() {
         director.onBallContact(new BallContact(ColliderKind.FLOOR, -1, new Vector3(3f, 0.1f, 0f), 9f, 0));
         director.update(0.1f);
@@ -110,6 +136,28 @@ class SoundDirectorTest {
         director.onBallContact(new BallContact(ColliderKind.FLOOR, -1, new Vector3(3f, 0.1f, 0f), 9f, 0));
         director.onBallContact(new BallContact(ColliderKind.FLOOR, -1, new Vector3(3f, 0.1f, 0f), 9f, 0));
         assertEquals(1, sink.played.stream().filter(p -> p.id() == SoundId.BALL_FLOOR).count());
+    }
+
+    @Test
+    void footstepsFollowGroundDistanceAndUseTheVenuesSurface() {
+        VolleyballPlayer p = world.home().players().getFirst();
+        director.setListener(p.position, Vector3.X);
+        director.setCourtSurface(Venue.BEACH, CourtTheme.WOOD_GYM);
+        p.velocity.x = 2f;
+        director.update(0.01f);
+        director.update(0.4f);
+        assertNull(sink.last(SoundId.FOOTSTEP_SAND));
+        p.addStride(0.5f);
+        director.update(0.01f);
+        assertNotNull(sink.last(SoundId.FOOTSTEP_SAND));
+        assertNull(sink.last(SoundId.FOOTSTEP));
+        director.onBallContact(new BallContact(ColliderKind.FLOOR, -1, p.position, 8f, 0));
+        assertNotNull(sink.last(SoundId.BALL_SAND));
+        assertNull(sink.last(SoundId.BALL_FLOOR));
+        director.setCourtSurface(Venue.ROOFTOP, CourtTheme.WOOD_GYM);
+        p.addStride(0.8f);
+        director.update(0.01f);
+        assertNotNull(sink.last(SoundId.FOOTSTEP_CONCRETE));
     }
 
     @Test
@@ -144,7 +192,12 @@ class SoundDirectorTest {
         assertEquals(0f, sink.loops.get(SoundId.MENU_MUSIC));
         director.setMatchActive(true);
         director.update(0.1f);
-        assertTrue(sink.loops.get(SoundId.CROWD_AMBIENT) > practice);
+        float match = sink.loops.get(SoundId.CROWD_AMBIENT);
+        assertTrue(match > practice);
+        director.setPaused(true);
+        director.update(0f);
+        assertTrue(sink.loops.get(SoundId.CROWD_AMBIENT) < match);
+        assertEquals(0f, sink.loops.get(SoundId.MENU_MUSIC));
         director.setMenuOpen(true);
         director.update(0.1f);
         assertTrue(sink.loops.get(SoundId.MENU_MUSIC) > 0f);
@@ -155,6 +208,7 @@ class SoundDirectorTest {
         VolleyballPlayer p = world.home().players().get(2);
         p.setAirborne(true);
         director.update(0.01f);
+        assertNotNull(sink.last(SoundId.JUMP_TAKEOFF));
         p.setAirborne(false);
         director.update(0.01f);
         assertNotNull(sink.last(SoundId.LANDING));

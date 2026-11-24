@@ -183,7 +183,7 @@ public final class MainMenuScreen extends ScreenAdapter {
         camera.far = 300f;
         batch = new SpriteBatch();
         shapes = new ShapeRenderer();
-        controls = new HelpMenu(config.keyBindings(), fonts);
+        controls = new HelpMenu(config.keyBindings(), config.keyBindingsPlayer2(), fonts);
         tooltips = new TooltipManager(fonts);
         tooltips.setScale(config.tooltipScale);
         com.badlogic.gdx.Graphics.DisplayMode display = Gdx.graphics.getDisplayMode();
@@ -242,6 +242,7 @@ public final class MainMenuScreen extends ScreenAdapter {
         camera.up.set(0f, 1f, 0f);
         camera.update();
         sound.setListener(camera.position, camera.direction);
+        sound.setCourtSurface(scene.venue(), scene.theme());
         sound.setMatchActive(true);
         sound.setMenuOpen(true);
         sound.update(delta);
@@ -325,8 +326,13 @@ public final class MainMenuScreen extends ScreenAdapter {
      * The settings screen applied its changes (they are in the config now): puts them into effect
      * in the game and in the arena behind the menu, and saves them.
      */
+    public boolean isSettingsOpen() {
+        return page == Page.SETTINGS;
+    }
+
     private void applySettings(GameConfig previous) {
         game.applyDisplay(previous);
+        controls.setKeyBindings(config.keyBindings(), config.keyBindingsPlayer2());
         if (!config.language.equals(previous.language)) {
             com.volleyball.game.i18n.Lang.set(com.volleyball.game.i18n.Lang.parse(config.language));
         }
@@ -403,8 +409,11 @@ public final class MainMenuScreen extends ScreenAdapter {
             case MATCH -> setupView.render(shapes, batch, s, width, height, x - 20f * s, height - 172f * s, 72f * s,
                     pageAppear(), Gdx.graphics.getDeltaTime());
             case TRAINING -> drawTraining(x, listTop);
-            case SETTINGS -> settingsView.render(shapes, batch, s, width, height, x - 20f * s, height - 172f * s, 72f * s,
-                    pageAppear(), Gdx.graphics.getDeltaTime());
+            case SETTINGS -> {
+                float settingsScale = com.volleyball.game.ui.SettingsView.layoutScale(width, height);
+                settingsView.render(shapes, batch, settingsScale, width, height, 60f * settingsScale,
+                        height - 172f * s, 72f * s, pageAppear(), Gdx.graphics.getDeltaTime());
+            }
         }
         drawFooter();
         drawToast();
@@ -858,6 +867,11 @@ public final class MainMenuScreen extends ScreenAdapter {
      * the same row activates it (on option rows: the next value); right click steps back.
      */
     private final class MenuInput extends InputAdapter {
+        @Override
+        public boolean keyDown(int keycode) {
+            return page == Page.SETTINGS && settingsView.keyDown(keycode);
+        }
+
         @Override
         public boolean mouseMoved(int screenX, int screenY) {
             mouseX = screenX;

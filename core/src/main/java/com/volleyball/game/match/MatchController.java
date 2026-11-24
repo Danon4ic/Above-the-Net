@@ -54,6 +54,9 @@ public final class MatchController {
 
     private Phase phase = Phase.FINISHED;
     private float timer;
+    private boolean lineupPrepared;
+    private static final float ARRIVAL_RADIUS = 0.11f;
+    private static final float POINT_REACTION = 1.55f;
     private MatchRules.PointSummary lastPoint;
     private int rallies;
     private boolean liberoEnabled = true;
@@ -219,6 +222,7 @@ public final class MatchController {
 
     /** Unsubscribes the referee and the team AIs from the world (when the match is replaced). */
     public void detach() {
+        world.setBenchTravelAllowed(false);
         world.ballHandling().removeListener(rules.rally());
         world.removeContactListener(rules.rally());
         world.ballHandling().removeListener(homeAI);
@@ -228,6 +232,10 @@ public final class MatchController {
 
     public void addListener(MatchListener listener) {
         listeners.add(listener);
+    }
+
+    public void removeListener(MatchListener listener) {
+        listeners.remove(listener);
     }
 
     public void setDifficulty(CourtSide side, Difficulty difficulty) {
@@ -253,6 +261,8 @@ public final class MatchController {
         awayCoach.newSet();
         sidesSwapped = false;
         decidingSwapDone = false;
+        lineupPrepared = false;
+        world.setBenchTravelAllowed(false);
         world.setBenchSign(1f);
         phase = Phase.PREPARE;
     }
@@ -287,7 +297,12 @@ public final class MatchController {
         MatchScore score = rules.score();
         world.ballHandling().setPressure(score.isSetPoint(CourtSide.HOME) || score.isSetPoint(CourtSide.AWAY));
         switch (phase) {
-            case PREPARE -> prepareServe(now);
+            case PREPARE -> {
+                if (lastPoint == null) {
+                    prepareLineup();
+                    startServe(now);
+                } else if (walkToLineup()) startServe(now);
+            }
             case RALLY -> {
                 homeAI.update(now, rules.rotation(), rules.score(), humans);
                 awayAI.update(now, rules.rotation(), rules.score(), humans);
@@ -296,12 +311,18 @@ public final class MatchController {
                 if (rally.state() == RallyManager.State.OVER) finishRally(rally, now);
             }
             case POINT_BREAK -> {
-                homeAI.betweenRallies(now, rules.rotation(), humans);
-                awayAI.betweenRallies(now, rules.rotation(), humans);
+                boolean reactions = now - lastPoint.outcome().time() < POINT_REACTION;
+                boolean ready = false;
+                if (reactions || (timeoutRequest != null && !lineupPrepared)) {
+                    homeAI.betweenRallies(now, humans);
+                    awayAI.betweenRallies(now, humans);
+                } else if (timeoutRequest == null) {
+                    ready = walkToLineup();
+                }
                 timer -= dt;
                 if (timer <= 0f) {
                     if (timeoutRequest != null) startTimeout();
-                    else phase = Phase.PREPARE;
+                    else if (ready) startServe(now);
                 }
             }
             case TIMEOUT -> {
@@ -313,13 +334,17 @@ public final class MatchController {
                 if (timer <= 0f) phase = Phase.PREPARE;
             }
             case FINISHED -> {
-                homeAI.betweenRallies(now, rules.rotation(), humans);
-                awayAI.betweenRallies(now, rules.rotation(), humans);
+                homeAI.betweenRallies(now, humans);
+                awayAI.betweenRallies(now, humans);
             }
         }
     }
 
     private void startTimeout() {
+        // Finish any in-progress bench change before huddling with the new line-up.
+        if (lineupPrepared && !walkToLineup()) return;
+        lineupPrepared = false;
+        world.setBenchTravelAllowed(false);
         timeoutSide = timeoutRequest;
         timeoutRequest = null;
         timeoutsUsed[timeoutSide.ordinal()]++;
@@ -330,6 +355,7 @@ public final class MatchController {
 
     private void finishRally(RallyManager rally, double now) {
         lastPoint = rules.applyOutcome(rally.outcome());
+        lineupPrepared = false;
         rallies++;
         statistics.onPoint(lastPoint);
         // A breather between rallies (more at the end of a set).
@@ -338,8 +364,8 @@ public final class MatchController {
         world.ballHandling().setNextServer(lastPoint.matchWon() ? null : world.player(rules.currentServer()));
         CourtSide winner = lastPoint.outcome().winner();
         if (winner != null) {
-            homeAI.rallyFinished(winner == CourtSide.HOME, now);
-            awayAI.rallyFinished(winner == CourtSide.AWAY, now);
+            homeAI.rallyFinished(winner == CourtSide.HOME, now, lastPoint.outcome().playerId());
+            awayAI.rallyFinished(winner == CourtSide.AWAY, now, lastPoint.outcome().playerId());
         }
         for (MatchListener listener : listeners) listener.onPoint(lastPoint, rules.score());
         updateRun(winner);
@@ -421,17 +447,6 @@ public final class MatchController {
                     }
                 }
             }
-            int bench = 0;
-            for (VolleyballPlayer p : team.squad()) {
-                boolean on = rotation.zoneOf(side, p.id) > 0;
-                p.setOnCourt(on);
-                if (!on) {
-                    CourtZones.benchPosition(side, bench++, world.benchSign(), spot);
-                    p.sitOnBench(spot.x, spot.y);
-                    world.intent(p).clear();
-                    world.ballHandling().cancel(p);
-                }
-            }
         }
     }
 
@@ -440,24 +455,67 @@ public final class MatchController {
         liberoEnabled = enabled;
     }
 
-    /** Everyone to their rotation zone, the server behind the end line with the ball. */
-    private void prepareServe(double now) {
-        BallHandling handling = world.ballHandling();
-        RotationManager rotation = rules.rotation();
+    private void prepareLineup() {
         makeSubstitutions();
         updateLiberos();
-        for (VolleyballPlayer p : world.players()) {
-            int zone = rotation.zoneOf(p.side, p.id);
-            if (zone < 0) continue;
-            CourtZones.basePosition(zone, p.side, spot);
-            p.placeAt(spot.x, spot.y);
-            world.intent(p).clear();
-            handling.cancel(p);
+        lineupPrepared = true;
+    }
+
+    private void lineupSpot(VolleyballPlayer p, int zone, int benchIndex) {
+        if (zone < 0) CourtZones.benchPosition(p.side, benchIndex, world.benchSign(), spot);
+        else if (p.id == rules.currentServer()) spot.set(p.side.sign() * (CourtDimensions.HALF_LENGTH + 1f), -p.side.sign() * 2f);
+        else CourtZones.basePosition(zone, p.side, spot);
+    }
+
+    private boolean walkToLineup() {
+        if (!lineupPrepared || !pending.isEmpty()) prepareLineup();
+        world.setBenchTravelAllowed(true);
+        RotationManager rotation = rules.rotation();
+        boolean ready = true;
+        for (Team team : List.of(world.home(), world.away())) {
+            int bench = 0;
+            for (VolleyballPlayer p : team.squad()) {
+                int zone = rotation.zoneOf(team.side, p.id);
+                lineupSpot(p, zone, zone < 0 ? bench++ : 0);
+                float dx = spot.x - p.position.x;
+                float dz = spot.y - p.position.z;
+                boolean arrived = dx * dx + dz * dz <= ARRIVAL_RADIUS * ARRIVAL_RADIUS
+                        && p.isUpright() && !p.isAirborne() && p.groundSpeed() < 0.85f;
+                if (arrived) {
+                    world.intent(p).clear();
+                    if (zone < 0 && p.isOnCourt()) {
+                        p.sitOnBench(spot.x, spot.y);
+                        p.setOnCourt(false);
+                    }
+                } else {
+                    p.setOnCourt(true);
+                    ai(team.side).walkToLineup(p, spot.x, spot.y);
+                    ready = false;
+                }
+            }
         }
-        CourtSide serving = rules.servingSide();
+        return ready;
+    }
+
+    private void startServe(double now) {
+        BallHandling handling = world.ballHandling();
+        RotationManager rotation = rules.rotation();
+        for (Team team : List.of(world.home(), world.away())) {
+            int bench = 0;
+            for (VolleyballPlayer p : team.squad()) {
+                int zone = rotation.zoneOf(team.side, p.id);
+                p.setOnCourt(zone > 0);
+                if (lastPoint == null) {
+                    lineupSpot(p, zone, zone < 0 ? bench++ : 0);
+                    if (zone > 0) p.placeAt(spot.x, spot.y);
+                    else p.sitOnBench(spot.x, spot.y);
+                }
+                world.intent(p).clear();
+                handling.cancel(p);
+            }
+        }
+        world.setBenchTravelAllowed(false);
         VolleyballPlayer server = world.player(rules.currentServer());
-        // Right half of the service zone, a metre behind the end line.
-        server.placeAt(serving.sign() * (CourtDimensions.HALF_LENGTH + 1.0f), -serving.sign() * 2f);
         homeAI.newRally();
         awayAI.newRally();
         handling.prepareServe(server, handling.serveType(server) == null ? ServeType.FLOAT : handling.serveType(server));

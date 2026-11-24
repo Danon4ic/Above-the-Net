@@ -72,6 +72,7 @@ public final class ScoreOverlay implements MatchListener, Disposable {
     private int setsAway;
     // Action strip.
     private String contextTitle;
+    private TacticalCard tacticalCard;
     private final List<String[]> contextKeys = new ArrayList<>();
     private String contextSignature = "";
     private float contextAlpha;
@@ -109,9 +110,14 @@ public final class ScoreOverlay implements MatchListener, Disposable {
         contextTitle = text;
     }
 
+    public void setTacticalCard(TacticalCard card) {
+        tacticalCard = card;
+    }
+
     /** The keys of what can be done now: pairs {key, action}; empty for none. */
     public void setActions(List<String[]> keys) {
         StringBuilder signature = new StringBuilder(contextTitle == null ? "" : contextTitle);
+        if (tacticalCard != null) signature.append(tacticalCard.plan()).append('|').append(tacticalCard.assignment());
         for (String[] k : keys) signature.append('|').append(k[0]).append(k[1]);
         if (!signature.toString().equals(contextSignature)) {
             contextSignature = signature.toString();
@@ -434,11 +440,14 @@ public final class ScoreOverlay implements MatchListener, Disposable {
 
     /** The action strip: the title (if any) and the keys of what can be done now. */
     private void drawActions(float dt) {
-        boolean has = contextTitle != null || !contextKeys.isEmpty();
+        String title = tacticalCard == null ? contextTitle : tacticalCard.plan();
+        String assignment = tacticalCard == null ? null : tacticalCard.assignment();
+        boolean has = title != null || !contextKeys.isEmpty();
         contextAlpha = has ? Math.min(1f, contextAlpha + dt / 0.15f) : Math.max(0f, contextAlpha - dt / 0.15f);
         if (contextAlpha <= 0f || !has) return;
         float a = contextAlpha * Math.min(1f, 0.4f + (clock - contextChangedAt) / 0.2f);
-        BitmapFont titleFont = fonts.get(UiFonts.Weight.BOLD, 14f * s);
+        BitmapFont titleFont = fonts.get(UiFonts.Weight.BOLD, (tacticalCard == null ? 14f : 16f) * s);
+        BitmapFont assignmentFont = fonts.get(UiFonts.Weight.MEDIUM, 14f * s);
         BitmapFont key = fonts.get(UiFonts.Weight.EXTRABOLD, 12f * s);
         BitmapFont label = fonts.get(UiFonts.Weight.SEMIBOLD, 14f * s);
         float capH = 24f * s;
@@ -446,10 +455,15 @@ public final class ScoreOverlay implements MatchListener, Disposable {
         float keysW = 0f;
         for (String[] k : contextKeys) keysW += UiKit.keycapWidth(key, k[0]) + 7f * s + UiKit.width(label, k[1]) + gap;
         keysW = Math.max(0f, keysW - gap);
-        float titleW = contextTitle == null ? 0f : UiKit.width(titleFont, contextTitle);
         float pad = 16f * s;
-        float w = Math.max(keysW, titleW) + 2f * pad;
-        float h = (contextKeys.isEmpty() ? 0f : capH + 8f * s) + (contextTitle == null ? 0f : 22f * s) + 16f * s;
+        float textLimit = Math.max(1f, Math.min(620f * s, width - 4f * pad));
+        if (title != null) title = UiKit.fit(titleFont, title, textLimit);
+        if (assignment != null) assignment = UiKit.fit(assignmentFont, assignment, textLimit);
+        float titleW = title == null ? 0f : UiKit.width(titleFont, title);
+        float assignmentW = assignment == null ? 0f : UiKit.width(assignmentFont, assignment);
+        float w = Math.max(keysW, Math.max(titleW, assignmentW)) + 2f * pad;
+        float h = (contextKeys.isEmpty() ? 0f : capH + 8f * s) + (title == null ? 0f : 22f * s)
+                + (assignment == null ? 0f : 18f * s) + 16f * s;
         float x = (width - w) / 2f;
         float y = captionBase() + 82f * s;
         begin();
@@ -465,8 +479,13 @@ public final class ScoreOverlay implements MatchListener, Disposable {
         }
         shapes.end();
         batch.begin();
-        if (contextTitle != null) {
-            UiKit.text(batch, titleFont, contextTitle, x, y + h - 10f * s, w, Align.center, false, UiKit.JADE, a);
+        if (title != null) {
+            if (assignment == null) {
+                UiKit.text(batch, titleFont, title, x, y + h - 10f * s, w, Align.center, false, UiKit.JADE, a);
+            } else {
+                UiKit.text(batch, titleFont, title, x + pad, y + h - 10f * s, UiKit.JADE, a);
+                UiKit.text(batch, assignmentFont, assignment, x + pad, y + h - 32f * s, UiKit.TEXT, a);
+            }
         }
         kx = (width - keysW) / 2f;
         for (String[] k : contextKeys) {

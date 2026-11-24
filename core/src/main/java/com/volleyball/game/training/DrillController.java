@@ -219,6 +219,11 @@ public final class DrillController implements BallTouchListener, BallContactList
         if (match != null) match.addListener(listener);
     }
 
+    public void removeMatchListener(MatchListener listener) {
+        matchListeners.remove(listener);
+        if (match != null) match.removeListener(listener);
+    }
+
     /** Hands a person's player to the computer (demo / spectator) or back. */
     public void setSlotAutomatic(int slot, boolean automatic) {
         if (session != null) session.setAutomatic(slot, automatic);

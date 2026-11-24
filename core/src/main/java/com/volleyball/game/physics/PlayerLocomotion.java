@@ -332,6 +332,10 @@ public final class PlayerLocomotion {
      * symmetrically; a player cannot run through the net to the opponent's side.
      */
     public void resolvePlayerConstraints(List<VolleyballPlayer> players) {
+        resolvePlayerConstraints(players, false);
+    }
+
+    public void resolvePlayerConstraints(List<VolleyballPlayer> players, boolean benchTravelAllowed) {
         for (int i = 0; i < players.size(); i++) {
             VolleyballPlayer a = players.get(i);
             if (!a.isOnCourt()) continue;
@@ -360,13 +364,18 @@ public final class PlayerLocomotion {
                 b.position.z += nz * push;
             }
         }
-        for (VolleyballPlayer player : players) if (player.isOnCourt()) clampToArea(player);
+        for (VolleyballPlayer player : players) if (player.isOnCourt()) clampToArea(player, benchTravelAllowed);
     }
 
     static void clampToArea(VolleyballPlayer player) {
+        clampToArea(player, false);
+    }
+
+    private static void clampToArea(VolleyballPlayer player, boolean benchTravelAllowed) {
         pushOutOfObstacles(player);
         float maxX = CourtDimensions.HALF_LENGTH + CourtDimensions.FREE_ZONE_END - 0.3f;
-        float maxZ = CourtDimensions.HALF_WIDTH + CourtDimensions.FREE_ZONE_SIDE - 0.3f;
+        float maxZ = benchTravelAllowed ? com.volleyball.game.world.CourtZones.BENCH_Z + 0.25f
+                : CourtDimensions.HALF_WIDTH + CourtDimensions.FREE_ZONE_SIDE - 0.3f;
         float x = player.position.x;
         // The net (and its extension to the posts and beyond) separates the teams: a body can
         // never pass through it. Contacts with the net and centre-line faults are judged by the rules.

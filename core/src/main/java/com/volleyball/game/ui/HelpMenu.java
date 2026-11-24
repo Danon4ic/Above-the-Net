@@ -46,8 +46,13 @@ public final class HelpMenu implements Disposable {
     private final List<float[]> rowRects = new ArrayList<>();
     private final float[] panelRect = new float[4];
 
-    public HelpMenu(KeyBindings keys, UiFonts fonts) {
+    public HelpMenu(KeyBindings keys, KeyBindings keys2, UiFonts fonts) {
         this.fonts = fonts;
+        setKeyBindings(keys, keys2);
+    }
+
+    public void setKeyBindings(KeyBindings keys, KeyBindings keys2) {
+        topics.clear();
         String move = key(keys, PlayerAction.MOVE_FORWARD) + " " + key(keys, PlayerAction.MOVE_LEFT) + " "
                 + key(keys, PlayerAction.MOVE_BACK) + " " + key(keys, PlayerAction.MOVE_RIGHT);
         String primary = key(keys, PlayerAction.PRIMARY_ACTION);
@@ -84,11 +89,11 @@ public final class HelpMenu implements Disposable {
                 row("Shots", "Power, cut (sharp angle), roll, tip (over the block; the setter's dump), tool (off the block, out)."),
                 row("Sets", "High 4, shoot 4, quick, short 3, slide, back 2, pipe, D from zone 1. Dimmed: no hitter there."));
         topic("Match", "A quick match with official rules.",
-                row("Esc", "Pause menu: resume, restart, substitutions, timeout, statistics, replay, role guide, main menu."),
+                row("Esc", "Pause menu. Open Settings to change options without leaving the match."),
                 row("B", "Bench: substitutions (6 per set; a starter returns only to their own place)."),
                 row("U", "Timeout (2 per set, taken at the next break). Space skips it."),
                 row("K", "Statistics of both teams and every player (Tab: the other team)."),
-                row("Tab", "Switch to another player of your team."),
+                row(key(keys, PlayerAction.SWITCH_PLAYER), "Switch to another player of your team."),
                 row("F10", "Let the computer play your player (and back)."),
                 row("J", "Show or hide the key hints in the corner (they fold away a few seconds into the match)."),
                 row("Traits", "Every player has one or two traits (cannon, crafty, wall, clutch...): they change how the "
@@ -99,7 +104,7 @@ public final class HelpMenu implements Disposable {
                 row("G", "Show the next group of commands: offense, defense, serve."),
                 row("Alt + 1-9", "Give a command of the group shown (the same again takes it back)."),
                 row("Alt + 0", "Let the team decide in that group."),
-                row("PLAY", "The line above the bar tells you your part in the team's combination."),
+                row("Team plan", "The card shows the team's attack plan above your own assignment."),
                 row("Playbook", "Main menu: study the plays and design your own; the computer teams use them."));
         topic("Training and tools", "Drills and developer views.",
                 row("M", "Menu: drills (serve, receive, setting, attack, block, defense, free) and the quick match."),
@@ -126,12 +131,15 @@ public final class HelpMenu implements Disposable {
                 row("F12", "Graphics: Low / Medium / High / Ultra."),
                 row("F11", "Fullscreen on / off (also Alt + Enter)."));
         topic("Player 2", "Two people on one keyboard.",
-                row("Arrows", "Move; held while hitting, they aim serves and attacks."),
-                row("R-Ctrl", "Jump."),
-                row("/", "Play the ball."),
-                row(".", "Overhead pass, tip."),
-                row(",", "Low stance."),
-                row("[  ]", "Variant (serve, set, shot)."));
+                row(key(keys2, PlayerAction.MOVE_FORWARD) + " " + key(keys2, PlayerAction.MOVE_LEFT) + " "
+                        + key(keys2, PlayerAction.MOVE_BACK) + " " + key(keys2, PlayerAction.MOVE_RIGHT),
+                        "Move; held while hitting, they aim serves and attacks."),
+                row(key(keys2, PlayerAction.JUMP), "Jump."),
+                row(key(keys2, PlayerAction.PRIMARY_ACTION), "Play the ball."),
+                row(key(keys2, PlayerAction.SECONDARY_ACTION), "Overhead pass, tip."),
+                row(key(keys2, PlayerAction.CROUCH), "Low stance."),
+                row(key(keys2, PlayerAction.VARIANT_PREVIOUS) + " / " + key(keys2, PlayerAction.VARIANT_NEXT),
+                        "Variant (serve, set, shot)."));
     }
 
     private static String key(KeyBindings keys, PlayerAction action) {

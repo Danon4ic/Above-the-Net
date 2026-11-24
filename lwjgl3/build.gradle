@@ -91,12 +91,21 @@ tasks.register('packageApp', Exec) {
     dependsOn 'installDist'
     def destination = layout.buildDirectory.dir('app').get().asFile
     inputs.dir(layout.buildDirectory.dir('install/lwjgl3/lib'))
+    def audioCredits = rootProject.file('core/src/main/resources/audio/CREDITS.md')
+    inputs.file(audioCredits)
     outputs.dir(destination)
     doFirst {
         // jpackage refuses to overwrite an existing application image.
         delete destination
         executable = jpackageTool.get()
         args = ['--type', 'app-image'] + commonJpackageArgs(destination)
+    }
+    doLast {
+        copy {
+            from audioCredits
+            into new File(destination, appName)
+            rename { 'AUDIO-CREDITS.md' }
+        }
     }
 }
 

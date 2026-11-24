@@ -374,6 +374,7 @@ public final class BallHandling {
         tossTime = now;
         // The toss pose lasts until the hit (the swing replaces it), so the arms never drop in between.
         server.setActionPose(ActionPose.TOSS, 1.2f);
+        for (BallTouchListener listener : listeners) listener.onServeToss(server);
         return true;
     }
 

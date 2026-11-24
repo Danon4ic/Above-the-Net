@@ -13,6 +13,7 @@ import com.volleyball.game.entities.VolleyballPlayer;
 import com.volleyball.game.mechanics.AttackType;
 import com.volleyball.game.mechanics.BallHandling;
 import com.volleyball.game.mechanics.BallTouch;
+import com.volleyball.game.mechanics.ContactPurpose;
 import com.volleyball.game.mechanics.ServeSpin;
 import com.volleyball.game.mechanics.BallTouchListener;
 import com.volleyball.game.mechanics.ContactType;
@@ -67,9 +68,6 @@ import java.util.Random;
 public final class TeamAI implements BallTouchListener {
     /** Collision avoidance: teammates keep at least this distance unless one plays the ball. */
     static final float PERSONAL_SPACE = 1.0f;
-    static final float CELEBRATION_TIME = 1.3f;
-    /** After a point the players come together for this long (high fives, or a word after a lost point). */
-    static final float GATHER_TIME = 1.9f;
     /** A ball coming down this close to a human teammate is theirs (the AI leaves it). */
     static final float HUMAN_AREA = 2.0f;
     /** The AI still takes a human's ball only if the human cannot make it and the AI clearly can. */
@@ -112,8 +110,11 @@ public final class TeamAI implements BallTouchListener {
     private final TrajectoryPredictor.Prediction setterRead = new TrajectoryPredictor.Prediction();
     /** The set planned for this possession. */
     private SetType plannedSet = SetType.HIGH_OUTSIDE;
+    private boolean playForCurrentPass;
+    private SetType deliveredSet;
     /** Seconds until the setter's contact (estimated each step while the pass travels). */
     private float timeToSet = 1f;
+    private int jumpSettingId = -1;
     /** Decoys who have jumped in this possession. */
     private final java.util.Set<Integer> decoysJumped = new java.util.HashSet<>();
     /** The play the attack now in the air came from (to learn which plays score). */
@@ -149,6 +150,7 @@ public final class TeamAI implements BallTouchListener {
     // Between rallies.
     private double celebrationStart = -1;
     private boolean wonLastPoint;
+    private int pointPlayerId;
 
     /** The state of one computer player. */
     static final class Brain {
@@ -161,6 +163,9 @@ public final class TeamAI implements BallTouchListener {
         final Vector2 positionError = new Vector2();
         float reachChance;
         boolean wasAirborne;
+        boolean reactedToPoint;
+        int highFivePartner = -1;
+        boolean highFiveDone;
         /** World time of the last landing (the landing state lasts {@link #LANDING_TIME}). */
         double landedAt = Double.NEGATIVE_INFINITY;
         /** The player's own way of playing (shot preferences, risk), so no two hitters are alike. */
@@ -287,20 +292,43 @@ public final class TeamAI implements BallTouchListener {
         return o == null || o.dump() ? null : o.set();
     }
 
-    /** What the play asks of a player (for a person's on-screen hint), or null. */
-    public String playAssignment(VolleyballPlayer p) {
+    /** The active branch of our attack and the player's part in it. */
+    public record PlayAssignment(Combination play, SetType set, VolleyballPlayer hitter, Combination.Run run,
+                                 VolleyballPlayer decoy, boolean setting, boolean committed, boolean alternate) {
+    }
+
+    public PlayAssignment playAssignment(VolleyballPlayer p) {
         Combination play = playCaller.play();
-        if (play == null) return null;
-        for (Map.Entry<SetType.Lane, VolleyballPlayer> e : playCaller.runners().entrySet()) {
-            if (e.getValue() != p) continue;
-            Combination.Run run = play.runOf(e.getKey());
-            Combination.Option o = playCaller.chosen();
-            boolean yours = o != null && !o.dump() && o.hitter() == e.getKey();
-            if (run != null && run.decoy()) return play.name() + ": DECOY - " + run.tempo().label.toLowerCase(java.util.Locale.ROOT) + " fake, jump with the set";
-            if (yours && o != null) return play.name() + ": YOUR SET - " + o.set().label;
-            if (run != null) return play.name() + ": run the " + run.tempo().label.toLowerCase(java.util.Locale.ROOT) + " approach";
+        Combination.Option option = playCaller.chosen();
+        if (!playForCurrentPass || play == null || option == null || p.side != side || !p.isOnCourt()) return null;
+        BallHandling handling = world.ballHandling();
+        int touches = handling.teamTouches(side);
+        if (handling.lastTouchSide() != side || touches < 1 || touches > 2 || !world.ball().isActive()) return null;
+        boolean afterSet = touches == 2;
+        if (afterSet && deliveredSet == null) return null;
+        int lastToucher = handling.lastToucherId();
+        SetType set = afterSet ? deliveredSet : option.set();
+        VolleyballPlayer hitter;
+        if (afterSet && responsibleForToucher == lastToucher && responsibleId >= 0 && responsibleId != lastToucher) {
+            hitter = world.player(responsibleId);
+        } else if (set != option.set()) {
+            hitter = playCaller.runner(set.lane);
+        } else {
+            hitter = playCaller.chosenHitter(world.player(responsibleId));
         }
-        return play.name();
+        Combination.Option first = play.options().get(0);
+        boolean alternate = option != first || set != first.set();
+        SetType.Lane hitterLane = set == option.set() ? option.hitter() : set.lane;
+        Combination.Run run = null;
+        VolleyballPlayer decoy = null;
+        for (Combination.Run candidate : play.runs()) {
+            VolleyballPlayer runner = playCaller.runner(candidate.lane());
+            if (runner == null || !runner.isOnCourt()) continue;
+            if (candidate.decoy() && runner != hitter && decoy == null) decoy = runner;
+            if (runner == p && (run == null || candidate.lane() == hitterLane)) run = candidate;
+        }
+        return new PlayAssignment(play, set, hitter, run, decoy, !afterSet && p.id == responsibleId,
+                afterSet || playCaller.decided(), alternate);
     }
 
     public Difficulty difficulty() {
@@ -359,6 +387,9 @@ public final class TeamAI implements BallTouchListener {
         attackDecidedFor = -1;
         serveAimed = false;
         playCaller.reset();
+        jumpSettingId = -1;
+        playForCurrentPass = false;
+        deliveredSet = null;
         decoysJumped.clear();
         attackPlay = null;
         defense.newRally();
@@ -386,6 +417,9 @@ public final class TeamAI implements BallTouchListener {
     @Override
     public void onBallTouch(BallTouch touch) {
         memory.record(touch);
+        if (touch.side() != side || touch.teamTouchNumber() == 1) playForCurrentPass = false;
+        deliveredSet = touch.side() == side && touch.teamTouchNumber() == 2 && touch.purpose() == ContactPurpose.SET
+                ? memory.lastSet() : null;
         coach.record(touch);
         lastTouchAt = touch.time();
         offBlock = touch.type() == ContactType.BLOCK;
@@ -412,7 +446,7 @@ public final class TeamAI implements BallTouchListener {
     static final float FEINT_SURPRISE = 0.18f;
 
     /** After a rally: remember what worked (adaptive tactics) and start celebrating or regrouping. */
-    public void rallyFinished(boolean won, double now) {
+    public void rallyFinished(boolean won, double now, int pointPlayerId) {
         memory.rallyResult(won);
         // Which plays score: the rally ended with our attack from a play.
         List<MatchMemory.Touch> rallyTouches = memory.rallyTouches();
@@ -436,6 +470,12 @@ public final class TeamAI implements BallTouchListener {
         }
         wonLastPoint = won;
         celebrationStart = now;
+        this.pointPlayerId = pointPlayerId;
+        for (Brain brain : brains.values()) {
+            brain.reactedToPoint = false;
+            brain.highFivePartner = -1;
+            brain.highFiveDone = false;
+        }
     }
 
     // ------------------------------------------------------------------ main update
@@ -584,10 +624,13 @@ public final class TeamAI implements BallTouchListener {
         VolleyballPlayer chosen = world.player(responsibleId);
         boolean spareSetter = inPath != null && touches == 0 && inPath == setter && chosen != null && chosen != setter
                 && reach(chosen, forecast.timeToDescent, forecast.descentPoint) > 0.5f;
-        if (inPath != null && (personsBall || spareSetter)) {
+        boolean leaveBackupSet = touches == 1 && inPath != null && inPath != chosen && chosen != null
+                && chosen.role == PlayerRole.LIBERO && backupSettingReach(chosen) > 0.33f;
+        if (inPath != null && (personsBall || spareSetter || leaveBackupSet)) {
             dodging = inPath;
-        } else if (inPath != null && inPath.id != responsibleId && !(touches == 1 && inPath != setter && setter != null
-                && setter.id == responsibleId && reach(setter, forecast.timeToDescent, forecast.descentPoint) > 0.5f)) {
+        } else if (inPath != null && inPath.id != responsibleId && !(touches == 1 && chosen != null
+                && (chosen == setter || chosen.role == PlayerRole.LIBERO)
+                && reach(chosen, forecast.timeToDescent, forecast.descentPoint) > 0.5f)) {
             responsibleId = inPath.id;
             responsibleChosenAt = now;
             if (touches == 2) attackerId = inPath.id;
@@ -607,7 +650,9 @@ public final class TeamAI implements BallTouchListener {
                             : world.ball().speed() > TacticalTargets.DIG_SPEED ? AutoPlayer.Behavior.DEFEND : AutoPlayer.Behavior.PASS;
                     // The libero sets with the forearms (an overhead set in the front zone would forbid the attack).
                     case 1 -> p.role == PlayerRole.LIBERO ? AutoPlayer.Behavior.PASS
-                            : setterDump(p, rotation) ? AutoPlayer.Behavior.ATTACK : AutoPlayer.Behavior.SET;
+                            : setterDump(p, rotation) ? AutoPlayer.Behavior.ATTACK
+                            : p.role == PlayerRole.SETTER && (p.id == jumpSettingId || p.isAirborne())
+                                    ? AutoPlayer.Behavior.JUMP_SET : AutoPlayer.Behavior.SET;
                     default -> canAttack(p, rotation) ? AutoPlayer.Behavior.ATTACK : AutoPlayer.Behavior.PASS;
                 };
                 // The shot is chosen in the air; the better the hitter's reading, the later (when the
@@ -631,19 +676,28 @@ public final class TeamAI implements BallTouchListener {
                     }
                 }
                 brain.motor.setBackRow(!rotation.isFrontRow(side, p.id));
-                brain.motor.act(p, behavior, now);
+                if (touches == 1 && p.role == PlayerRole.LIBERO && !p.isUpright()) world.intent(p).clear();
+                else brain.motor.act(p, behavior, now);
                 brain.state = switch (behavior) {
-                    case SET -> AiState.SETTING;
+                    case SET, JUMP_SET -> AiState.SETTING;
                     case ATTACK -> p.isAirborne() ? AiState.ATTACKING : AiState.APPROACHING;
                     case SCRAMBLE -> handling.isArmed(p) ? AiState.PASSING : AiState.DEFENDING;
                     default -> handling.isArmed(p) ? AiState.PASSING : AiState.MOVING_TO_BALL;
                 };
+            } else if (touches == 0 && setter != null && setter.id == responsibleId && p.role == PlayerRole.LIBERO) {
+                // When the setter has to dig, release towards the backup setting lane while the ball is incoming.
+                TacticalTargets.backupSetterTarget(side, target);
+                moveTo(p, target.x, target.z, false);
+                if (horizontalDistance(p, target) < 2f) watchNet(p, false);
+                brain.state = AiState.POSITIONING;
             } else if (p == setter && touches == 0) {
                 // Priority 4: the setter runs to the setting spot while the pass is in the air.
                 TacticalTargets.setterTarget(side, target);
                 moveTo(p, target.x - side.sign() * 0.2f, target.z, false);
                 brain.state = AiState.POSITIONING;
                 setterRunningId = p.id;
+            } else if (touches == 0 && receivingServe && waitForServeRead(p, now)) {
+                brain.state = AiState.READY_TO_RECEIVE;
             } else if (touches == 0 && receivingServe && receptionLanes.containsKey(p.id)) {
                 // A receiver whose lane the serve is not in holds the lane, ready.
                 receptionSpot(p);
@@ -862,8 +916,8 @@ public final class TeamAI implements BallTouchListener {
         if (touches == 1 && setter != null && setter.id != lastToucher && setter.isUpright() && setter.isOnCourt()) return setter.id;
         // The setter took the first ball (or is down): the libero comes in and sets, as long as it can get there.
         VolleyballPlayer libero = team.libero();
-        if (touches == 1 && libero != null && libero.isOnCourt() && libero.isUpright() && libero.id != lastToucher
-                && !humans.contains(libero) && reach(libero, forecast.timeToDescent, forecast.descentPoint) > LIBERO_SETS_FROM) {
+        if (touches == 1 && libero != null && libero.isOnCourt() && libero.id != lastToucher
+                && !humans.contains(libero) && backupSettingReach(libero) > LIBERO_SETS_FROM) {
             return libero.id;
         }
         float bestAi = 0f;
@@ -993,6 +1047,22 @@ public final class TeamAI implements BallTouchListener {
     /** Chance (0..1) of getting to the ball in time: reaction + start-up + run against the time left. */
     private float reach(VolleyballPlayer p, float timeAvailable, Vector3 point) {
         if (!p.isUpright()) return 0f;
+        return reachAfterGettingUp(p, timeAvailable, point);
+    }
+
+    /** A high dig can give the libero time to finish getting up and still take the second ball. */
+    private float backupSettingReach(VolleyballPlayer libero) {
+        float time = libero.bodyStateTime();
+        float gettingUp = switch (libero.bodyState()) {
+            case UPRIGHT -> 0f;
+            case DIVING -> PlayerLocomotion.DIVE_TIME - time + PlayerLocomotion.FLOOR_TIME + PlayerLocomotion.GET_UP_TIME;
+            case ON_FLOOR -> PlayerLocomotion.FLOOR_TIME - time + PlayerLocomotion.GET_UP_TIME;
+            case GETTING_UP -> PlayerLocomotion.GET_UP_TIME - time;
+        };
+        return reachAfterGettingUp(libero, forecast.timeToDescent - Math.max(0f, gettingUp), forecast.descentPoint);
+    }
+
+    private float reachAfterGettingUp(VolleyballPlayer p, float timeAvailable, Vector3 point) {
         float dx = point.x - p.position.x;
         float dz = point.z - p.position.z;
         float stretch = 0.6f + (p.role == PlayerRole.LIBERO ? LIBERO_DIVE_REACH : 0f);
@@ -1063,6 +1133,7 @@ public final class TeamAI implements BallTouchListener {
         dumpDecided = false;
         playCaller.setSetter(from);
         playCaller.call(difficulty, playbook, tactics, lanes, memory.lastOwnPass(), setterFront, humans);
+        playForCurrentPass = true;
         Combination.Option o = playCaller.chosen();
         if (o != null && !o.dump()) plannedSet = o.set();
         VolleyballPlayer hitter = playCaller.chosenHitter(from);
@@ -1086,15 +1157,29 @@ public final class TeamAI implements BallTouchListener {
      * chooses the final option of the play.
      */
     private void runPlay(Collection<VolleyballPlayer> humans) {
+        jumpSettingId = -1;
         VolleyballPlayer whoSets = world.player(responsibleId);
         if (whoSets == null || playCaller.play() == null) return;
         setterRead.watchHeight = TacticalTargets.SETTER_HEIGHT;
         world.predictor().predict(world.ball(), 6f, setterRead);
         setterRead.watchHeight = Float.NaN;
         if (!setterRead.reachesWatchHeight) return;
-        timeToSet = setterRead.timeToDescent;
-        if (!humans.contains(whoSets)) playCaller.checkSetter(reach(whoSets, timeToSet, setterRead.descentPoint));
-        if (playCaller.decided() || !(timeToSet < 0.3f || world.ballHandling().isArmed(whoSets) || whoSets.isAirborne())) return;
+        float groundTime = setterRead.timeToDescent;
+        timeToSet = groundTime;
+        if (!humans.contains(whoSets) && whoSets.role == PlayerRole.SETTER && difficulty.meaningfulBlock) {
+            PassRating pass = memory.lastOwnPass();
+            Combination.Option option = playCaller.chosen();
+            if (option != null && !option.dump() && (pass == PassRating.PERFECT || pass == PassRating.GOOD
+                    && (option.set().fast() || difficulty.readsPlay))) {
+                float highTime = brain(whoSets).motor.jumpSetContactTime(whoSets);
+                if (Float.isFinite(highTime)) {
+                    jumpSettingId = whoSets.id;
+                    timeToSet = highTime;
+                }
+            }
+        }
+        if (!humans.contains(whoSets)) playCaller.checkSetter(reach(whoSets, groundTime, setterRead.descentPoint));
+        if (playCaller.decided() || !(groundTime < 0.3f || world.ballHandling().isArmed(whoSets) || whoSets.isAirborne())) return;
         float placement = (float) Math.hypot(whoSets.position.x - setterRead.descentPoint.x, whoSets.position.z - setterRead.descentPoint.z);
         float quality = Math.max(0f, 1f - placement / 1.6f);
         boolean readBlock = difficulty.readsPlay || tactics.is(TeamCommand.VS_SINGLE_BLOCK);
@@ -1388,6 +1473,10 @@ public final class TeamAI implements BallTouchListener {
         float depth = front ? (middle && touches == 1 ? 2.4f : 3.6f) : 5.6f;
         TacticalTargets.teamPoint(side, depth, lateral, 0f, target);
         moveTo(p, target.x, target.z, true);
+        // Open space for the approach while still facing the play.
+        if (target.x * side.sign() > p.position.x * side.sign() + 0.15f) {
+            watchNet(p, false);
+        }
     }
 
     /**
@@ -1412,7 +1501,7 @@ public final class TeamAI implements BallTouchListener {
         boolean pro = difficulty == Difficulty.PROFESSIONAL;
         coverSpot(hitter, slot, pro ? 0f : 0.4f, target);
         moveTo(p, target.x, target.z, true);
-        world.intent(p).crouch = true;
+        watchNet(p, horizontalDistance(p, target) < 0.9f);
         brain(p).state = AiState.COVERING;
     }
 
@@ -1499,10 +1588,13 @@ public final class TeamAI implements BallTouchListener {
             if (humans.contains(p) || serving(p)) continue;
             Brain brain = brain(p);
             boolean front = rotation.isFrontRow(side, p.id);
-            if (defense.blocks(p)) {
+            if (ourServeInPlay && waitForServeRead(p, now)) {
+                brain.state = AiState.POSITIONING;
+            } else if (defense.blocks(p)) {
                 if (!defense.blockReady() && !p.isAirborne()) {
                     brain.state = AiState.BLOCKING;
                     moveTo(p, side.sign() * 0.6f, p.position.z, false);
+                    watchNet(p, p.position.x * side.sign() < 0.9f);
                     continue;
                 }
                 defense.prepareBlock(p);
@@ -1511,7 +1603,7 @@ public final class TeamAI implements BallTouchListener {
             } else if (opponentHas && front && p.role != PlayerRole.LIBERO) {
                 Vector3 offNet = defense.offBlockerSpot(p);
                 moveTo(p, offNet.x, offNet.z, true);
-                world.intent(p).crouch = true;
+                watchNet(p, horizontalDistance(p, offNet) < 0.9f);
                 brain.state = AiState.DEFENDING;
             } else if (opponentHas && (!ballHere || p == digger)) {
                 defense.readHitter(p);
@@ -1531,6 +1623,23 @@ public final class TeamAI implements BallTouchListener {
             }
         }
         cancelOthers(digger == null ? -1 : digger.id, humans);
+    }
+
+    /** Read the serve briefly before leaving the rotation. The setter and first-ball player release early. */
+    private boolean waitForServeRead(VolleyballPlayer p, double now) {
+        float release = p.role == PlayerRole.MIDDLE_BLOCKER ? 0.055f : 0.085f;
+        release += brain(p).motor.skill().reaction() * 0.35f;
+        if (now - lastTouchAt >= release) return false;
+        world.intent(p).clear();
+        watchNet(p, receivingServe);
+        return true;
+    }
+
+    private void watchNet(VolleyballPlayer p, boolean ready) {
+        MoveIntent intent = world.intent(p);
+        intent.facingYaw = VolleyballPlayer.facingNetYaw(p.side);
+        intent.sprint = false;
+        intent.crouch = ready;
     }
 
     /**
@@ -1782,84 +1891,98 @@ public final class TeamAI implements BallTouchListener {
 
     // ------------------------------------------------------------------ between rallies
 
-    /**
-     * Between rallies: the winners celebrate (arms up, a little hop), then everyone walks back
-     * to the zone positions.
-     */
-    public void betweenRallies(double now, RotationManager rotation, Collection<VolleyballPlayer> humans) {
-        boolean celebrating = celebrationStart >= 0 && now - celebrationStart < CELEBRATION_TIME;
+    /** Staggered reactions and opportunistic high fives while the ball is dead. */
+    public void betweenRallies(double now, Collection<VolleyballPlayer> humans) {
         court = team.onCourt();
         idleOnBench(humans);
+        double elapsed = celebrationStart < 0 ? 99 : now - celebrationStart;
         for (VolleyballPlayer p : court) {
-            if (humans.contains(p)) continue;
+            world.intent(p).clear();
             Brain brain = brain(p);
-            MoveIntent intent = world.intent(p);
-            intent.clear();
-            if (!p.isUpright()) {
-                brain.state = AiState.RECOVERING;
-                continue;
+            if (!p.isUpright() || p.isAirborne()) continue;
+            if (brain.highFivePartner >= 0) continue;
+            boolean featured = p.id == pointPlayerId;
+            int style = Math.floorMod(p.number, 3);
+            double cue = featured ? 0.045 : 0.11 + style * 0.085;
+            if (!brain.reactedToPoint && elapsed >= cue && elapsed < 0.95 && p.groundSpeed() < 1.4f) {
+                brain.reactedToPoint = true;
+                ActionPose pose = wonLastPoint
+                        ? (featured ? ActionPose.CELEBRATE : style == 0 ? ActionPose.CELEBRATE : ActionPose.CLAP)
+                        : (featured || style == 0 ? ActionPose.DISAPPOINTED : ActionPose.CLAP);
+                p.setActionPose(pose, pose == ActionPose.CLAP ? 0.58f : 0.78f);
+                if (!humans.contains(p)) brain.state = AiState.CELEBRATING;
             }
-            double since = celebrationStart < 0 ? 99 : now - celebrationStart;
-            if (celebrating && wonLastPoint && since < 0.6) {
-                brain.state = AiState.CELEBRATING;
-                if (p.actionPose() == ActionPose.NONE) p.setActionPose(ActionPose.CELEBRATE, 0.6f);
-                boolean awayFromNet = Math.abs(p.position.x) > 2f;
-                if (awayFromNet && !p.isAirborne() && since < 0.4 && (p.id + (int) celebrationStart) % 3 == 0) {
-                    intent.jump = true;
-                    intent.jumpHeightFactor = 0.35f;
+        }
+        if (wonLastPoint && elapsed > 0.32 && elapsed < 0.65) {
+            for (VolleyballPlayer p : court) {
+                Brain brain = brain(p);
+                if (p.id == pointPlayerId || brain.highFivePartner >= 0 || !calmForHighFive(p)) continue;
+                VolleyballPlayer nearest = null;
+                float best = 2.35f * 2.35f;
+                for (VolleyballPlayer mate : court) {
+                    if (mate.id <= p.id || mate.id == pointPlayerId || brain(mate).highFivePartner >= 0 || !calmForHighFive(mate)) continue;
+                    float distance = p.position.dst2(mate.position);
+                    if (distance >= 0.72f * 0.72f && distance < best) {
+                        nearest = mate;
+                        best = distance;
+                    }
+                }
+                if (nearest != null) {
+                    brain.highFivePartner = nearest.id;
+                    brain(nearest).highFivePartner = p.id;
+                }
+            }
+        }
+        for (VolleyballPlayer p : court) {
+            Brain brain = brain(p);
+            if (brain.highFivePartner <= p.id) continue;
+            VolleyballPlayer mate = world.player(brain.highFivePartner);
+            if (brain.highFiveDone) {
+                if (p.actionPose() == ActionPose.HIGH_FIVE) {
+                    faceTeammate(p, mate);
+                    faceTeammate(mate, p);
                 }
                 continue;
             }
-            if (celebrationStart >= 0 && since < GATHER_TIME && !p.isAirborne()) {
-                gather(p, wonLastPoint);
-                continue;
+            if (elapsed >= 0.99 || mate == null) continue;
+            float dx = mate.position.x - p.position.x;
+            float dz = mate.position.z - p.position.z;
+            float distance = (float) Math.hypot(dx, dz);
+            if (distance > 1.07f) {
+                float share = Math.min(0.5f, (distance - 0.96f) / (2f * distance));
+                moveTo(p, p.position.x + dx * share, p.position.z + dz * share, false);
+                moveTo(mate, mate.position.x - dx * share, mate.position.z - dz * share, false);
+                world.intent(p).sprint = false;
+                world.intent(mate).sprint = false;
+            } else if (calmForHighFive(p) && calmForHighFive(mate)) {
+                brain.highFiveDone = true;
+                p.setActionPose(ActionPose.HIGH_FIVE, 0.55f);
+                mate.setActionPose(ActionPose.HIGH_FIVE, 0.55f);
             }
-            rotationPosition(p, rotation);
-            world.intent(p).sprint = false;
-            brain.state = AiState.POSITIONING;
+            faceTeammate(p, mate);
+            faceTeammate(mate, p);
         }
         updateBodyStates(humans);
     }
 
-    /**
-     * Between rallies the players come together in the middle of their half: after a point won
-     * they slap hands with whoever is next to them, after a point lost they clap and encourage
-     * each other. A person's player is gathered around too.
-     */
-    private void gather(VolleyballPlayer p, boolean won) {
-        float cx = 0f;
-        float cz = 0f;
-        int n = 0;
-        for (VolleyballPlayer o : court) {
-            cx += o.position.x;
-            cz += o.position.z;
-            n++;
-        }
-        cx /= Math.max(1, n);
-        cz /= Math.max(1, n);
-        // Not right at the net: the middle of the own half.
-        cx = side.sign() * Math.max(2.2f, Math.min(5f, Math.abs(cx)));
-        float angle = (p.id % 6) * (float) (Math.PI * 2.0) / 6f;
-        float ring = won ? 0.55f : 0.65f;
-        moveTo(p, cx + (float) Math.cos(angle) * ring, cz + (float) Math.sin(angle) * ring, false);
-        world.intent(p).sprint = false;
-        // A lost point: first a moment of disappointment (hands to the head), then the team picks itself up.
-        boolean justEnded = brain(p).state != AiState.CELEBRATING;
-        if (!won && justEnded && p.actionPose() == ActionPose.NONE) p.setActionPose(ActionPose.DISAPPOINTED, DISAPPOINTED_TIME);
-        brain(p).state = AiState.CELEBRATING;
-        VolleyballPlayer mate = null;
-        for (VolleyballPlayer o : court) {
-            if (o == p || !o.isUpright()) continue;
-            if (o.position.dst2(p.position) < 1.1f * 1.1f) mate = o;
-        }
-        if (mate == null || p.actionPose() != ActionPose.NONE) return;
-        // Turn to the teammate and slap (or clap).
-        world.intent(p).facingYaw = (float) Math.atan2(-(mate.position.z - p.position.z), mate.position.x - p.position.x);
-        p.setActionPose(won ? ActionPose.HIGH_FIVE : ActionPose.CLAP, won ? 0.55f : 0.8f);
+    private static boolean calmForHighFive(VolleyballPlayer p) {
+        return p.isUpright() && !p.isAirborne() && p.groundSpeed() < 0.8f;
     }
 
-    /** How long a player hangs its head after a lost point (s). */
-    static final float DISAPPOINTED_TIME = 1.1f;
+    private void faceTeammate(VolleyballPlayer p, VolleyballPlayer mate) {
+        world.intent(p).facingYaw = (float) Math.atan2(p.position.z - mate.position.z, mate.position.x - p.position.x);
+    }
+
+    /** Walks around teammates towards a serving position or bench. */
+    public void walkToLineup(VolleyballPlayer p, float x, float z) {
+        court = team.onCourt();
+        steer(p, x, z, true);
+        MoveIntent intent = world.intent(p);
+        float distance = (float) Math.hypot(x - p.position.x, z - p.position.z);
+        intent.sprint = false;
+        intent.direction.scl(distance > 4f ? 0.92f : 0.68f);
+        if (distance < 0.55f) intent.facingYaw = VolleyballPlayer.facingNetYaw(side);
+    }
 
     /** A timeout: the team gathers in a circle in front of its bench (standing, the arms down). */
     public void huddle(RotationManager rotation, Collection<VolleyballPlayer> humans) {
@@ -1937,14 +2060,6 @@ public final class TeamAI implements BallTouchListener {
         moveTo(p, spot.x * depthScale, spot.y * depthScale, true);
     }
 
-    /** The rotation zone (between rallies, before the next serve). */
-    private void rotationPosition(VolleyballPlayer p, RotationManager rotation) {
-        int zone = rotation.zoneOf(side, p.id);
-        if (zone < 0) return;
-        CourtZones.basePosition(zone, side, spot);
-        moveTo(p, spot.x, spot.y, false);
-    }
-
     /** Walks/runs to a tactical spot, with this rally's positioning error if {@code withError}. */
     private void moveTo(VolleyballPlayer p, float x, float z, boolean withError) {
         Brain brain = brain(p);
@@ -1973,6 +2088,10 @@ public final class TeamAI implements BallTouchListener {
      * each other cleanly, as in the switch after the serve) instead of straight through them.
      */
     private void steer(VolleyballPlayer p, float x, float z) {
+        steer(p, x, z, false);
+    }
+
+    private void steer(VolleyballPlayer p, float x, float z, boolean lineup) {
         Brain brain = brain(p);
         float dx = x - p.position.x;
         float dz = z - p.position.z;
@@ -1998,7 +2117,7 @@ public final class TeamAI implements BallTouchListener {
                 wz = q.position.z + ux * pass * DETOUR_OFFSET;
             }
             if (wx * side.sign() < 0.4f) wx = side.sign() * 0.4f;
-            wz = clampZ(wz);
+            if (!lineup) wz = clampZ(wz);
         }
         brain.motor.moveTo(p, wx, wz);
         // The detour is part of a longer run: keep the pace of the whole way.

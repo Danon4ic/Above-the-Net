@@ -63,6 +63,10 @@ public final class MatchMemory {
         lastSet = null;
     }
 
+    SetType lastSet() {
+        return lastSet;
+    }
+
     public void record(BallTouch touch) {
         rally.add(new Touch(touch.playerId(), touch.side(), touch.type(), touch.rating(), touch.variant()));
         if (touch.side() == own && touch.purpose() == ContactPurpose.SET) {

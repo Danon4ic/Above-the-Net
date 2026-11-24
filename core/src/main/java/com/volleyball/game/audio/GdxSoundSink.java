@@ -1,6 +1,7 @@
 package com.volleyball.game.audio;
 
 import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.audio.Music;
 import com.badlogic.gdx.audio.Sound;
 import com.badlogic.gdx.files.FileHandle;
 import com.badlogic.gdx.utils.Disposable;
@@ -8,109 +9,92 @@ import com.volleyball.game.config.GameConfig;
 
 import java.util.EnumMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentLinkedQueue;
 
-/**
- * Plays the synthesized sounds through libGDX. The sounds are generated on a background thread
- * at start-up (written as WAV files to a temporary folder) and loaded on the render thread as
- * they become ready, so the game starts without waiting; a sound requested before it is ready
- * is simply skipped.
- *
- * <p>Volumes: each sound's volume × its channel (effects, crowd, music) × master, all from the
- * settings; muting stops everything.
- */
+/** Plays positioned samples and streams the two background loops. */
 public final class GdxSoundSink implements SoundSink, Disposable {
+    private static final float SILENCE = 0.001f;
     private final GameConfig config;
-    private final EnumMap<SoundId, Sound> sounds = new EnumMap<>(SoundId.class);
-    private final EnumMap<SoundId, Long> loops = new EnumMap<>(SoundId.class);
-    private final EnumMap<SoundId, Float> loopVolumes = new EnumMap<>(SoundId.class);
-    private final ConcurrentLinkedQueue<Map.Entry<SoundId, FileHandle>> ready = new ConcurrentLinkedQueue<>();
-    private final FileHandle folder;
-    private final Thread generator;
-    private volatile boolean disposed;
+    private final EnumMap<SoundId, Sound[]> effects = new EnumMap<>(SoundId.class);
+    private final EnumMap<SoundId, Music> background = new EnumMap<>(SoundId.class);
+    private final EnumMap<SoundId, Float> loopTargets = new EnumMap<>(SoundId.class);
+    private final int[] nextVariant = new int[SoundId.values().length];
+    private boolean enabled;
 
     private GdxSoundSink(GameConfig config) {
         this.config = config;
-        folder = FileHandle.tempDirectory("volleyball-audio");
-        // Each file is deleted once loaded; the empty folder goes at exit even if dispose never runs.
-        folder.file().deleteOnExit();
-        generator = new Thread(this::generateAll, "audio-synth");
-        generator.setDaemon(true);
-        generator.start();
+        enabled = config.soundEnabled;
+        for (SoundId id : SoundId.values()) {
+            if (id.isLoop()) {
+                try {
+                    Music music = Gdx.audio.newMusic(asset(id, 0));
+                    music.setLooping(true);
+                    music.setVolume(0f);
+                    background.put(id, music);
+                } catch (RuntimeException e) {
+                    Gdx.app.error("Audio", "Could not load " + id, e);
+                }
+            } else {
+                Sound[] variants = new Sound[id.variants];
+                for (int i = 0; i < variants.length; i++) {
+                    try {
+                        variants[i] = Gdx.audio.newSound(asset(id, i));
+                    } catch (RuntimeException e) {
+                        Gdx.app.error("Audio", "Could not load " + id.resource(i), e);
+                    }
+                }
+                effects.put(id, variants);
+            }
+        }
     }
 
-    /** The libGDX sink, or a silent one if there is no audio device. */
+    private static FileHandle asset(SoundId id, int variant) {
+        return Gdx.files.classpath(id.resource(variant));
+    }
+
     public static SoundSink create(GameConfig config) {
-        if (Gdx.audio == null) return SoundSink.SILENT;
-        try {
-            return new GdxSoundSink(config);
-        } catch (RuntimeException e) {
-            Gdx.app.error("Audio", "Sound disabled: " + e.getMessage());
-            return SoundSink.SILENT;
-        }
+        return Gdx.audio == null ? SoundSink.SILENT : new GdxSoundSink(config);
     }
 
-    private void generateAll() {
-        SoundSynth synth = new SoundSynth(20251023L);
-        try {
-            for (SoundId id : SoundId.values()) {
-                if (disposed) return;
-                FileHandle file = folder.child(id.name().toLowerCase(java.util.Locale.ROOT) + ".wav");
-                file.writeBytes(SoundSynth.toWav(synth.generate(id)), false);
-                ready.add(Map.entry(id, file));
-            }
-        } catch (RuntimeException e) {
-            Gdx.app.error("Audio", "Sound generation failed: " + e.getMessage());
-        }
-    }
-
-    /** Loads the sounds generated so far; call on the render thread every frame. */
+    /** Fades ambience and music between screens and applies volume settings. */
     public void update() {
-        Map.Entry<SoundId, FileHandle> entry;
-        while ((entry = ready.poll()) != null) {
-            try {
-                sounds.put(entry.getKey(), Gdx.audio.newSound(entry.getValue()));
-            } catch (RuntimeException e) {
-                Gdx.app.error("Audio", "Could not load " + entry.getKey() + ": " + e.getMessage());
+        if (enabled && !config.soundEnabled) {
+            for (Sound[] variants : effects.values()) {
+                for (Sound sound : variants) if (sound != null) sound.stop();
             }
-            // The sound is decoded into memory: the WAV file is no longer needed.
-            entry.getValue().delete();
         }
-        // Keep the loops at the right level when the settings change.
-        for (Map.Entry<SoundId, Float> loop : loopVolumes.entrySet()) applyLoop(loop.getKey(), loop.getValue());
+        enabled = config.soundEnabled;
+        float blend = 1f - (float) Math.exp(-8f * Gdx.graphics.getDeltaTime());
+        for (Map.Entry<SoundId, Music> entry : background.entrySet()) {
+            SoundId id = entry.getKey();
+            Music music = entry.getValue();
+            float target = loopTargets.getOrDefault(id, 0f) * gain(id);
+            float volume = music.getVolume() + (target - music.getVolume()) * blend;
+            if (!enabled || (target <= SILENCE && volume <= SILENCE)) {
+                if (music.isPlaying()) music.stop();
+                music.setVolume(0f);
+            } else {
+                music.setVolume(volume);
+                if (!music.isPlaying()) music.play();
+            }
+        }
     }
 
     @Override
     public void play(SoundId id, float volume, float pitch, float pan) {
-        Sound sound = sounds.get(id);
-        float v = volume * gain(id);
-        if (sound == null || v <= 0.001f) return;
-        sound.play(v, pitch, pan);
+        Sound[] variants = effects.get(id);
+        float level = volume * gain(id);
+        if (variants == null || level <= SILENCE) return;
+        int index = nextVariant[id.ordinal()];
+        nextVariant[id.ordinal()] = (index + 1) % variants.length;
+        Sound sound = variants[index];
+        if (sound != null) sound.play(level, pitch, pan);
     }
 
     @Override
     public void setLoop(SoundId id, float volume) {
-        loopVolumes.put(id, volume);
-        applyLoop(id, volume);
+        loopTargets.put(id, volume);
     }
 
-    private void applyLoop(SoundId id, float volume) {
-        Sound sound = sounds.get(id);
-        if (sound == null) return;
-        float v = volume * gain(id);
-        Long playing = loops.get(id);
-        if (v <= 0.001f) {
-            if (playing != null) {
-                sound.stop(playing);
-                loops.remove(id);
-            }
-            return;
-        }
-        if (playing == null || playing < 0) loops.put(id, sound.loop(v));
-        else sound.setVolume(playing, v);
-    }
-
-    /** Channel × master volume, 0 when muted. */
     private float gain(SoundId id) {
         if (!config.soundEnabled) return 0f;
         float channel = switch (id.channel) {
@@ -123,14 +107,11 @@ public final class GdxSoundSink implements SoundSink, Disposable {
 
     @Override
     public void dispose() {
-        disposed = true;
-        try {
-            generator.join(2000);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+        for (Sound[] variants : effects.values()) {
+            for (Sound sound : variants) if (sound != null) sound.dispose();
         }
-        for (Sound sound : sounds.values()) sound.dispose();
-        sounds.clear();
-        folder.deleteDirectory();
+        for (Music music : background.values()) music.dispose();
+        effects.clear();
+        background.clear();
     }
 }

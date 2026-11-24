@@ -4,6 +4,7 @@ import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.math.Vector3;
 import com.volleyball.game.entities.VolleyballPlayer;
+import com.volleyball.game.entities.PlayerRole;
 import com.volleyball.game.mechanics.ActionKind;
 import com.volleyball.game.mechanics.BallHandling;
 import com.volleyball.game.mechanics.ContactType;
@@ -37,6 +38,8 @@ public final class AutoPlayer {
     /** A back-row hitter takes off at least this far from the net (behind the attack line). */
     static final float BACK_ROW_TAKEOFF = CourtDimensions.ATTACK_LINE_DISTANCE + 0.15f;
     private boolean backRow;
+    private static final float SET_JUMP_FACTOR = 0.65f;
+    private boolean setJumpAttempted;
 
     /**
      * How well the player reads and reacts (set from the AI difficulty and the player's ratings).
@@ -144,7 +147,7 @@ public final class AutoPlayer {
     }
 
     /** What the player should try to do with the ball. */
-    public enum Behavior { PASS, SET, ATTACK, BLOCK, DEFEND, /** A ball off the block: chase it at once, dive if needed. */ SCRAMBLE }
+    public enum Behavior { PASS, SET, JUMP_SET, ATTACK, BLOCK, DEFEND, /** A ball off the block: chase it at once, dive if needed. */ SCRAMBLE }
 
     /** Just walks/runs to a spot (no ball action). */
     public void moveTo(VolleyballPlayer p, float x, float z) {
@@ -175,6 +178,7 @@ public final class AutoPlayer {
             case DEFEND -> defend(p, intent, handling, now);
             case SCRAMBLE -> scramble(p, intent, handling, now);
             case SET -> play(p, intent, handling, ContactType.OVERHEAD_PASS, ActionKind.SECONDARY, now);
+            case JUMP_SET -> jumpSet(p, intent, handling, now);
             case PASS -> play(p, intent, handling, ContactType.FOREARM_PASS, ActionKind.PRIMARY, now);
         }
     }
@@ -184,6 +188,7 @@ public final class AutoPlayer {
         if (handling.lastToucherId() == seenToucher) return;
         seenToucher = handling.lastToucherId();
         toucherSeenAt = now;
+        setJumpAttempted = false;
         surprise = pendingSurprise;
         pendingSurprise = 0f;
         float error = skill.readError();
@@ -314,6 +319,48 @@ public final class AutoPlayer {
         float oz = out.z - p.position.z;
         out.x = p.position.x + ox * c + oz * s;
         out.z = p.position.z - ox * s + oz * c;
+    }
+
+    private static float setJumpHeight(VolleyballPlayer p) {
+        return PlayerLocomotion.jumpHeight(p.attributes) * SET_JUMP_FACTOR * p.fatigueFactor(0.1f);
+    }
+
+    /** Estimated time to a high setting contact, given a balanced take-off under the ball. */
+    float jumpSetContactTime(VolleyballPlayer p) {
+        if (!p.isUpright() || !p.isAirborne() && (p.recoveryTime() > 0f || p.groundSpeed() > 1.7f)) return Float.NaN;
+        idealSquareToNet(p, ContactType.OVERHEAD_PASS, ideal);
+        float height = p.isAirborne() ? Math.max(p.position.y, setJumpHeight(p) * 0.9f) : setJumpHeight(p) * 0.9f;
+        forecast.watchHeight = ideal.y - p.position.y + height;
+        world.predictor().predict(world.ball(), 6f, forecast);
+        TrajectoryPredictor.dropAtNet(forecast, world.court().net().topHeight(), world.ball().position.x);
+        forecast.watchHeight = Float.NaN;
+        if (!forecast.reachesWatchHeight || CourtDimensions.sideOf(forecast.descentPoint.x) != p.side) return Float.NaN;
+        float depth = p.position.x * p.side.sign();
+        float dx = forecast.descentPoint.x - ideal.x;
+        float dz = forecast.descentPoint.z - ideal.z;
+        return depth >= 0.62f && depth <= 3.1f && dx * dx + dz * dz <= 0.7f * 0.7f
+                ? forecast.timeToDescent : Float.NaN;
+    }
+
+    private void jumpSet(VolleyballPlayer p, MoveIntent intent, BallHandling handling, double now) {
+        if (p.isAirborne()) {
+            if (p.role == PlayerRole.SETTER) {
+                intent.facingYaw = VolleyballPlayer.facingNetYaw(p.side);
+                // Arm early enough on ascent. The normal contact solver still checks hand position and timing.
+                handling.arm(p, ActionKind.PRIMARY, now);
+            }
+            return;
+        }
+        float rise = PlayerLocomotion.riseTime(setJumpHeight(p));
+        float time = setJumpAttempted ? Float.NaN : jumpSetContactTime(p);
+        if (sinceNewBall(now) >= skill.reaction() && time >= rise * 0.65f && time <= rise + 0.035f) {
+            intent.facingYaw = VolleyballPlayer.facingNetYaw(p.side);
+            intent.jump = true;
+            intent.jumpHeightFactor = SET_JUMP_FACTOR;
+            setJumpAttempted = true;
+        } else {
+            play(p, intent, handling, ContactType.OVERHEAD_PASS, ActionKind.SECONDARY, now);
+        }
     }
 
     /** Within the last steps the player turns square to the net, matching {@link #idealSquareToNet}. */
@@ -487,6 +534,11 @@ public final class AutoPlayer {
         intent.crouch = true;
         if (!Float.isNaN(defenseSpotX)) {
             moveTowards(p, intent, defenseSpotX, defenseSpotZ);
+            float dx = defenseSpotX - p.position.x;
+            float dz = defenseSpotZ - p.position.z;
+            intent.crouch = dx * dx + dz * dz < 1f;
+            intent.sprint = false;
+            intent.facingYaw = VolleyballPlayer.facingNetYaw(p.side);
             return;
         }
         if (!forecast.reachesWatchHeight || CourtDimensions.sideOf(forecast.descentPoint.x) == p.side) return;

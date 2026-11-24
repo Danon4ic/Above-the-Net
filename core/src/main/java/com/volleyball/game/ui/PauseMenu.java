@@ -18,7 +18,7 @@ import java.util.List;
 public final class PauseMenu implements Disposable {
     public enum Action {
         RESUME("Resume"), RESTART("Restart"), SUBSTITUTIONS("Substitutions"), TIMEOUT("Timeout"), STATISTICS("Statistics"),
-        REPLAY("Replay the last rally"), ROLE_GUIDE("Role guide"), CONTROLS("Controls and hints"),
+        REPLAY("Replay the last rally"), ROLE_GUIDE("Role guide"), CONTROLS("Controls and hints"), SETTINGS("Settings"),
         MAIN_MENU("Main menu"), QUIT("Quit game");
 
         public final String label;
@@ -93,7 +93,7 @@ public final class PauseMenu implements Disposable {
     public void render(float delta) {
         if (!open) return;
         openTime += delta;
-        float s = UiFonts.uiScale(height);
+        float s = Math.min(UiFonts.uiScale(height), Math.min(width / 480f, height / (200f + actions.size() * 50f)));
         float appear = UiKit.ease(openTime / 0.25f);
         BitmapFont title = fonts.get(UiFonts.Weight.BLACK, 40f * s);
         BitmapFont item = fonts.get(UiFonts.Weight.BOLD, 22f * s);

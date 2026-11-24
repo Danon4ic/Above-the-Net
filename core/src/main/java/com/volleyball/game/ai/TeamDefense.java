@@ -142,7 +142,7 @@ final class TeamDefense {
         float readDelay = difficulty.readsPlay ? 0.05f : difficulty.meaningfulBlock ? 0.25f : 0.45f;
         blockReady = now - lastTouchAt >= readDelay;
         habit = habitOfHitter();
-        planFormation(rotation, court, attackComing && opponentTouches >= 1, humans);
+        planFormation(rotation, court, attackComing && opponentTouches >= 2, humans);
         offBlockers.clear();
         if (opponentHas) {
             for (VolleyballPlayer p : court) {

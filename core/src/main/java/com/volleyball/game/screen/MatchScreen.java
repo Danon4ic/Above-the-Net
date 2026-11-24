@@ -1,9 +1,13 @@
 package com.volleyball.game.screen;
 
 import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.Graphics;
 import com.badlogic.gdx.Input;
 import com.badlogic.gdx.InputAdapter;
 import com.badlogic.gdx.ScreenAdapter;
+import com.badlogic.gdx.graphics.GL20;
+import com.badlogic.gdx.graphics.g2d.SpriteBatch;
+import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.math.collision.Ray;
 import com.volleyball.game.VolleyballGame;
@@ -25,6 +29,8 @@ import com.volleyball.game.entities.Ball;
 import com.volleyball.game.entities.VolleyballPlayer;
 import com.volleyball.game.input.GdxKeyState;
 import com.volleyball.game.input.InputController;
+import com.volleyball.game.input.KeyBindings;
+import com.volleyball.game.i18n.Lang;
 import com.volleyball.game.mechanics.ActionKind;
 import com.volleyball.game.mechanics.BallHandling;
 import com.volleyball.game.mechanics.AttackType;
@@ -57,6 +63,10 @@ import com.volleyball.game.training.DrillController;
 import com.volleyball.game.ui.DebugHud;
 import com.volleyball.game.ui.DrillMenu;
 import com.volleyball.game.ui.HelpMenu;
+import com.volleyball.game.ui.SettingsView;
+import com.volleyball.game.ui.TacticalCard;
+import com.volleyball.game.ui.TooltipManager;
+import com.volleyball.game.ui.UiKit;
 import com.volleyball.game.world.CourtDimensions;
 import com.volleyball.game.world.VolleyballCourt;
 
@@ -125,6 +135,12 @@ public final class MatchScreen extends ScreenAdapter {
     private HelpMenu helpMenu;
     private DrillMenu drillMenu;
     private PauseMenu pauseMenu;
+    private SettingsView settings;
+    private TooltipManager settingsTooltips;
+    private SpriteBatch settingsBatch;
+    private ShapeRenderer settingsShapes;
+    private boolean settingsOpen;
+    private boolean leavingSettings;
     private SubstitutionMenu substitutionMenu;
     private com.volleyball.game.ui.ShotSelector shotSelector;
     private com.volleyball.game.ui.MatchHud matchHud;
@@ -259,7 +275,7 @@ public final class MatchScreen extends ScreenAdapter {
         // The plays: built-in plus the custom ones from the playbook editor.
         playbook = new com.volleyball.game.tactics.PlaybookStore(com.volleyball.game.config.ConfigStore.userDataDirectory()).load();
         advisor = new com.volleyball.game.ai.ShotAdvisor(world);
-        helpMenu = new HelpMenu(config.keyBindings(), game.fonts());
+        helpMenu = new HelpMenu(config.keyBindings(), config.keyBindingsPlayer2(), game.fonts());
         helpMenu.resize(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         drillMenu = new DrillMenu(game.fonts());
         drillMenu.resize(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
@@ -279,13 +295,15 @@ public final class MatchScreen extends ScreenAdapter {
 
     @Override
     public void render(float delta) {
-        if (replaying) updateReplay(delta);
+        if (settingsOpen) {
+            if (leavingSettings || settings.handleKeys()) closeSettings();
+        } else if (replaying) updateReplay(delta);
         else if (statsPanel.isOpen()) handleStatsKeys();
         else handleMenuKeys();
-        autoOpenFinalStats();
+        if (!settingsOpen && !pauseMenu.isOpen()) autoOpenFinalStats();
         VolleyballPlayer trainee = drills.trainee();
         // The game is paused while a menu is open (and during a replay): no gameplay input, no simulation.
-        boolean paused = helpMenu.isOpen() || drillMenu.isOpen() || pauseMenu.isOpen() || substitutionMenu.isOpen()
+        boolean paused = settingsOpen || helpMenu.isOpen() || drillMenu.isOpen() || pauseMenu.isOpen() || substitutionMenu.isOpen()
                 || statsPanel.isOpen() || replaying;
         updateAutoReplay(delta, paused);
         updateMouseLook(paused);
@@ -369,11 +387,12 @@ public final class MatchScreen extends ScreenAdapter {
         if (!autoplay && !paused) renderSelector(trainee, delta);
         if (!paused) handleTacticsKeys(trainee);
         renderTactics(trainee, delta);
-        String prompt = replaying ? null : servePrompt();
-        if (prompt == null && !replaying) prompt = playPrompt(trainee);
+        String prompt = paused ? null : servePrompt();
+        TacticalCard card = paused || prompt != null ? null : tacticalCard(trainee);
         scoreOverlay.setPrompt(prompt);
+        scoreOverlay.setTacticalCard(card);
         scoreOverlay.setYourSide(autoplay ? null : trainee.side);
-        scoreOverlay.setActions(paused ? java.util.List.of() : actionHints(trainee));
+        scoreOverlay.setActions(paused || card != null ? List.of() : actionHints(trainee));
         scoreOverlay.setBottomClear(shotSelector.top());
         scoreOverlay.render(drills.match(), paused ? 0f : delta);
         helpMenu.render();
@@ -383,6 +402,7 @@ public final class MatchScreen extends ScreenAdapter {
         if (replaying) replayOverlay.render(delta, replay.duration() <= 0f ? 1f : replayTime / replay.duration(),
                 cameraController.mode().label, replaySlow);
         renderStats(delta);
+        if (settingsOpen) renderSettings(delta);
         if (pendingAction != null) {
             PauseMenu.Action action = pendingAction;
             pendingAction = null;
@@ -638,14 +658,12 @@ public final class MatchScreen extends ScreenAdapter {
         tacticsPanel.render(tacticsGroup, tactics, extra, alpha);
     }
 
-    /** The person's part in the team's play (a run, a decoy, the set coming to them), while it matters. */
-    private String playPrompt(VolleyballPlayer p) {
+    /** The controlled player's assignment in the active attack. */
+    private TacticalCard tacticalCard(VolleyballPlayer p) {
         MatchController match = drills.match();
-        if (match == null || autoplay || !world.ball().isActive()) return null;
-        BallHandling handling = world.ballHandling();
-        if (handling.lastTouchSide() != p.side || handling.teamTouches(p.side) < 1 || handling.teamTouches(p.side) > 2) return null;
-        String assignment = match.ai(p.side).playAssignment(p);
-        return assignment == null ? null : "PLAY  ·  " + assignment.toUpperCase(java.util.Locale.ROOT);
+        if (match == null || match.phase() != MatchController.Phase.RALLY || autoplay || p == null) return null;
+        TeamAI.PlayAssignment assignment = match.ai(p.side).playAssignment(p);
+        return assignment == null ? null : TacticalCard.forPlayer(assignment, p);
     }
 
     private final List<String[]> actionKeys = new ArrayList<>();
@@ -789,9 +807,96 @@ public final class MatchScreen extends ScreenAdapter {
                 helpMenu.setRole(null);
                 helpMenu.toggle();
             }
+            case SETTINGS -> openSettings();
             case MAIN_MENU -> game.showMainMenu();
             case QUIT -> Gdx.app.exit();
         }
+    }
+
+    public boolean isSettingsOpen() {
+        return settingsOpen;
+    }
+
+    private void openSettings() {
+        int width = Gdx.graphics.getWidth();
+        int height = Gdx.graphics.getHeight();
+        if (settings == null) {
+            settingsBatch = new SpriteBatch();
+            settingsShapes = new ShapeRenderer();
+            settingsTooltips = new TooltipManager(game.fonts());
+            settingsTooltips.setScale(config.tooltipScale);
+            Graphics.DisplayMode display = Gdx.graphics.getDisplayMode();
+            settings = new SettingsView(game.fonts(), settingsTooltips, this::applySettings,
+                    SettingsView.resolutions(display.width, display.height, config.windowWidth, config.windowHeight));
+            resizeSettings(width, height);
+        }
+        settings.open(config);
+        settingsOpen = true;
+    }
+
+    private void closeSettings() {
+        leavingSettings = false;
+        settingsOpen = false;
+        settingsTooltips.dismiss();
+        openPauseMenu();
+    }
+
+    private void renderSettings(float delta) {
+        int width = Gdx.graphics.getWidth();
+        int height = Gdx.graphics.getHeight();
+        float scale = SettingsView.layoutScale(width, height);
+        Gdx.gl.glEnable(GL20.GL_BLEND);
+        Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+        settingsShapes.begin(ShapeRenderer.ShapeType.Filled);
+        UiKit.dim(settingsShapes, width, height, 0.65f);
+        settingsShapes.end();
+        settings.render(settingsShapes, settingsBatch, scale, width, height, SettingsView.centeredLeft(width, scale),
+                height - 32f * scale, 32f * scale, 1f, delta);
+        settingsTooltips.update(delta);
+        settingsTooltips.render(settingsShapes, settingsBatch, scale, width, height, delta);
+    }
+
+    private void applySettings(GameConfig previous) {
+        game.applyDisplay(previous);
+        if (!config.language.equals(previous.language)) Lang.set(Lang.parse(config.language));
+        cameraController.setFieldOfView(config.fieldOfView);
+        cameraController.setSensitivity(config.mouseSensitivity);
+        world.setFatigue(config.fatigue);
+        if (config.showMatchHints != previous.showMatchHints) matchHud.setHintsExpanded(config.showMatchHints);
+        if (!config.keyBindings.equals(previous.keyBindings) || !config.keyBindingsPlayer2.equals(previous.keyBindingsPlayer2)) {
+            bindings = config.keyBindings();
+            KeyBindings secondBindings = config.keyBindingsPlayer2();
+            input = new InputController(new GdxKeyState(bindings));
+            input2 = new InputController(new GdxKeyState(secondBindings));
+            helpMenu.setKeyBindings(bindings, secondBindings);
+        }
+        if (!config.netCategory.equals(previous.netCategory)) {
+            court.net().setCategory(config.netCategory());
+            world.onNetChanged();
+        }
+        if (!config.venue.equals(previous.venue)) {
+            ArenaScene old = scene;
+            scene = new ArenaScene(court, config.venue(), config.courtTheme(), config.lighting(), config.graphicsQuality(),
+                    ArenaScene.Matchup.of(world.home(), world.away()));
+            drills.removeMatchListener(old.crowdMood());
+            drills.addMatchListener(scene.crowdMood());
+            old.dispose();
+        } else {
+            if (!config.graphicsQuality.equals(previous.graphicsQuality)) scene.setQuality(config.graphicsQuality());
+            if (!config.courtTheme.equals(previous.courtTheme)) scene.applyTheme(config.courtTheme());
+            if (!config.lighting.equals(previous.lighting)) scene.applyLighting(config.lighting());
+            if (!config.netCategory.equals(previous.netCategory)) scene.rebuildNet();
+        }
+        scene.setShadowMapSize(config.shadowMapSize);
+        config.graphicsQuality = scene.quality().name();
+        settingsTooltips.setScale(config.tooltipScale);
+        if (config.uiScale != previous.uiScale) resize(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
+        game.saveConfig();
+    }
+
+    private void resizeSettings(int width, int height) {
+        settingsBatch.getProjectionMatrix().setToOrtho2D(0, 0, width, height);
+        settingsShapes.getProjectionMatrix().setToOrtho2D(0, 0, width, height);
     }
 
     /** The second person's player in a local two-player match, or null. */
@@ -831,8 +936,9 @@ public final class MatchScreen extends ScreenAdapter {
     /** Camera position for panning, crowd and menu music, and the libGDX sound loading. */
     private void updateSound(float delta, boolean paused) {
         soundDirector.setListener(cameraController.camera().position, cameraController.camera().direction);
+        soundDirector.setCourtSurface(scene.venue(), scene.theme());
         soundDirector.setMatchActive(drills.drill() == Drill.MATCH);
-        soundDirector.setMenuOpen(paused);
+        soundDirector.setPaused(paused);
         soundDirector.update(paused ? 0f : delta);
     }
 
@@ -860,9 +966,14 @@ public final class MatchScreen extends ScreenAdapter {
         if (session != null) {
             // In the match the demo mode (F10) hands person 1's player over to the team AI.
             drills.setSlotAutomatic(0, autoplay);
-            if (!autoplay) input.fillIntent(world.intent(trainee), trainee, controlForward, world.time());
-            VolleyballPlayer second = secondPerson();
-            if (second != null) input2.fillIntent(world.intent(second), second, controlForward, world.time());
+            if (drills.match().phase() == MatchController.Phase.RALLY) {
+                if (!autoplay) input.fillIntent(world.intent(trainee), trainee, controlForward, world.time());
+                VolleyballPlayer second = secondPerson();
+                if (second != null) input2.fillIntent(world.intent(second), second, controlForward, world.time());
+            } else {
+                input.clearBuffer();
+                input2.clearBuffer();
+            }
         } else if (autoplay) autoTrainee.update(trainee, drills.drill(), world.time());
         else input.fillIntent(world.intent(trainee), trainee, controlForward, world.time());
         // The people's players get the bigger reach (see BallHandling.ASSIST_REACH); not in a demo.
@@ -1371,6 +1482,7 @@ public final class MatchScreen extends ScreenAdapter {
         substitutionMenu.resize(width, height);
         helpMenu.resize(width, height);
         drillMenu.resize(width, height);
+        if (settings != null) resizeSettings(width, height);
     }
 
     @Override
@@ -1396,6 +1508,8 @@ public final class MatchScreen extends ScreenAdapter {
         if (scoreOverlay != null) scoreOverlay.dispose();
         if (pauseMenu != null) pauseMenu.dispose();
         if (substitutionMenu != null) substitutionMenu.dispose();
+        if (settingsBatch != null) settingsBatch.dispose();
+        if (settingsShapes != null) settingsShapes.dispose();
         // The sound output belongs to the game; only this screen's listeners go.
         sound.setLoop(com.volleyball.game.audio.SoundId.CROWD_AMBIENT, 0f);
     }
@@ -1410,7 +1524,24 @@ public final class MatchScreen extends ScreenAdapter {
         private boolean orbiting;
 
         @Override
+        public boolean keyDown(int keycode) {
+            return settingsOpen && settings.keyDown(keycode);
+        }
+
+        @Override
+        public boolean mouseMoved(int screenX, int screenY) {
+            if (!settingsOpen) return false;
+            settings.mouseMoved(screenX, Gdx.graphics.getHeight() - screenY);
+            return true;
+        }
+
+        @Override
         public boolean touchDown(int screenX, int screenY, int pointer, int button) {
+            if (settingsOpen) {
+                if (!leavingSettings) leavingSettings = settings.touchDown(screenX, Gdx.graphics.getHeight() - screenY, button);
+                return true;
+            }
+            if (pauseMenu.isOpen()) return false;
             orbiting = button == Input.Buttons.MIDDLE;
             lastX = screenX;
             lastY = screenY;
@@ -1420,13 +1551,21 @@ public final class MatchScreen extends ScreenAdapter {
         @Override
         public boolean touchUp(int screenX, int screenY, int pointer, int button) {
             if (button == Input.Buttons.MIDDLE) orbiting = false;
+            if (settingsOpen) {
+                if (!leavingSettings) leavingSettings = settings.touchUp(screenX, Gdx.graphics.getHeight() - screenY);
+                return true;
+            }
             return false;
         }
 
         @Override
         public boolean touchDragged(int screenX, int screenY, int pointer) {
+            if (settingsOpen) {
+                settings.touchDragged(screenX, Gdx.graphics.getHeight() - screenY);
+                return true;
+            }
             // The first-person mouse look already turns the view with every movement.
-            if (!orbiting || mouseLook) return false;
+            if (!orbiting || mouseLook || pauseMenu.isOpen()) return false;
             float dy = screenY - lastY;
             cameraController.orbit(screenX - lastX, config.invertMouseY ? -dy : dy);
             lastX = screenX;
@@ -1436,6 +1575,7 @@ public final class MatchScreen extends ScreenAdapter {
 
         @Override
         public boolean scrolled(float amountX, float amountY) {
+            if (settingsOpen || pauseMenu.isOpen()) return true;
             // Third person: distance to the player; other views switch to the free orbit and zoom.
             cameraController.zoom(amountY);
             return true;

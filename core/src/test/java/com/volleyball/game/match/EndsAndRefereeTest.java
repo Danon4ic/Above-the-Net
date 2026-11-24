@@ -1,5 +1,6 @@
 package com.volleyball.game.match;
 
+import com.badlogic.gdx.math.Vector3;
 import com.volleyball.game.ai.Difficulty;
 import com.volleyball.game.entities.ActionPose;
 import com.volleyball.game.entities.VolleyballPlayer;
@@ -9,6 +10,7 @@ import com.volleyball.game.rules.MatchRules;
 import com.volleyball.game.rules.RallyOutcome;
 import com.volleyball.game.rules.RuleMode;
 import com.volleyball.game.simulation.GameWorld;
+import com.volleyball.game.world.CourtDimensions;
 import com.volleyball.game.world.CourtSide;
 import com.volleyball.game.world.NetCategory;
 import com.volleyball.game.world.VolleyballCourt;
@@ -55,6 +57,52 @@ class EndsAndRefereeTest {
         match.start(CourtSide.HOME);
         assertFalse(match.sidesSwapped());
         assertEquals(1f, world.benchSign());
+    }
+
+    @Test
+    void teamsReactAndWalkIntoPositionBeforeTheNextServe() {
+        GameWorld world = GameWorld.withDefaultTeams(new VolleyballCourt(NetCategory.MEN), 21);
+        MatchController match = new MatchController(world, MatchFormat.official(), 21,
+                Difficulty.PROFESSIONAL, Difficulty.PROFESSIONAL);
+        match.start(CourtSide.HOME);
+        var players = world.players();
+        List<Vector3> previous = players.stream().map(p -> p.position.cpy()).toList();
+        boolean sawWinReaction = false;
+        boolean sawLossReaction = false;
+        int movingSteps = 0;
+        for (int i = 0; i < 120 * 40; i++) {
+            boolean duringBreak = match.phase() == MatchController.Phase.POINT_BREAK;
+            if (duringBreak) {
+                for (int j = 0; j < players.size(); j++) previous.get(j).set(players.get(j).position);
+            }
+            world.step(DT);
+            match.update(DT, List.of());
+            if (!duringBreak) continue;
+
+            CourtSide winner = match.lastPoint().outcome().winner();
+            boolean moved = false;
+            for (int j = 0; j < players.size(); j++) {
+                VolleyballPlayer player = players.get(j);
+                float distance = player.position.dst(previous.get(j));
+                assertTrue(distance < 0.18f, "player " + player.id + " jumped " + distance + " m in one step");
+                moved |= distance > 0.01f;
+                if (player.side == winner) {
+                    sawWinReaction |= player.actionPose() == ActionPose.CELEBRATE || player.actionPose() == ActionPose.HIGH_FIVE;
+                } else {
+                    sawLossReaction |= player.actionPose() == ActionPose.DISAPPOINTED || player.actionPose() == ActionPose.CLAP;
+                }
+            }
+            if (moved) movingSteps++;
+            if (match.phase() == MatchController.Phase.RALLY) {
+                VolleyballPlayer server = match.currentServer();
+                assertTrue(server.position.x * server.side.sign() > CourtDimensions.HALF_LENGTH);
+                assertTrue(movingSteps > 60, "the teams had time to walk");
+                assertTrue(sawWinReaction);
+                assertTrue(sawLossReaction);
+                return;
+            }
+        }
+        fail("the next serve did not start");
     }
 
     @Test

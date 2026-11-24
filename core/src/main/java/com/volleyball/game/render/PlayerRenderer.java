@@ -13,6 +13,7 @@ import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.utils.Disposable;
 import com.volleyball.game.entities.ActionPose;
 import com.volleyball.game.entities.BodyState;
+import com.volleyball.game.entities.GaitCycle;
 import com.volleyball.game.entities.PlayerRole;
 import com.volleyball.game.entities.SwingStyle;
 import com.volleyball.game.entities.Team;
@@ -48,7 +49,6 @@ import java.util.Map;
  */
 public final class PlayerRenderer implements Disposable {
     /** Distance covered in one full running cycle (two steps). */
-    private static final float STRIDE_LENGTH = 1.7f;
     private static final float CROUCH_DROP = 0.24f;
     private static final float HEAD_TURN_LIMIT = 1.1f;
     /** Duration of the roll after a sideways fall. */
@@ -92,8 +92,7 @@ public final class PlayerRenderer implements Disposable {
         float drop;
         float headPitch;
         /** Step cycle (radians) and the travelled distance it was last advanced to. */
-        float stridePhase;
-        float strideAt = Float.NaN;
+        final GaitCycle gait = new GaitCycle();
         boolean initialised;
         /** One critically damped spring per pose value (see {@link Spring}): arms (raise, spread, elbow ×2), trunk, pelvis. */
         final Spring[] springs = new Spring[11];
@@ -474,12 +473,9 @@ public final class PlayerRenderer implements Disposable {
         trackMotion(f, player, yaw, cos, sin, dt);
         // The step cycle advances with the distance covered; a slower gait takes shorter steps,
         // so the planted foot stays put on the floor instead of sliding (walking coaches too).
-        float strideLength = strideLength(speed);
-        float travelled = player.strideDistance();
-        if (Float.isNaN(f.strideAt) || travelled < f.strideAt) f.strideAt = travelled;
-        f.stridePhase = (f.stridePhase + (travelled - f.strideAt) / strideLength * MathUtils.PI2) % (MathUtils.PI2 * 64f);
-        f.strideAt = travelled;
-        float phase = f.stridePhase;
+        float strideLength = GaitCycle.strideLength(speed);
+        f.gait.advance(player.strideDistance(), speed);
+        float phase = f.gait.phase();
         ActionPose action = player.actionPose();
         BodyState body = player.bodyState();
         if (!player.isOnCourt()) {
@@ -702,35 +698,43 @@ public final class PlayerRenderer implements Disposable {
                 rightArm.set(1.5f * up, -0.55f * up, 1.15f * up);
             }
             case HIGH_FIVE -> {
-                // The hitting hand goes up and forward to meet the teammate's, then comes down.
-                float up = bump(progress, 0f, 0.35f, 1f);
-                rightArm.set(MathUtils.lerp(0.4f, 2.5f, up), MathUtils.lerp(0.1f, 0.25f, up), MathUtils.lerp(0.3f, 0.15f, up));
-                leftArm.set(0.3f, 0.1f, 0.3f);
-                twist = 0.2f * up;
+                float lift = bump(progress, 0.03f, 0.46f, 0.96f);
+                float reach = bump(progress, 0.26f, 0.51f, 0.72f);
+                rightArm.set(0.15f + 1.8f * lift + 0.22f * reach, 0.1f - 0.48f * reach, 0.32f + 0.6f * lift - 0.7f * reach);
+                leftArm.set(0.1f + 0.36f * lift, 0.12f, 0.4f + 0.25f * lift);
+                twist = 0.18f * reach;
+                lean = -0.10f * reach;
             }
             case CLAP -> {
                 // Hands come together in front of the chest twice.
-                float clap = 0.5f + 0.5f * MathUtils.cos(progress * MathUtils.PI2 * 2f);
-                leftArm.set(1.15f, MathUtils.lerp(-0.45f, -0.1f, clap), 1.2f);
-                rightArm.set(1.15f, MathUtils.lerp(-0.45f, -0.1f, clap), 1.2f);
-                lean = -0.05f;
+                float up = smooth(progress / 0.22f) * smooth((1f - progress) / 0.25f);
+                float clap = 0.5f + 0.5f * MathUtils.cos((progress - 0.28f) * MathUtils.PI2 * 2.7f);
+                leftArm.set(0.15f + up, MathUtils.lerp(0.15f, -0.64f - 0.24f * clap, up), 0.36f + 0.9f * up);
+                rightArm.set(0.12f + 1.08f * up, MathUtils.lerp(0.12f, -0.58f - 0.24f * clap, up), 0.32f + 0.85f * up);
+                lean = 0.05f * up;
             }
             case DISAPPOINTED -> {
-                // Hands go to the hips, the head drops, a breath out.
-                float in = smooth(progress / 0.3f);
+                float in = smooth(progress / 0.28f) * smooth((1f - progress) / 0.26f);
+                boolean handsOnKnees = player.number % 2 == 0;
                 leftArm.set(MathUtils.lerp(0.1f, -0.25f, in), MathUtils.lerp(0.1f, 0.62f, in), MathUtils.lerp(0.3f, 1.75f, in));
                 rightArm.set(MathUtils.lerp(0.1f, -0.25f, in), MathUtils.lerp(0.1f, 0.62f, in), MathUtils.lerp(0.3f, 1.75f, in));
-                lean = -0.1f * in;
-                headDrop = 0.4f * in;
-                drop = 0.03f * in;
+                if (handsOnKnees) {
+                    leftArm.set(0.22f * in, 0.11f, 0.42f);
+                    rightArm.set(0.28f * in, 0.12f, 0.43f);
+                }
+                lean = -(handsOnKnees ? 0.32f : 0.12f) * in;
+                headDrop = 0.61f * in;
+                drop = (handsOnKnees ? 0.10f : 0.045f) * in;
             }
             case CELEBRATE -> {
-                // Fists up, pumping.
-                float pump = 0.5f + 0.5f * MathUtils.sin(progress * MathUtils.PI2 * 3f);
-                leftArm.set(2.7f, 0.5f, 0.6f + 0.9f * pump);
-                rightArm.set(2.7f, 0.5f, 0.6f + 0.9f * pump);
-                lean = 0.1f;
-                twist = 0f;
+                float lift = bump(progress, 0.02f, 0.33f, 0.96f);
+                float pump = bump(progress, 0.31f, 0.53f, 0.77f);
+                boolean bothArms = player.number % 3 == 0;
+                leftArm.set(0.17f + (bothArms ? 2.0f : 0.66f) * lift, 0.13f + 0.22f * lift, 0.33f + 0.95f * lift);
+                rightArm.set(0.15f + 2.48f * lift - 0.36f * pump, 0.14f + 0.31f * lift, 0.34f + 0.75f * lift + 0.72f * pump);
+                lean = -0.14f * lift + 0.17f * pump;
+                twist = 0.23f * lift;
+                headDrop = -0.12f * lift;
             }
             default -> {
             }
@@ -1259,11 +1263,6 @@ public final class PlayerRenderer implements Disposable {
     public PlayerAnimState animState(VolleyballPlayer p) {
         Figure f = figures.get(p.id);
         return f == null ? null : f.state;
-    }
-
-    /** Length of a full step cycle (two steps) at this speed: about 1.3 m walking, 1.7 m running. */
-    static float strideLength(float speed) {
-        return MathUtils.clamp(0.95f + 0.3f * speed, 1.15f, STRIDE_LENGTH);
     }
 
     /** On the bench: sitting on a chair (seat 0.47 m), forearms on the thighs, watching the ball. */

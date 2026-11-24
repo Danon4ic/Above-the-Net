@@ -78,13 +78,16 @@ public final class MatchHud implements Disposable {
 
     /** The key hints start folded (the "J Keys" chip only), as chosen in the settings. */
     public void startFolded() {
-        hintsExpanded = false;
-        hintsTime = HINTS_INTRO;
+        setHintsExpanded(false);
     }
 
     /** J: shows or hides the full key hints. */
     public void toggleHints() {
-        hintsExpanded = !hintsExpanded;
+        setHintsExpanded(!hintsExpanded);
+    }
+
+    public void setHintsExpanded(boolean expanded) {
+        hintsExpanded = expanded;
         hintsTime = HINTS_INTRO;
     }
 

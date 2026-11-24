@@ -83,6 +83,12 @@ public final class GameWorld {
     static final float ATTENTION_HALF_ANGLE = 100f * MathUtils.degreesToRadians;
     static final float ATTENTION_HOLD_DISTANCE = 2.5f;
 
+    private boolean benchTravelAllowed;
+
+    public void setBenchTravelAllowed(boolean allowed) {
+        benchTravelAllowed = allowed;
+    }
+
     public void step(float dt) {
         for (VolleyballPlayer player : players) {
             // Players on the bench sit still.
@@ -91,7 +97,7 @@ public final class GameWorld {
             intent.attentionYaw = attentionYaw(player, intent.faceMovement);
             locomotion.update(player, intent, dt);
         }
-        locomotion.resolvePlayerConstraints(players);
+        locomotion.resolvePlayerConstraints(players, benchTravelAllowed);
         blockMechanic.update(players, ball, ballHandling);
         collisions.updateBodies();
         ballHandling.update(dt, time);

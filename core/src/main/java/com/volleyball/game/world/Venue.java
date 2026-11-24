@@ -1,6 +1,6 @@
 package com.volleyball.game.world;
 
-/** Where the match is played. Purely visual: the court, the rules and the physics are the same. */
+/** Where the match is played. Venues share the same court geometry, rules and physics. */
 public enum Venue {
     /**
      * A championship arena: a two-tier bowl, light trusses with floodlights over the court, LED

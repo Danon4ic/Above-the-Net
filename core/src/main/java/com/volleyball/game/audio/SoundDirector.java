@@ -2,20 +2,22 @@ package com.volleyball.game.audio;
 
 import com.badlogic.gdx.math.Vector3;
 import com.volleyball.game.entities.BodyState;
+import com.volleyball.game.entities.GaitCycle;
 import com.volleyball.game.entities.VolleyballPlayer;
 import com.volleyball.game.match.MatchListener;
 import com.volleyball.game.mechanics.AttackType;
-import com.volleyball.game.mechanics.BallHandling;
 import com.volleyball.game.mechanics.BallTouch;
 import com.volleyball.game.mechanics.BallTouchListener;
+import com.volleyball.game.mechanics.ServeType;
 import com.volleyball.game.physics.BallContact;
 import com.volleyball.game.physics.BallContactListener;
 import com.volleyball.game.rules.Fault;
 import com.volleyball.game.rules.MatchRules;
 import com.volleyball.game.rules.MatchScore;
 import com.volleyball.game.simulation.GameWorld;
-import com.volleyball.game.world.CourtDimensions;
 import com.volleyball.game.world.CourtSide;
+import com.volleyball.game.world.CourtTheme;
+import com.volleyball.game.world.Venue;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -56,7 +58,9 @@ public final class SoundDirector implements BallTouchListener, BallContactListen
     private boolean rallyLive;
     private float rallyTime;
     private boolean menuOpen;
-    private int calledToucher = Integer.MIN_VALUE;
+    private boolean paused;
+    private Venue venue = Venue.CHAMPIONSHIP;
+    private SoundId footstep = SoundId.FOOTSTEP;
 
     private static final class PlayerTrack {
         boolean airborne;
@@ -64,7 +68,7 @@ public final class SoundDirector implements BallTouchListener, BallContactListen
         float vx;
         float vz;
         float lastSqueak = -10f;
-        boolean armed;
+        final GaitCycle gait = new GaitCycle();
         /** Each player has a voice pitch of their own. */
         float voicePitch;
     }
@@ -105,23 +109,49 @@ public final class SoundDirector implements BallTouchListener, BallContactListen
         if (!active) rallyLive = false;
     }
 
-    /** While a menu is open the game is paused: the menu theme plays and the crowd is quieter. */
+    /** The title screen plays the menu theme above a quieter crowd. */
     public void setMenuOpen(boolean open) {
         menuOpen = open;
     }
 
+    public void setPaused(boolean paused) {
+        this.paused = paused;
+    }
+
+    public void setCourtSurface(Venue venue, CourtTheme theme) {
+        this.venue = venue;
+        footstep = switch (venue) {
+            case BEACH -> SoundId.FOOTSTEP_SAND;
+            case ROOFTOP -> SoundId.FOOTSTEP_CONCRETE;
+            case SCHOOL_GYM, SPORTS_PALACE -> SoundId.FOOTSTEP_WOOD;
+            case CHAMPIONSHIP -> theme == CourtTheme.WOOD_GYM ? SoundId.FOOTSTEP_WOOD : SoundId.FOOTSTEP;
+        };
+    }
+
     // ------------------------------------------------------------------ ball
+    @Override
+    public void onServeToss(VolleyballPlayer server) {
+        playAt(SoundId.SERVE_TOSS, world.ball().position, 0.26f, variedPitch(0.06f));
+    }
+
+    private static SoundId serveSound(String variant) {
+        if (ServeType.UNDERHAND.label.equals(variant)) return SoundId.SERVE_UNDERHAND;
+        if (ServeType.JUMP_FLOAT.label.equals(variant)) return SoundId.SERVE_JUMP_FLOAT;
+        if (variant != null && variant.startsWith(ServeType.JUMP_TOPSPIN.label)) return SoundId.SERVE_JUMP_TOPSPIN;
+        if (variant != null && variant.startsWith(ServeType.POWER.label)) return SoundId.SERVE_POWER;
+        return SoundId.SERVE_FLOAT;
+    }
 
     @Override
     public void onBallTouch(BallTouch touch) {
         Vector3 at = touch.contactPoint();
         float speed = touch.outgoingVelocity().len();
+        float contact = 0.86f + 0.14f * clamp01(touch.quality());
         VolleyballPlayer player = world.player(touch.playerId());
         switch (touch.type()) {
             case SERVE -> {
-                boolean power = speed > 19f;
-                playAt(power ? SoundId.SERVE_POWER : SoundId.SERVE_FLOAT, at, 0.75f + 0.25f * clamp01((speed - 12f) / 14f), variedPitch(0.05f));
-                if (touch.airborne() && player != null) voice(SoundId.GRUNT, player, 0.55f);
+                playAt(serveSound(touch.variant()), at, contact * (0.72f + 0.28f * clamp01((speed - 12f) / 14f)), variedPitch(0.025f));
+                if (touch.airborne() && player != null) voice(SoundId.GRUNT, player, 0.32f);
                 rallyLive = true;
                 rallyTime = 0f;
             }
@@ -129,16 +159,17 @@ public final class SoundDirector implements BallTouchListener, BallContactListen
                 boolean soft = speed < 13f || AttackType.TIP.label.equals(touch.variant()) || AttackType.ROLL_SHOT.label.equals(touch.variant())
                         || AttackType.FEINT.label.equals(touch.variant());
                 if (soft) {
-                    playAt(SoundId.SPIKE_SOFT, at, 0.55f, variedPitch(0.06f));
+                    playAt(SoundId.SPIKE_SOFT, at, contact * 0.53f, variedPitch(0.04f));
                 } else {
-                    playAt(SoundId.SPIKE_HARD, at, 0.65f + 0.35f * clamp01((speed - 13f) / 17f), variedPitch(0.05f));
-                    if (player != null && random.nextFloat() < 0.75f) voice(SoundId.GRUNT, player, 0.7f);
+                    float force = clamp01((speed - 13f) / 17f);
+                    playAt(SoundId.SPIKE_HARD, at, contact * (0.79f + 0.21f * force), (1.02f - 0.09f * force) * variedPitch(0.025f));
+                    if (player != null && random.nextFloat() < 0.55f) voice(SoundId.GRUNT, player, 0.36f);
                 }
             }
-            case BLOCK -> playAt(SoundId.BLOCK, at, 0.6f + 0.4f * clamp01(speed / 20f), variedPitch(0.05f));
+            case BLOCK -> playAt(SoundId.BLOCK, at, 0.72f + 0.28f * clamp01(speed / 20f), variedPitch(0.03f));
             case DIVE, ONE_ARM -> playAt(SoundId.DIG, at, 0.7f, variedPitch(0.06f));
-            case FOREARM_PASS -> playAt(SoundId.FOREARM_PASS, at, 0.45f + 0.4f * clamp01(speed / 14f), variedPitch(0.07f));
-            case OVERHEAD_PASS, ONE_HAND_SET -> playAt(SoundId.OVERHEAD_SET, at, 0.45f, variedPitch(0.07f));
+            case FOREARM_PASS -> playAt(SoundId.FOREARM_PASS, at, contact * (0.57f + 0.34f * clamp01(speed / 14f)), variedPitch(0.035f));
+            case OVERHEAD_PASS, ONE_HAND_SET -> playAt(SoundId.OVERHEAD_SET, at, contact * 0.58f, variedPitch(0.04f));
         }
     }
 
@@ -148,7 +179,11 @@ public final class SoundDirector implements BallTouchListener, BallContactListen
         Vector3 at = contact.position();
         switch (contact.kind()) {
             case FLOOR -> {
-                if (speed > 0.8f) playAt(SoundId.BALL_FLOOR, at, clamp01(speed / 12f), variedPitch(0.05f) * (0.9f + 0.1f * clamp01(speed / 10f)));
+                if (speed > 0.8f) {
+                    boolean sand = venue == Venue.BEACH;
+                    playAt(sand ? SoundId.BALL_SAND : SoundId.BALL_FLOOR, at, clamp01(speed / 10f) * (sand ? 0.72f : 1f),
+                            variedPitch(0.035f) * (0.94f + 0.06f * clamp01(speed / 10f)));
+                }
             }
             case NET_MESH, NET_BAND -> {
                 if (speed > 0.5f) playAt(SoundId.BALL_NET, at, 0.3f + 0.7f * clamp01(speed / 12f), variedPitch(0.08f));
@@ -228,37 +263,40 @@ public final class SoundDirector implements BallTouchListener, BallContactListen
             }
         }
         float crowd = matchActive ? CROWD_BASE + (rallyLive ? 0.18f * clamp01(rallyTime / 10f) : 0f) : CROWD_PRACTICE;
-        sink.setLoop(SoundId.CROWD_AMBIENT, menuOpen ? crowd * 0.4f : crowd);
-        sink.setLoop(SoundId.MENU_MUSIC, menuOpen ? 0.6f : 0f);
+        sink.setLoop(SoundId.CROWD_AMBIENT, menuOpen || paused ? crowd * 0.4f : crowd);
+        sink.setLoop(SoundId.MENU_MUSIC, menuOpen ? 0.5f : 0f);
     }
 
     private void trackPlayer(VolleyballPlayer p, float dt) {
         PlayerTrack track = tracks.get(p.id);
         if (track == null) return;
-        if (track.airborne && !p.isAirborne()) playAt(SoundId.LANDING, p.position, 0.45f, variedPitch(0.1f));
+        if (track.airborne && !p.isAirborne()) {
+            playAt(venue == Venue.BEACH ? SoundId.LANDING_SAND : SoundId.LANDING, p.position, 0.39f, variedPitch(0.04f));
+        }
+        if (!track.airborne && p.isAirborne() && p.isUpright()) {
+            playAt(venue == Venue.BEACH ? SoundId.FOOTSTEP_SAND : SoundId.JUMP_TAKEOFF, p.position, 0.19f, variedPitch(0.04f));
+        }
         if (p.bodyState() == BodyState.ON_FLOOR && track.bodyState == BodyState.DIVING) {
-            playAt(SoundId.BODY_FALL, p.position, 0.75f, variedPitch(0.08f));
+            playAt(venue == Venue.BEACH ? SoundId.LANDING_SAND : SoundId.BODY_FALL, p.position, 0.68f, variedPitch(0.05f));
         }
         // Sharp stops and cuts make the shoes squeak.
         float vx = p.velocity.x;
         float vz = p.velocity.z;
         float change = (float) Math.hypot(vx - track.vx, vz - track.vz);
         float speed = (float) Math.hypot(track.vx, track.vz);
-        if (!p.isAirborne() && p.isUpright() && speed > 1.5f && change / dt > SQUEAK_DECELERATION
+        float groundSpeed = (float) Math.hypot(vx, vz);
+        boolean planted = track.gait.advance(p.strideDistance(), groundSpeed);
+        float range = clamp01((23f - listener.dst(p.position)) / 12f);
+        if (planted && p.isOnCourt() && !p.isAirborne() && !track.airborne && p.isUpright() && groundSpeed > 0.55f && range > 0f) {
+            float level = 0.11f + 0.13f * clamp01(groundSpeed / 6f);
+            float pitch = venue == Venue.SPORTS_PALACE ? 0.94f : 1f;
+            playAt(footstep, p.position, level * range, pitch * variedPitch(0.035f));
+        }
+        if (!venue.outdoor && p.isOnCourt() && !p.isAirborne() && p.isUpright() && speed > 2f && change / dt > SQUEAK_DECELERATION
                 && clock - track.lastSqueak > SQUEAK_INTERVAL && random.nextFloat() < 0.5f) {
             track.lastSqueak = clock;
-            playAt(SoundId.SHOE_SQUEAK, p.position, 0.25f + 0.2f * clamp01(speed / 6f), variedPitch(0.12f));
+            playAt(SoundId.SHOE_SQUEAK, p.position, range * (0.12f + 0.18f * clamp01(speed / 6f)), variedPitch(0.07f));
         }
-        // "Mine!": the first player of a team going for the opponent's ball calls it.
-        BallHandling handling = world.ballHandling();
-        boolean armed = handling.isArmed(p);
-        if (armed && !track.armed && handling.lastTouchSide() != p.side && handling.lastTouchSide() != null
-                && world.ball().isActive() && CourtDimensions.sideOf(world.ball().position.x) == p.side
-                && calledToucher != handling.lastToucherId() && random.nextFloat() < 0.7f) {
-            calledToucher = handling.lastToucherId();
-            voice(SoundId.CALL, p, 0.55f);
-        }
-        track.armed = armed;
         track.airborne = p.isAirborne();
         track.bodyState = p.bodyState();
         track.vx = vx;
@@ -285,9 +323,11 @@ public final class SoundDirector implements BallTouchListener, BallContactListen
     }
 
     private void play(SoundId id, float volume, float pitch, float pan) {
-        Float last = lastPlayed.get(id);
-        if (last != null && clock - last < REPEAT_GUARD) return;
-        lastPlayed.put(id, clock);
+        if (id != footstep) {
+            Float last = lastPlayed.get(id);
+            if (last != null && clock - last < REPEAT_GUARD) return;
+            lastPlayed.put(id, clock);
+        }
         sink.play(id, clamp01(volume), Math.max(0.5f, Math.min(2f, pitch)), Math.max(-1f, Math.min(1f, pan)));
     }
 

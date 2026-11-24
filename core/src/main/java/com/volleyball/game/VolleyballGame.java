@@ -151,9 +151,11 @@ public class VolleyballGame extends Game {
             dumpTimer = 0f;
             dumpMissingTexts();
         }
-        // Global keys work on every screen.
+        // Settings own input while their draft is open.
+        boolean editingSettings = (getScreen() instanceof MatchScreen match && match.isSettingsOpen())
+                || (getScreen() instanceof MainMenuScreen menu && menu.isSettingsOpen());
         boolean alt = Gdx.input.isKeyPressed(Input.Keys.ALT_LEFT) || Gdx.input.isKeyPressed(Input.Keys.ALT_RIGHT);
-        if (Gdx.input.isKeyJustPressed(Input.Keys.F11) || (alt && Gdx.input.isKeyJustPressed(Input.Keys.ENTER))) {
+        if (!editingSettings && (Gdx.input.isKeyJustPressed(Input.Keys.F11) || (alt && Gdx.input.isKeyJustPressed(Input.Keys.ENTER)))) {
             toggleFullscreen();
         }
         if (pendingScreen != null) {
