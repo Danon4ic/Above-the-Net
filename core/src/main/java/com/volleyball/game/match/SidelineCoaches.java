@@ -91,6 +91,7 @@ public final class SidelineCoaches {
             VolleyballPlayer c = coaches[i];
             float sign = c.side.sign();
             c.previousPosition.set(c.position);
+            c.beginStrideStep();
             c.previousFacingYaw = c.facingYaw;
             c.tickActionPose(dt);
             reactTimer[i] = Math.max(0f, reactTimer[i] - dt);

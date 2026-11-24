@@ -12,21 +12,14 @@ import com.volleyball.game.entities.VolleyballPlayer;
  */
 public enum FallKind {
     /** Chest-first, flat and long: the libero's and the digger's dive. */
-    SPRAWL(1f),
+    SPRAWL,
     /** Down through the front knee, the trunk forwards, the arms reaching for the floor. */
-    KNEE_DROP(0.55f),
+    KNEE_DROP,
     /** Sideways onto the hip, the back and over the shoulder. */
-    SIDE_ROLL(1f);
+    SIDE_ROLL;
 
     /** Defence rating from which a player dives like a specialist. */
     public static final int SPECIALIST_DEFENCE = 70;
-
-    /** How far the whole body tips over (1 = flat on the floor). */
-    public final float tilt;
-
-    FallKind(float tilt) {
-        this.tilt = tilt;
-    }
 
     /** The fall of {@code p}, decided when the dive starts. */
     public static FallKind of(VolleyballPlayer p) {

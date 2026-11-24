@@ -68,7 +68,7 @@ public final class SoundDirector implements BallTouchListener, BallContactListen
         float vx;
         float vz;
         float lastSqueak = -10f;
-        final GaitCycle gait = new GaitCycle();
+        float strideCycles = Float.NaN;
         /** Each player has a voice pitch of their own. */
         float voicePitch;
     }
@@ -285,7 +285,9 @@ public final class SoundDirector implements BallTouchListener, BallContactListen
         float change = (float) Math.hypot(vx - track.vx, vz - track.vz);
         float speed = (float) Math.hypot(track.vx, track.vz);
         float groundSpeed = (float) Math.hypot(vx, vz);
-        boolean planted = track.gait.advance(p.strideDistance(), groundSpeed);
+        float cycles = p.strideCycles();
+        boolean planted = !Float.isNaN(track.strideCycles) && GaitCycle.crossedFootfall(track.strideCycles, cycles);
+        track.strideCycles = cycles;
         float range = clamp01((23f - listener.dst(p.position)) / 12f);
         if (planted && p.isOnCourt() && !p.isAirborne() && !track.airborne && p.isUpright() && groundSpeed > 0.55f && range > 0f) {
             float level = 0.11f + 0.13f * clamp01(groundSpeed / 6f);

@@ -34,7 +34,7 @@ import java.util.List;
 public final class PoseGalleryScreen extends ScreenAdapter {
     private static final String[] LABELS = {
             "idle", "run forward", "side shuffle", "backpedal", "ready stance", "celebrate", "block ready",
-            "forearm pass", "overhead set", "spike", "serve", "block jump", "dive (sprawl)", "side fall + roll",
+            "forearm pass", "jump set", "back-row spike", "serve", "block jump", "forward dive", "side fall + roll",
             "dive (knee drop)"};
     /** The action loops run at this speed (1 = real time). */
     private static final float LOOP_SPEED = 0.6f;
@@ -95,6 +95,11 @@ public final class PoseGalleryScreen extends ScreenAdapter {
             VolleyballPlayer p = players.get(focus);
             camera.position.set(p.position.x - 4.2f, 1.9f, p.position.z - 2.2f);
             camera.direction.set(4.2f, -0.25f, 2.2f).nor();
+            if (focus >= 12) {
+                float side = p.diveDirection.z;
+                camera.position.set(p.position.x - 3.5f, 1.5f, p.position.z - side * 0.4f);
+                camera.direction.set(3.5f, -0.65f, side * 0.9f).nor();
+            }
         } else {
             camera.position.set(-16f, 4.4f, 0f);
             camera.direction.set(11.5f, -3.5f, 0f).nor();
@@ -103,7 +108,9 @@ public final class PoseGalleryScreen extends ScreenAdapter {
         camera.update();
 
         renderer.setBlobShadows(!scene.quality().arenaShader);
-        scene.setOccluders(players.subList(0, shown), new com.volleyball.game.entities.Ball());
+        boolean closeup = focus >= 0 && focus < shown;
+        scene.setOccluders(closeup ? List.of(players.get(focus)) : players.subList(0, shown),
+                new com.volleyball.game.entities.Ball());
         int count = shown;
         scene.render(camera, (batch, environment, mirror) -> {
             if (mirror) {
@@ -113,10 +120,12 @@ public final class PoseGalleryScreen extends ScreenAdapter {
             renderer.setAppending(false);
             renderer.setAppending(true);
             for (int i = 0; i < count; i++) {
+                if (closeup && i != focus) continue;
                 renderer.render(batch, environment, List.of(players.get(i)), 1f, null, lookAt[i]);
             }
             VolleyballPlayer server = players.get(10);
-            if (count > 10 && server.actionPose() == ActionPose.HOLD_BALL && renderer.heldBallPoint(server, heldAt) != null) {
+            if ((!closeup || focus == 10) && count > 10 && server.actionPose() == ActionPose.HOLD_BALL
+                    && renderer.heldBallPoint(server, heldAt) != null) {
                 ballRenderer.setHeldAt(heldAt);
                 ballRenderer.render(batch, environment, heldBall, 1f, null, false);
             }
@@ -141,8 +150,10 @@ public final class PoseGalleryScreen extends ScreenAdapter {
         int row = i / 7;
         int column = i % 7;
         float x = row == 0 ? -6.0f : -9.2f;
+        if (i == 9) x = -8.5f;
         float z = row == 0 ? -6.0f + column * 2.0f : -4.8f + column * 1.6f;
         p.position.set(x, 0f, z);
+        p.beginStrideStep();
         p.previousPosition.set(p.position);
         p.velocity.setZero();
         p.setAirborne(false);
@@ -156,10 +167,16 @@ public final class PoseGalleryScreen extends ScreenAdapter {
         // Close-ups run slower, so every phase of a movement can be seen.
         float t = time * (focus >= 0 ? LOOP_SPEED * 0.5f : LOOP_SPEED);
         switch (i) {
-            case 1 -> run(p, yaw + 0.5f, 4.5f, 0f, delta);
+            case 1 -> {
+                float cycle = t % 2.7f;
+                float speed = cycle < 0.7f ? 1.4f * cycle / 0.7f
+                        : cycle < 1.65f ? 1.4f + 4.7f * (cycle - 0.7f) / 0.95f
+                        : 6.1f * Math.max(0f, 1f - (cycle - 1.65f) / 0.55f);
+                run(p, yaw, speed, 0f, delta);
+            }
             case 2 -> {
                 p.setCrouching(true);
-                run(p, yaw, 0f, 2.2f, delta);
+                run(p, yaw, 0f, 2.6f * MathUtils.sin(t * MathUtils.PI), delta);
             }
             case 3 -> run(p, yaw, -2.5f, 0f, delta);
             case 4 -> p.setCrouching(true);
@@ -173,10 +190,10 @@ public final class PoseGalleryScreen extends ScreenAdapter {
                 lookAt[i].set(4f, 2.5f, 3.5f);
                 yaw = 0f;
             }
-            case 7 -> contactLoop(p, t, ActionPose.PLATFORM, 0.9f);
+            case 7 -> contactLoop(p, t, ActionPose.PLATFORM);
             case 8 -> {
-                contactLoop(p, t, ActionPose.OVERHEAD, 2.2f);
-                lookAt[i].set(x - 0.5f, 2.6f, z);
+                jumpSetLoop(p, t);
+                lookAt[i].set(x - 0.5f, 2.8f, z);
             }
             case 9 -> spikeLoop(p, t, x, z, i);
             case 10 -> serveLoop(p, t, x, z, i);
@@ -192,7 +209,8 @@ public final class PoseGalleryScreen extends ScreenAdapter {
             }
             case 13 -> {
                 // Sideways to the free end of the row.
-                p.diveDirection.set(0f, 0f, 1f);
+                float direction = focus == i && ((int) ((t + 0.6f) / 1.8f) & 1) != 0 ? -1f : 1f;
+                p.diveDirection.set(0f, 0f, direction);
                 p.setDiveRoll(true);
                 diveLoop(p, t + 0.6f);
             }
@@ -207,6 +225,14 @@ public final class PoseGalleryScreen extends ScreenAdapter {
             default -> {
             }
         }
+        if (focus == i && i >= 12) {
+            float cycle = p.bodyStateTime();
+            float flight = p.bodyState() == BodyState.DIVING ? cycle : PlayerLocomotion.DIVE_TIME;
+            float slide = p.bodyState() == BodyState.ON_FLOOR ? cycle : p.bodyState() == BodyState.DIVING ? 0f : PlayerLocomotion.FLOOR_TIME;
+            float distance = 3f * flight + 0.45f * (1f - (float) Math.exp(-7f * slide));
+            p.position.mulAdd(p.diveDirection, distance);
+            p.previousPosition.set(p.position);
+        }
         if (i < 5 || i == 6) p.setActionPose(ActionPose.NONE, 0f);
         else if (i < 12) p.tickActionPose(delta * LOOP_SPEED);
         p.facingYaw = yaw;
@@ -214,13 +240,31 @@ public final class PoseGalleryScreen extends ScreenAdapter {
     }
 
     /** Ready (held pose), the contact, follow-through and a pause: 1.6 s. */
-    private static void contactLoop(VolleyballPlayer p, float t, ActionPose pose, float ballHeight) {
+    private static void contactLoop(VolleyballPlayer p, float t, ActionPose pose) {
         float cycle = t % 1.6f;
         if (cycle < 0.8f) {
             p.setCrouching(pose == ActionPose.PLATFORM);
             p.holdActionPose(pose);
         } else if (p.isActionPoseHeld()) {
             p.setActionPose(pose, 0.35f);
+        }
+    }
+
+    private static void jumpSetLoop(VolleyballPlayer p, float t) {
+        float cycle = t % 1.8f;
+        float takeoff = 0.4f;
+        float vy0 = 3.1f;
+        float flight = 2f * vy0 / PhysicsConstants.GRAVITY;
+        if (cycle < takeoff) {
+            if (p.actionPose() != ActionPose.NONE) p.setActionPose(ActionPose.NONE, 0f);
+            p.setJumpCharge(cycle / takeoff);
+        } else if (cycle < takeoff + flight) {
+            float elapsed = cycle - takeoff;
+            p.setAirborne(true);
+            p.velocity.y = vy0 - PhysicsConstants.GRAVITY * elapsed;
+            p.position.y = vy0 * elapsed - 0.5f * PhysicsConstants.GRAVITY * elapsed * elapsed;
+            if (elapsed < flight * 0.5f) p.holdActionPose(ActionPose.OVERHEAD);
+            else if (p.isActionPoseHeld()) p.setActionPose(ActionPose.OVERHEAD, 0.35f);
         }
     }
 
@@ -255,7 +299,9 @@ public final class PoseGalleryScreen extends ScreenAdapter {
             if (p.actionPose() == ActionPose.SWING) p.setActionPose(ActionPose.NONE, 0f);
         } else if (cycle < takeoff + flight) {
             float a = cycle - takeoff;
+            p.recordTakeoff();
             p.setAirborne(true);
+            p.velocity.x = -2.2f;
             p.velocity.y = vy0 - PhysicsConstants.GRAVITY * a;
             p.position.y = vy0 * a - 0.5f * PhysicsConstants.GRAVITY * a * a;
             // Hit just after the top of the jump.

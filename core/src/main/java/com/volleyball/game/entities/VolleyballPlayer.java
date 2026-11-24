@@ -31,8 +31,9 @@ public final class VolleyballPlayer {
     private boolean crouching;
     /** Time left before the player can move freely again (after landing, diving, falling...). */
     private float recoveryTime;
-    /** Total ground distance covered, used to phase the running animation. */
-    private float strideDistance;
+    /** Shared footfall phase advanced by the simulation and stored in match replays. */
+    private float strideCycles;
+    private float previousStrideCycles;
     private ActionPose actionPose = ActionPose.NONE;
     /** Seconds the current action pose has been held. */
     private float actionPoseTime;
@@ -130,6 +131,7 @@ public final class VolleyballPlayer {
     public void placeAt(float x, float z) {
         position.set(x, 0f, z);
         previousPosition.set(position);
+        beginStrideStep();
         velocity.setZero();
         airborne = false;
         recoveryTime = 0f;
@@ -186,12 +188,27 @@ public final class VolleyballPlayer {
         recoveryTime = Math.max(0f, recoveryTime - dt);
     }
 
-    public float strideDistance() {
-        return strideDistance;
+    public float strideCycles() {
+        return strideCycles;
+    }
+
+    public float strideCycles(float alpha) {
+        return MathUtils.lerp(previousStrideCycles, strideCycles, alpha);
+    }
+
+    public void beginStrideStep() {
+        previousStrideCycles = strideCycles;
     }
 
     public void addStride(float distance) {
-        strideDistance += distance;
+        strideCycles += distance / strideLength();
+    }
+
+    public float strideLength() {
+        float speed = groundSpeed();
+        float side = Math.abs(velocity.z * facingX() - velocity.x * facingZ());
+        float sideways = MathUtils.clamp((side / Math.max(0.01f, speed) - 0.6f) / 0.4f, 0f, 1f);
+        return GaitCycle.strideLength(speed) * (1f - 0.29f * sideways);
     }
 
     /** Starts an action pose (e.g. a swing) that plays for the given time. */
@@ -379,7 +396,8 @@ public final class VolleyballPlayer {
         boolean airborne;
         boolean crouching;
         float recoveryTime;
-        float strideDistance;
+        float strideCycles;
+        float previousStrideCycles;
         ActionPose actionPose = ActionPose.NONE;
         float actionPoseTime;
         float actionPoseDuration;
@@ -408,7 +426,8 @@ public final class VolleyballPlayer {
             while (d < -Math.PI) d += (float) (Math.PI * 2.0);
             facingYaw = a.facingYaw + d * t;
             previousFacingYaw = facingYaw;
-            strideDistance = a.strideDistance + (b.strideDistance - a.strideDistance) * t;
+            strideCycles = MathUtils.lerp(a.strideCycles, b.strideCycles, t);
+            previousStrideCycles = strideCycles;
             if (a.actionPose == b.actionPose) actionPoseTime = a.actionPoseTime + (b.actionPoseTime - a.actionPoseTime) * t;
             if (a.bodyState == b.bodyState) bodyStateTime = a.bodyStateTime + (b.bodyStateTime - a.bodyStateTime) * t;
             blockPenetration = a.blockPenetration + (b.blockPenetration - a.blockPenetration) * t;
@@ -423,7 +442,8 @@ public final class VolleyballPlayer {
             airborne = o.airborne;
             crouching = o.crouching;
             recoveryTime = o.recoveryTime;
-            strideDistance = o.strideDistance;
+            strideCycles = o.strideCycles;
+            previousStrideCycles = o.previousStrideCycles;
             actionPose = o.actionPose;
             actionPoseTime = o.actionPoseTime;
             actionPoseDuration = o.actionPoseDuration;
@@ -452,7 +472,8 @@ public final class VolleyballPlayer {
         out.airborne = airborne;
         out.crouching = crouching;
         out.recoveryTime = recoveryTime;
-        out.strideDistance = strideDistance;
+        out.strideCycles = strideCycles;
+        out.previousStrideCycles = previousStrideCycles;
         out.actionPose = actionPose;
         out.actionPoseTime = actionPoseTime;
         out.actionPoseDuration = actionPoseDuration;
@@ -480,7 +501,8 @@ public final class VolleyballPlayer {
         airborne = in.airborne;
         crouching = in.crouching;
         recoveryTime = in.recoveryTime;
-        strideDistance = in.strideDistance;
+        strideCycles = in.strideCycles;
+        previousStrideCycles = in.previousStrideCycles;
         actionPose = in.actionPose;
         actionPoseTime = in.actionPoseTime;
         actionPoseDuration = in.actionPoseDuration;

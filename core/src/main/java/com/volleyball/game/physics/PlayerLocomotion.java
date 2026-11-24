@@ -123,6 +123,7 @@ public final class PlayerLocomotion {
 
     public void update(VolleyballPlayer player, MoveIntent intent, float dt) {
         player.previousPosition.set(player.position);
+        player.beginStrideStep();
         player.previousFacingYaw = player.facingYaw;
         player.tickRecovery(dt);
         player.tickBodyState(dt);
