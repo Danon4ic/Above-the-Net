@@ -51,14 +51,15 @@ class PlayerLocomotionTest {
     }
 
     @Test
-    void aTiredPlayerRunsALittleSlower() {
+    void aTiredPlayerRunsSlowerButCanStillMove() {
         VolleyballPlayer p = player(1, CourtSide.HOME, 80, 50);
         p.setStamina(0.2f);
         MoveIntent intent = new MoveIntent();
         intent.direction.set(0f, 1f);
         run(p, intent, 2f);
         float top = PlayerLocomotion.maxRunSpeed(p.attributes);
-        assertTrue(p.groundSpeed() < top * 0.95f && p.groundSpeed() > top * 0.85f, "tired: " + p.groundSpeed() + " of " + top);
+        assertTrue(p.groundSpeed() < top * 0.83f && p.groundSpeed() > top * 0.75f, "tired: " + p.groundSpeed() + " of " + top);
+        assertEquals(PlayerLocomotion.maxRunSpeed(p), p.groundSpeed(), 1e-3f);
     }
 
     @Test

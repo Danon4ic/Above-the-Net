@@ -14,8 +14,21 @@ public interface SoundSink {
      */
     void play(SoundId id, float volume, float pitch, float pan);
 
+    /** Plays a specific take, or selects one normally when take is negative. */
+    default void playTake(SoundId id, int take, float volume, float pitch, float pan) {
+        play(id, volume, pitch, pan);
+    }
+
     /** Starts, adjusts or (at volume 0) stops a looping sound. */
     void setLoop(SoundId id, float volume);
+
+    /** Momentarily makes room for a whistle or a strong contact on the crowd channel. */
+    default void duckCrowd(float gain, float duration) {
+    }
+
+    /** Plays a quieter return of a court sound, without advancing its bank. */
+    default void reflect(SoundId id, int take, float volume, float pitch, float pan) {
+    }
 
     SoundSink SILENT = new SoundSink() {
         @Override

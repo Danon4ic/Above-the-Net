@@ -8,5 +8,13 @@ package com.volleyball.game.entities;
  * underhand serve swings from below.
  */
 public enum SwingStyle {
-    POWER, CUT, ROLL, TIP, TOOL, FLOAT_SERVE, TOPSPIN_SERVE, UNDERHAND_SERVE
+    POWER, CUT, ROLL, TIP, TOOL, FLOAT_SERVE, TOPSPIN_SERVE, UNDERHAND_SERVE, JUMP_FLOAT_SERVE, JUMP_TOPSPIN_SERVE;
+
+    public boolean jumpServe() {
+        return this == JUMP_FLOAT_SERVE || this == JUMP_TOPSPIN_SERVE;
+    }
+
+    public boolean serve() {
+        return jumpServe() || this == FLOAT_SERVE || this == TOPSPIN_SERVE || this == UNDERHAND_SERVE;
+    }
 }

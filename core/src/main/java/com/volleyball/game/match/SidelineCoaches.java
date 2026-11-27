@@ -148,7 +148,7 @@ public final class SidelineCoaches {
             boolean won = (i == 0) == homeWon;
             // Not after every point: a coach reacts to about half of them.
             if (random.nextFloat() > (won ? 0.7f : 0.45f)) continue;
-            coaches[i].setActionPose(won ? ActionPose.CELEBRATE : ActionPose.OVERHEAD, won ? 1.4f : 1.0f);
+            coaches[i].setActionPose(won ? ActionPose.CELEBRATE : ActionPose.DISAPPOINTED, won ? 1.4f : 1.0f);
             reactTimer[i] = won ? 1.4f : 1.0f;
         }
     }

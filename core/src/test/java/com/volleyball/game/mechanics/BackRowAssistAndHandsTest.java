@@ -80,7 +80,9 @@ class BackRowAssistAndHandsTest {
         assertEquals(SwingStyle.CUT, BallHandling.swingFor(AttackType.CUT));
         assertEquals(SwingStyle.TIP, BallHandling.swingFor(AttackType.TIP));
         assertEquals(SwingStyle.FLOAT_SERVE, BallHandling.swingFor(ServeType.FLOAT));
-        assertEquals(SwingStyle.TOPSPIN_SERVE, BallHandling.swingFor(ServeType.JUMP_TOPSPIN));
+        assertEquals(SwingStyle.TOPSPIN_SERVE, BallHandling.swingFor(ServeType.POWER));
+        assertEquals(SwingStyle.JUMP_TOPSPIN_SERVE, BallHandling.swingFor(ServeType.JUMP_TOPSPIN));
+        assertEquals(SwingStyle.JUMP_FLOAT_SERVE, BallHandling.swingFor(ServeType.JUMP_FLOAT));
         assertEquals(SwingStyle.UNDERHAND_SERVE, BallHandling.swingFor(ServeType.UNDERHAND));
         // A real contact sets it on the hitter.
         Harness h = new Harness(11);

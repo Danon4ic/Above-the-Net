@@ -190,6 +190,24 @@ public final class MatchSession {
         return true;
     }
 
+    public void chooseRemoteRole(PlayerRole role, RotationManager rotation) {
+        Slot remote = slot(1);
+        if (remote == null || remote.controller != ControllerKind.REMOTE) return;
+        var team = remote.side == CourtSide.HOME ? world.home() : world.away();
+        for (VolleyballPlayer p : team.squad()) {
+            if (p.role == role && (p.isOnCourt() || p.role == PlayerRole.LIBERO
+                    || rotation.slotZone(remote.side, p.id) > 0) && assign(1, p)) return;
+        }
+    }
+
+    /** Slot identities in the presentation world are set together, including simultaneous replacements. */
+    public void presentPlayers(VolleyballPlayer first, VolleyballPlayer second) {
+        if (first == null || second == null || first == second || slots.size() != 2) return;
+        if (first.side != slots.get(0).side || second.side != slots.get(1).side) return;
+        slots.get(0).player = first;
+        slots.get(1).player = second;
+    }
+
     /** The slot's next player on its team, skipping players held by the other person (co-op). */
     public VolleyballPlayer switchPlayer(int index) {
         Slot slot = slot(index);

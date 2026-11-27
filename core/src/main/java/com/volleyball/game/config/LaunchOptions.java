@@ -21,16 +21,19 @@ import java.util.Locale;
  * @param capture     developer aid: directory to save screenshots to ({@code --capture=DIR}), or null
  * @param captureAt   when to save them, seconds after the start ({@code --capture-at=1.5,2,2.5}), or null
  * @param camera      camera a match starts with for this run ({@code --camera=sideline}, a {@code CameraMode} name), or null
+ * @param modelStudy  show the same three players in fixed comparison views
  */
 public record LaunchOptions(String drill, boolean autoplay, boolean poseGallery, String difficulty, String players, String role,
                             int poseFocus, String venue, boolean playbook, String home, String away, String language, Long seed,
-                            String capture, String captureAt, String camera) {
-    public static final LaunchOptions DEFAULT = new LaunchOptions(null, false, false, null, null, null, -1, null, false, null, null, null, null, null, null, null);
+                            String capture, String captureAt, String camera, boolean modelStudy,
+                            Integer hostPort, String joinAddress, int matchPoints) {
+    public static final LaunchOptions DEFAULT = new LaunchOptions(null, false, false, null, null, null, -1, null, false, null, null, null, null, null, null, null, false, null, null, 0);
 
     public static LaunchOptions parse(String[] args) {
         String drill = null;
         boolean autoplay = false;
         boolean poseGallery = false;
+        boolean modelStudy = false;
         String difficulty = null;
         String players = null;
         String role = null;
@@ -44,6 +47,9 @@ public record LaunchOptions(String drill, boolean autoplay, boolean poseGallery,
         String capture = null;
         String captureAt = null;
         String camera = null;
+        Integer hostPort = null;
+        String joinAddress = null;
+        int matchPoints = 0;
         if (args != null) {
             for (String arg : args) {
                 if (arg == null) continue;
@@ -55,6 +61,10 @@ public record LaunchOptions(String drill, boolean autoplay, boolean poseGallery,
                 String a = arg.trim().toLowerCase(Locale.ROOT);
                 if (a.equals("--autoplay") || a.equals("--demo")) autoplay = true;
                 else if (a.equals("--pose-gallery")) poseGallery = true;
+                else if (a.equals("--model-study")) {
+                    modelStudy = true;
+                    poseGallery = true;
+                }
                 else if (a.equals("--playbook")) playbook = true;
                 else if (a.startsWith("--drill=")) drill = a.substring("--drill=".length()).toUpperCase(Locale.ROOT);
                 else if (a.startsWith("--difficulty=")) difficulty = a.substring("--difficulty=".length());
@@ -73,6 +83,24 @@ public record LaunchOptions(String drill, boolean autoplay, boolean poseGallery,
                 else if (a.startsWith("--capture-at=")) captureAt = a.substring("--capture-at=".length());
                 else if (a.startsWith("--camera=")) camera = a.substring("--camera=".length()).toUpperCase(Locale.ROOT);
                 else if (a.startsWith("--venue=")) venue = a.substring("--venue=".length()).toUpperCase(Locale.ROOT);
+                else if (a.equals("--host")) hostPort = com.volleyball.game.net.UdpTransport.DEFAULT_PORT;
+                else if (a.startsWith("--host=")) {
+                    try {
+                        int port = Integer.parseInt(a.substring(7));
+                        if (port > 0 && port <= 65535) hostPort = port;
+                    } catch (NumberFormatException ignored) {
+                        // Invalid CLI option.
+                    }
+                }
+                else if (a.startsWith("--join=")) joinAddress = arg.trim().substring(7);
+                else if (a.startsWith("--match-points=")) {
+                    try {
+                        int points = Integer.parseInt(a.substring(15));
+                        if (points >= 2 && points <= 25) matchPoints = points;
+                    } catch (NumberFormatException ignored) {
+                        // Keep the normal match format.
+                    }
+                }
                 else if (a.startsWith("--pose-focus=")) {
                     poseGallery = true;
                     try {
@@ -83,6 +111,6 @@ public record LaunchOptions(String drill, boolean autoplay, boolean poseGallery,
                 }
             }
         }
-        return new LaunchOptions(drill, autoplay, poseGallery, difficulty, players, role, poseFocus, venue, playbook, home, away, language, seed, capture, captureAt, camera);
+        return new LaunchOptions(drill, autoplay, poseGallery, difficulty, players, role, poseFocus, venue, playbook, home, away, language, seed, capture, captureAt, camera, modelStudy, hostPort, joinAddress, matchPoints);
     }
 }

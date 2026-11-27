@@ -34,5 +34,11 @@ class JumpMotionTest {
         assertTrue(pose[JumpMotion.LEFT_ANKLE] - pose[JumpMotion.RIGHT_ANKLE] > 0.2f);
         JumpMotion.LANDING.sample(0.3f, pose);
         assertTrue(pose[JumpMotion.COMPRESSION] > 0.05f);
+        JumpMotion.JUMP_FLOAT_SERVE.sample(0.5f, pose);
+        assertTrue(Math.abs(pose[JumpMotion.LEFT_ANKLE] - pose[JumpMotion.RIGHT_ANKLE]) < 0.12f);
+        JumpMotion.JUMP_TOPSPIN_SERVE.sample(0.5f, pose);
+        assertTrue(pose[JumpMotion.LEFT_ANKLE] - pose[JumpMotion.RIGHT_ANKLE] > 0.36f);
+        JumpMotion.QUICK_SET.sample(0.5f, pose);
+        assertEquals(pose[JumpMotion.LEFT_ARM], pose[JumpMotion.RIGHT_ARM], 0.001f);
     }
 }

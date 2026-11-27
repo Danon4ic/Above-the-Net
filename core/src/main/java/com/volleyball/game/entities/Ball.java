@@ -75,6 +75,11 @@ public final class Ball {
         timeSinceHit += dt;
     }
 
+    public void presentFlight(float age, long seed) {
+        timeSinceHit = age;
+        flightSeed = seed;
+    }
+
     public float speed() {
         return velocity.len();
     }

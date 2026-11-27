@@ -7,6 +7,7 @@ import com.volleyball.game.entities.VolleyballPlayer;
 import com.volleyball.game.mechanics.BallHandling;
 import com.volleyball.game.mechanics.BlockStyle;
 import com.volleyball.game.mechanics.TacticalTargets;
+import com.volleyball.game.physics.PlayerLocomotion;
 import com.volleyball.game.physics.TrajectoryPredictor;
 import com.volleyball.game.rules.RotationManager;
 import com.volleyball.game.simulation.GameWorld;
@@ -74,6 +75,9 @@ final class TeamDefense {
     private boolean blockReady;
     private HabitRead habit = HabitRead.NONE;
     private boolean formationActive;
+    private boolean lineSealed;
+    private boolean crossSealed;
+    private boolean lateClose;
     /** Lateral position (team frame) of the expected attack, for the formation. */
     private float hitLateral;
     /** The scheme now played (for the AI view and the off-blocker). */
@@ -142,7 +146,6 @@ final class TeamDefense {
         float readDelay = difficulty.readsPlay ? 0.05f : difficulty.meaningfulBlock ? 0.25f : 0.45f;
         blockReady = now - lastTouchAt >= readDelay;
         habit = habitOfHitter();
-        planFormation(rotation, court, attackComing && opponentTouches >= 2, humans);
         offBlockers.clear();
         if (opponentHas) {
             for (VolleyballPlayer p : court) {
@@ -151,6 +154,34 @@ final class TeamDefense {
             // Left to right (team frame): each one keeps its own side of the court.
             offBlockers.sort((a, b) -> Float.compare(lateral(a.position.z), lateral(b.position.z)));
         }
+        readBlock(court, rotation, attackComing && opponentTouches >= 2);
+        planFormation(rotation, court, attackComing && opponentTouches >= 2, humans);
+    }
+
+    /** Read the hands and the approach to the block before allocating the open lanes. */
+    private void readBlock(List<VolleyballPlayer> court, RotationManager rotation, boolean attackComing) {
+        lineSealed = false;
+        crossSealed = false;
+        lateClose = false;
+        if (!attackComing || !difficulty.meaningfulBlock || Math.abs(setRead.descentPoint.z) < 1.2f) return;
+        int closing = 0;
+        float contactZ = setRead.descentPoint.z;
+        for (VolleyballPlayer p : court) {
+            if (!rotation.isFrontRow(side, p.id) || !p.isUpright() || p.role == PlayerRole.LIBERO) continue;
+            int slot = block.indexOf(p);
+            float targetZ = contactZ + (slot < 0 ? 0f : blockOffsets[slot]);
+            boolean handsUp = p.isBlocking() && Math.abs(p.position.z + p.blockShift() - contactZ) < 0.95f;
+            float timeToPlant = setRead.timeToDescent - PlayerLocomotion.riseTime(PlayerLocomotion.jumpHeight(p));
+            float travel = PlayerLocomotion.maxRunSpeed(p) * Math.max(0f, timeToPlant - (blockReady ? 0.05f : 0.18f));
+            boolean canClose = slot >= 0 && !p.isAirborne() && Math.abs(p.position.x) < 1.15f
+                    && Math.abs(p.position.z - targetZ) <= 0.44f + travel;
+            if (!handsUp && !canClose) continue;
+            closing++;
+            BlockStyle style = slot >= 0 ? blockStyle(p) : world.ballHandling().blockStyle(p);
+            lineSealed |= style == BlockStyle.LINE;
+            crossSealed |= style == BlockStyle.CROSS;
+        }
+        lateClose = closing < 2 && setRead.timeToDescent < 0.72f;
     }
 
     /** Front-row players who do not block this step (people included), left to right. */
@@ -263,7 +294,7 @@ final class TeamDefense {
             for (VolleyballPlayer o : offBlockers) {
                 if (Math.abs(lateral(o.position.z) - hitLateral) < Math.abs(lateral(nearest.position.z) - hitLateral)) nearest = o;
             }
-            if (formationActive && scheme.tipCover && p == nearest) {
+            if (formationActive && (scheme.tipCover || lateClose) && p == nearest) {
                 lateral = hitLateral * 0.5f;
                 depth = 2.3f;
             } else {
@@ -273,7 +304,7 @@ final class TeamDefense {
             }
             return TacticalTargets.teamPoint(side, depth, lateral, 0f, target);
         }
-        if (formationActive && scheme.tipCover) {
+        if (formationActive && (scheme.tipCover || lateClose)) {
             // Covering the block: right behind it, for tips and deflections.
             lateral = hitLateral * 0.5f;
             depth = 2.3f;
@@ -361,6 +392,18 @@ final class TeamDefense {
             } else {
                 depth = 6.0f;
                 lateral = -s * 3.3f;
+            }
+            if (!middleAttack && lineSealed != crossSealed) {
+                if (lineSealed && slot == s || crossSealed && slot == -s) {
+                    depth = Math.min(depth, 5.0f);
+                    lateral *= 0.78f;
+                } else if (slot == 0f) {
+                    lateral += (lineSealed ? -s : s) * 0.95f;
+                }
+            }
+            if (!middleAttack && lateClose && offBlockers.isEmpty() && slot == s) {
+                depth = 3.15f;
+                lateral = hitLateral * 0.62f;
             }
             // The scheme: deeper or closer, and towards the cross court or the line.
             // A scheme the coach called is played to the full; one the team picked from its own
@@ -450,14 +493,19 @@ final class TeamDefense {
 
     /** Block style from the hitter's habit: close the side the hitter prefers. */
     private void applyBlockStyle(VolleyballPlayer p) {
+        world.ballHandling().setBlockStyle(p, blockStyle(p));
+    }
+
+    private BlockStyle blockStyle(VolleyballPlayer p) {
         BlockStyle style = BlockStyle.NORMAL;
         DefenseScheme commanded = tactics.defenseScheme();
         if (commanded != null) style = commanded.blockStyle;
         else if (habit.crossBias() > 0.3f) style = BlockStyle.CROSS;
         else if (habit.crossBias() < -0.3f) style = BlockStyle.LINE;
+        else if (p == wing && difficulty.readsPlay) style = BlockStyle.LINE;
         // Closing the line, but never pushing the hands out past the antenna (that only gives a block-out).
-        if (style == BlockStyle.LINE && Math.abs(p.position.z) > CourtDimensions.HALF_WIDTH - 1.2f) style = BlockStyle.NORMAL;
-        world.ballHandling().setBlockStyle(p, style);
+        if (style == BlockStyle.LINE && Math.abs(p.position.z) > CourtDimensions.HALF_WIDTH - 0.5f) style = BlockStyle.NORMAL;
+        return style;
     }
 
     /**

@@ -2,6 +2,10 @@
 
 Files are trimmed, filtered and level-matched for the game. Some effects are layered or pitch-shifted. The indoor crowd bed is crossfaded into a loop.
 
+The alternate takes for contacts, braking, landing and diving are remixes of the credited game samples below. The beach, gym, sports palace and rooftop beds remix the indoor crowd recording with different filtering, reflected sound and generated air noise. The selection, mode, replay and teammate cues are original synthesized sounds distributed with the game under CC0 1.0. The reproducible mix and synthesis recipes are in `art/audio/mix_variations.py`.
+
+The six takes for each walking surface and the planted-foot accents are cut from the archived wood, stone, sand and sneaker recordings by `art/audio/mix_footsteps.py`. The plant takes combine the sole impact and the surface drag.
+
 Unless noted, sources are released under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/). Freesound recordings use the publicly available previews.
 
 | Game audio | Original recordings |

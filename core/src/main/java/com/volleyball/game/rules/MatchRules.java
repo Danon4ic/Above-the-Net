@@ -108,6 +108,10 @@ public final class MatchRules {
         return servingSide;
     }
 
+    public void presentServingSide(CourtSide side) {
+        servingSide = side;
+    }
+
     public int currentServer() {
         return rotation.server(servingSide);
     }

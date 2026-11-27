@@ -342,7 +342,7 @@ public final class RallyManager implements BallTouchListener, BallContactListene
             CourtSide landedOn = CourtDimensions.sideOf(at.x);
             end(landedOn.opposite(), Fault.BALL_IN, lastToucherId, now);
         } else {
-            end(lastTouchLoser().opposite(), Fault.BALL_OUT, lastToucherId, now);
+            end(lastTouchLoser().opposite(), lastTouchWasBlock ? Fault.BLOCK_TOUCH_OUT : Fault.BALL_OUT, lastToucherId, now);
         }
     }
 

@@ -1,9 +1,13 @@
 package com.volleyball.game.match;
 
+import com.badlogic.gdx.math.Vector3;
+import com.volleyball.game.audio.SoundId;
 import com.volleyball.game.entities.Ball;
 import com.volleyball.game.entities.VolleyballPlayer;
 
+import java.util.ArrayDeque;
 import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * Records the rally (every player's look and the ball, 60 times a second) from the serve until
@@ -36,6 +40,10 @@ public final class ReplayRecorder {
     private float clock;
     private float sinceFrame;
     private boolean recording;
+    private final ArrayDeque<CourtSound> sounds = new ArrayDeque<>();
+
+    public record CourtSound(float time, SoundId id, int take, Vector3 position, float volume, float pitch, boolean reflection) {
+    }
 
     private final Frame live;
     private final VolleyballPlayer.VisualState[] blended;
@@ -52,11 +60,18 @@ public final class ReplayRecorder {
 
     /** A new rally: forget the old one and record. */
     public void start() {
+        clear();
+        recording = true;
+    }
+
+    /** Discards the current replay, for example when switching drills. */
+    public void clear() {
         first = 0;
         count = 0;
         clock = 0f;
         sinceFrame = FRAME;
-        recording = true;
+        recording = false;
+        sounds.clear();
     }
 
     public void stop() {
@@ -71,6 +86,7 @@ public final class ReplayRecorder {
     public void capture(float dt) {
         if (!recording) return;
         clock += dt;
+        while (!sounds.isEmpty() && sounds.peekFirst().time() < clock - MAX_SECONDS) sounds.removeFirst();
         sinceFrame += dt;
         if (sinceFrame < FRAME) return;
         sinceFrame = 0f;
@@ -87,6 +103,22 @@ public final class ReplayRecorder {
         f.time = clock;
         for (int i = 0; i < players.size(); i++) players.get(i).saveVisual(f.players[i]);
         ball.saveVisual(f.ball);
+    }
+
+    public void recordSound(SoundId id, int take, Vector3 position, float volume, float pitch, boolean reflection) {
+        if (recording) sounds.addLast(new CourtSound(clock, id, take, position.cpy(), volume, pitch, reflection));
+    }
+
+    /** Visits each recorded sound between consecutive replay frames exactly once. */
+    public void playSounds(float from, float through, Consumer<CourtSound> play) {
+        if (count < 2 || through <= from) return;
+        float firstTime = frame(0).time;
+        float start = firstTime + from;
+        float end = firstTime + Math.min(through, duration());
+        for (CourtSound sound : sounds) {
+            if (sound.time() > end) break;
+            if (sound.time() > start && sound.time() >= firstTime) play.accept(sound);
+        }
     }
 
     /** True if there is a rally to show (at least a second of it). */

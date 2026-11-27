@@ -73,10 +73,9 @@ public final class ScoreOverlay implements MatchListener, Disposable {
     // Action strip.
     private String contextTitle;
     private TacticalCard tacticalCard;
+    private String contactFeedback;
     private final List<String[]> contextKeys = new ArrayList<>();
-    private String contextSignature = "";
     private float contextAlpha;
-    private float contextChangedAt = -10f;
     /** Height kept free at the bottom (the play caller), so captions sit above it. */
     private float bottomClear;
 
@@ -114,15 +113,12 @@ public final class ScoreOverlay implements MatchListener, Disposable {
         tacticalCard = card;
     }
 
+    public void setContactFeedback(String text) {
+        contactFeedback = text;
+    }
+
     /** The keys of what can be done now: pairs {key, action}; empty for none. */
     public void setActions(List<String[]> keys) {
-        StringBuilder signature = new StringBuilder(contextTitle == null ? "" : contextTitle);
-        if (tacticalCard != null) signature.append(tacticalCard.plan()).append('|').append(tacticalCard.assignment());
-        for (String[] k : keys) signature.append('|').append(k[0]).append(k[1]);
-        if (!signature.toString().equals(contextSignature)) {
-            contextSignature = signature.toString();
-            contextChangedAt = clock;
-        }
         contextKeys.clear();
         contextKeys.addAll(keys);
     }
@@ -350,8 +346,11 @@ public final class ScoreOverlay implements MatchListener, Disposable {
         batch.begin();
         BitmapFont title = fonts.get(UiFonts.Weight.BLACK, (bannerBig ? 34f : 26f) * s);
         BitmapFont text = fonts.get(UiFonts.Weight.MEDIUM, 15f * s);
-        UiKit.text(batch, title, bannerTitle, x, y + panelH * 0.66f + title.getCapHeight() / 2f, panelW, Align.center, false, UiKit.TEXT, alpha);
-        UiKit.text(batch, text, bannerText, x, y + panelH * 0.24f + text.getCapHeight() / 2f, panelW, Align.center, false,
+        float pad = 16f * s;
+        UiKit.text(batch, title, bannerTitle, x + pad, y + panelH * 0.66f + title.getCapHeight() / 2f,
+                panelW - 2f * pad, Align.center, false, UiKit.TEXT, alpha);
+        UiKit.text(batch, text, bannerText, x + pad, y + panelH * 0.24f + text.getCapHeight() / 2f,
+                panelW - 2f * pad, Align.center, false,
                 UiKit.TEXT_DIM, alpha);
         batch.end();
     }
@@ -366,6 +365,7 @@ public final class ScoreOverlay implements MatchListener, Disposable {
         CourtSide winnerSide = setResult.winner();
         Team winner = team(winnerSide);
         int columns = setsSoFar.size();
+        float s = Math.min(this.s, Math.min((width - 24f) / Math.max(520f, 250f + columns * 54f), height / 390f));
         float cellW = 54f * s;
         float nameW = 120f * s;
         float tableW = nameW + columns * cellW + 70f * s;
@@ -376,7 +376,14 @@ public final class ScoreOverlay implements MatchListener, Disposable {
         float y = height * 0.5f - h * 0.35f;
 
         BitmapFont label = fonts.get(UiFonts.Weight.EXTRABOLD, 13f * s);
-        BitmapFont title = fonts.get(UiFonts.Weight.BLACK, 26f * s * scaleIn);
+        String heading = Lang.f("%s win the set", winner.name.toUpperCase(java.util.Locale.ROOT));
+        float titleSize = 26f * s * scaleIn;
+        BitmapFont title = fonts.get(UiFonts.Weight.BLACK, titleSize);
+        float titleW = w - 40f * s;
+        float headingW = UiKit.width(title, heading) + 3f;
+        if (headingW > titleW) {
+            title = fonts.get(UiFonts.Weight.BLACK, Math.max(16f * s, (float) Math.floor(titleSize * titleW / headingW)));
+        }
         BitmapFont big = fonts.get(UiFonts.Weight.BLACK, 54f * s * scaleIn);
         BitmapFont cell = fonts.get(UiFonts.Weight.BOLD, 17f * s);
         BitmapFont small = fonts.get(UiFonts.Weight.SEMIBOLD, 13f * s);
@@ -407,7 +414,7 @@ public final class ScoreOverlay implements MatchListener, Disposable {
         float ty = y + h - 26f * s;
         UiKit.text(batch, label, "SET " + setResult.setNumber(), x, ty, w, Align.center, false, UiKit.TEXT_DIM, a);
         ty -= 26f * s;
-        UiKit.text(batch, title, Lang.f("%s win the set", winner.name.toUpperCase(java.util.Locale.ROOT)), x, ty, w, Align.center, false, UiKit.TEXT, a);
+        UiKit.text(batch, title, heading, x + 20f * s, ty, titleW, Align.center, false, UiKit.TEXT, a);
         ty -= 42f * s;
         String scoreText = setResult.home() + " : " + setResult.away();
         UiKit.text(batch, big, scoreText, x, ty, w, Align.center, false, UiKit.TEXT, a);
@@ -442,30 +449,43 @@ public final class ScoreOverlay implements MatchListener, Disposable {
     private void drawActions(float dt) {
         String title = tacticalCard == null ? contextTitle : tacticalCard.plan();
         String assignment = tacticalCard == null ? null : tacticalCard.assignment();
-        boolean has = title != null || !contextKeys.isEmpty();
+        String decoy = tacticalCard == null ? null : tacticalCard.detail();
+        boolean has = title != null || contactFeedback != null || !contextKeys.isEmpty();
         contextAlpha = has ? Math.min(1f, contextAlpha + dt / 0.15f) : Math.max(0f, contextAlpha - dt / 0.15f);
         if (contextAlpha <= 0f || !has) return;
-        float a = contextAlpha * Math.min(1f, 0.4f + (clock - contextChangedAt) / 0.2f);
+        float a = contextAlpha;
         BitmapFont titleFont = fonts.get(UiFonts.Weight.BOLD, (tacticalCard == null ? 14f : 16f) * s);
         BitmapFont assignmentFont = fonts.get(UiFonts.Weight.MEDIUM, 14f * s);
         BitmapFont key = fonts.get(UiFonts.Weight.EXTRABOLD, 12f * s);
         BitmapFont label = fonts.get(UiFonts.Weight.SEMIBOLD, 14f * s);
         float capH = 24f * s;
         float gap = 18f * s;
-        float keysW = 0f;
-        for (String[] k : contextKeys) keysW += UiKit.keycapWidth(key, k[0]) + 7f * s + UiKit.width(label, k[1]) + gap;
-        keysW = Math.max(0f, keysW - gap);
         float pad = 16f * s;
+        float fixedW = 0f;
+        float labelsW = 0f;
+        for (String[] k : contextKeys) {
+            fixedW += UiKit.keycapWidth(key, k[0]) + 7f * s + gap;
+            labelsW += UiKit.width(label, k[1]) + 1f;
+        }
+        fixedW = Math.max(0f, fixedW - gap);
+        float labelScale = labelsW == 0f ? 1f : Math.clamp((width - 4f * pad - fixedW) / labelsW, 0f, 1f);
+        float keysW = fixedW + labelsW * labelScale;
         float textLimit = Math.max(1f, Math.min(620f * s, width - 4f * pad));
         if (title != null) title = UiKit.fit(titleFont, title, textLimit);
         if (assignment != null) assignment = UiKit.fit(assignmentFont, assignment, textLimit);
+        if (decoy != null) decoy = UiKit.fit(assignmentFont, decoy, textLimit);
+        String feedback = contactFeedback == null ? null : UiKit.fit(assignmentFont, contactFeedback, textLimit);
         float titleW = title == null ? 0f : UiKit.width(titleFont, title);
         float assignmentW = assignment == null ? 0f : UiKit.width(assignmentFont, assignment);
-        float w = Math.max(keysW, Math.max(titleW, assignmentW)) + 2f * pad;
+        float decoyW = decoy == null ? 0f : UiKit.width(assignmentFont, decoy);
+        float feedbackW = feedback == null ? 0f : UiKit.width(assignmentFont, feedback);
+        float w = Math.max(Math.max(keysW, feedbackW), Math.max(Math.max(titleW, assignmentW), decoyW)) + 2f * pad;
         float h = (contextKeys.isEmpty() ? 0f : capH + 8f * s) + (title == null ? 0f : 22f * s)
-                + (assignment == null ? 0f : 18f * s) + 16f * s;
+                + (assignment == null ? 0f : 18f * s) + (decoy == null ? 0f : 18f * s)
+                + (feedback == null ? 0f : 21f * s) + 16f * s;
         float x = (width - w) / 2f;
-        float y = captionBase() + 82f * s;
+        boolean bannerVisible = bannerTitle != null && clock - bannerStart < bannerDuration;
+        float y = captionBase() + (bannerVisible ? 82f : 8f) * s;
         begin();
         UiKit.panel(shapes, x, y, w, h, 0.88f * a, 0f);
         shapes.setColor(UiKit.PRIMARY.r, UiKit.PRIMARY.g, UiKit.PRIMARY.b, a);
@@ -475,23 +495,37 @@ public final class ScoreOverlay implements MatchListener, Disposable {
         for (String[] k : contextKeys) {
             float kw = UiKit.keycapWidth(key, k[0]);
             UiKit.keycap(shapes, kx, ky, kw, capH, false, a);
-            kx += kw + 7f * s + UiKit.width(label, k[1]) + gap;
+            kx += kw + 7f * s + (UiKit.width(label, k[1]) + 1f) * labelScale + gap;
         }
         shapes.end();
         batch.begin();
+        float textY = y + h - 10f * s;
         if (title != null) {
-            if (assignment == null) {
-                UiKit.text(batch, titleFont, title, x, y + h - 10f * s, w, Align.center, false, UiKit.JADE, a);
+            if (assignment == null && feedback == null) {
+                UiKit.text(batch, titleFont, title, x, textY, w, Align.center, false, UiKit.JADE, a);
             } else {
-                UiKit.text(batch, titleFont, title, x + pad, y + h - 10f * s, UiKit.JADE, a);
-                UiKit.text(batch, assignmentFont, assignment, x + pad, y + h - 32f * s, UiKit.TEXT, a);
+                UiKit.text(batch, titleFont, title, x + pad, textY, UiKit.JADE, a);
             }
+            textY -= 22f * s;
+        }
+        if (assignment != null) {
+            UiKit.text(batch, assignmentFont, assignment, x + pad, textY, UiKit.TEXT, a);
+            textY -= 18f * s;
+        }
+        if (decoy != null) {
+            UiKit.text(batch, assignmentFont, decoy, x + pad, textY, UiKit.TEXT_DIM, a);
+            textY -= 18f * s;
+        }
+        if (feedback != null) {
+            UiKit.text(batch, assignmentFont, feedback, x + pad, textY, UiKit.TEXT, a);
         }
         kx = (width - keysW) / 2f;
         for (String[] k : contextKeys) {
             float kw = UiKit.keycapLabel(batch, key, k[0], kx, ky, capH, false, a);
-            UiKit.text(batch, label, k[1], kx + kw + 7f * s, ky + capH / 2f + label.getCapHeight() / 2f, UiKit.TEXT, a);
-            kx += kw + 7f * s + UiKit.width(label, k[1]) + gap;
+            float labelW = (UiKit.width(label, k[1]) + 1f) * labelScale;
+            if (labelW > 0f) UiKit.text(batch, label, k[1], kx + kw + 7f * s, ky + capH / 2f + label.getCapHeight() / 2f,
+                    labelW, Align.left, false, UiKit.TEXT, a);
+            kx += kw + 7f * s + labelW + gap;
         }
         batch.end();
     }

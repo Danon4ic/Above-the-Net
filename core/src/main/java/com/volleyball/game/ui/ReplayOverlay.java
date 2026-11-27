@@ -10,6 +10,7 @@ import com.badlogic.gdx.utils.Disposable;
 
 /** The replay badge: "REPLAY" with a blinking dot, the camera angle, the progress and the keys. */
 public final class ReplayOverlay implements Disposable {
+    private static final String CONTROLS = "Space: slow motion   ·   C: camera angle   ·   R: restart   ·   V / Esc: back to the match";
     private final SpriteBatch batch = new SpriteBatch();
     private final ShapeRenderer shapes = new ShapeRenderer();
     private final UiFonts fonts;
@@ -31,8 +32,12 @@ public final class ReplayOverlay implements Disposable {
         float s = UiFonts.uiScale(height);
         BitmapFont title = fonts.get(UiFonts.Weight.BLACK, 22f * s);
         BitmapFont small = fonts.get(UiFonts.Weight.SEMIBOLD, 12.5f * s);
-        float w = 440f * s;
-        float h = 92f * s;
+        float w = Math.min(width - 24f * s, 480f * s);
+        float pad = 18f * s;
+        float controlsWidth = w - 2f * pad;
+        float controlsHeight = UiKit.wrappedHeight(small, CONTROLS, controlsWidth - 1f);
+        float barY = controlsHeight + 21f * s;
+        float h = barY + 53f * s;
         float x = (width - w) / 2f;
         float y = height - h - 22f * s;
         Gdx.gl.glEnable(GL20.GL_BLEND);
@@ -41,14 +46,18 @@ public final class ReplayOverlay implements Disposable {
         UiKit.panel(shapes, x, y, w, h, 0.92f, 0f);
         shapes.setColor(UiKit.RED);
         shapes.circle(x + 26f * s, y + h - 30f * s, 7f * s, 16);
-        UiKit.bar(shapes, x + 20f * s, y + 34f * s, w - 40f * s, 6f * s, progress, UiKit.PRIMARY, 1f);
+        UiKit.bar(shapes, x + pad, y + barY, controlsWidth, 6f * s, progress, UiKit.PRIMARY, 1f);
         shapes.end();
         batch.begin();
-        UiKit.text(batch, title, "REPLAY", x + 42f * s, y + h - 20f * s, UiKit.TEXT, 1f);
+        float titleX = x + 42f * s;
+        float titleW = Math.min(UiKit.width(title, "REPLAY") + 1f, controlsWidth * 0.44f);
+        UiKit.text(batch, title, "REPLAY", titleX, y + h - 20f * s, titleW, Align.left, false, UiKit.TEXT, 1f);
         String right = angle + (slowMotion ? "   ·   SLOW MOTION" : "");
-        UiKit.text(batch, small, right.toUpperCase(java.util.Locale.ROOT), x, y + h - 26f * s, w - 20f * s, Align.right, false, UiKit.JADE, 1f);
-        UiKit.text(batch, small, "Space: slow motion   ·   C: camera angle   ·   V / Esc: back to the match", x, y + 22f * s, w,
-                Align.center, false, UiKit.TEXT_DIM, 1f);
+        float angleX = titleX + titleW + 12f * s;
+        UiKit.text(batch, small, right.toUpperCase(java.util.Locale.ROOT), angleX, y + h - 26f * s,
+                x + w - pad - angleX, Align.right, false, UiKit.JADE, 1f);
+        UiKit.text(batch, small, CONTROLS, x + pad, y + 10f * s + controlsHeight, controlsWidth,
+                Align.center, true, UiKit.TEXT_DIM, 1f);
         batch.end();
     }
 

@@ -35,6 +35,8 @@ public final class VolleyballPlayer {
     private float strideCycles;
     private float previousStrideCycles;
     private ActionPose actionPose = ActionPose.NONE;
+    private final Vector3 actionContact = new Vector3();
+    private boolean actionContactKnown;
     /** Seconds the current action pose has been held. */
     private float actionPoseTime;
     private float actionPoseDuration;
@@ -200,6 +202,10 @@ public final class VolleyballPlayer {
         previousStrideCycles = strideCycles;
     }
 
+    public void presentStride(float phase) {
+        previousStrideCycles = strideCycles = phase;
+    }
+
     public void addStride(float distance) {
         strideCycles += distance / strideLength();
     }
@@ -217,6 +223,23 @@ public final class VolleyballPlayer {
         actionPoseTime = 0f;
         actionPoseDuration = duration;
         actionPoseHeld = false;
+        actionContactKnown = false;
+    }
+
+    public void recordActionContact(Vector3 at) {
+        recordActionContact(at.x, at.y, at.z);
+    }
+
+    public void recordActionContact(float x, float y, float z) {
+        actionContact.set(x, y, z);
+        actionContactKnown = true;
+    }
+
+    /** Returns the ball centre at release or a shared gesture target until another action takes over. */
+    public boolean actionContact(Vector3 out) {
+        if (!actionContactKnown || actionPose == ActionPose.NONE) return false;
+        out.set(actionContact);
+        return true;
     }
 
     /** Keeps a prepared pose (e.g. platform ready for a pass) alive; call every step it applies. */
@@ -246,6 +269,15 @@ public final class VolleyballPlayer {
     /** 0..1 progress through the current action pose. */
     public float actionPoseProgress() {
         return actionPoseDuration <= 0f ? 1f : Math.min(1f, actionPoseTime / actionPoseDuration);
+    }
+
+    /** Applies the phase of a replicated action without restarting the animation every packet. */
+    public void presentActionPose(ActionPose pose, float progress, boolean held) {
+        if (pose != actionPose || progress + 0.18f < actionPoseProgress()) actionContactKnown = false;
+        actionPose = pose;
+        actionPoseDuration = 1f;
+        actionPoseTime = progress;
+        actionPoseHeld = held;
     }
 
     public void markNetContact() {
@@ -314,10 +346,14 @@ public final class VolleyballPlayer {
     public float bodyTilt() {
         return switch (bodyState) {
             case UPRIGHT -> 0f;
-            case DIVING -> smoothstep(bodyStateTime / 0.22f);
+            case DIVING -> diveTilt(bodyStateTime);
             case ON_FLOOR -> 1f;
             case GETTING_UP -> 1f - smoothstep(bodyStateTime / 0.5f);
         };
+    }
+
+    public static float diveTilt(float elapsed) {
+        return smoothstep(elapsed / 0.22f);
     }
 
     private static float smoothstep(float x) {
@@ -375,12 +411,14 @@ public final class VolleyballPlayer {
 
     /** Recovers part of the lost stamina (rest between rallies, a timeout, the set break). */
     public void rest(float fractionOfMissing) {
+        if (has(PlayerTrait.QUICK_RECOVERY)) fractionOfMissing *= 1.3f;
         setStamina(stamina + (1f - stamina) * fractionOfMissing);
     }
 
     /** 1 when fresh, down to {@code 1 - maxLoss} when exhausted: how much tiredness weighs on an ability. */
     public float fatigueFactor(float maxLoss) {
-        return 1f - maxLoss * (1f - stamina);
+        float spent = 1f - stamina;
+        return 1f - maxLoss * spent * (0.65f + 0.35f * spent);
     }
 
     /**
@@ -399,6 +437,9 @@ public final class VolleyballPlayer {
         float strideCycles;
         float previousStrideCycles;
         ActionPose actionPose = ActionPose.NONE;
+        SwingStyle swingStyle = SwingStyle.POWER;
+        final Vector3 actionContact = new Vector3();
+        boolean actionContactKnown;
         float actionPoseTime;
         float actionPoseDuration;
         boolean actionPoseHeld;
@@ -428,7 +469,9 @@ public final class VolleyballPlayer {
             previousFacingYaw = facingYaw;
             strideCycles = MathUtils.lerp(a.strideCycles, b.strideCycles, t);
             previousStrideCycles = strideCycles;
-            if (a.actionPose == b.actionPose) actionPoseTime = a.actionPoseTime + (b.actionPoseTime - a.actionPoseTime) * t;
+            if (a.actionPose == b.actionPose && a.actionPoseHeld == b.actionPoseHeld) {
+                actionPoseTime = a.actionPoseTime + (b.actionPoseTime - a.actionPoseTime) * t;
+            }
             if (a.bodyState == b.bodyState) bodyStateTime = a.bodyStateTime + (b.bodyStateTime - a.bodyStateTime) * t;
             blockPenetration = a.blockPenetration + (b.blockPenetration - a.blockPenetration) * t;
         }
@@ -445,6 +488,9 @@ public final class VolleyballPlayer {
             strideCycles = o.strideCycles;
             previousStrideCycles = o.previousStrideCycles;
             actionPose = o.actionPose;
+            swingStyle = o.swingStyle;
+            actionContact.set(o.actionContact);
+            actionContactKnown = o.actionContactKnown;
             actionPoseTime = o.actionPoseTime;
             actionPoseDuration = o.actionPoseDuration;
             actionPoseHeld = o.actionPoseHeld;
@@ -475,6 +521,9 @@ public final class VolleyballPlayer {
         out.strideCycles = strideCycles;
         out.previousStrideCycles = previousStrideCycles;
         out.actionPose = actionPose;
+        out.swingStyle = swingStyle;
+        out.actionContact.set(actionContact);
+        out.actionContactKnown = actionContactKnown;
         out.actionPoseTime = actionPoseTime;
         out.actionPoseDuration = actionPoseDuration;
         out.actionPoseHeld = actionPoseHeld;
@@ -504,6 +553,9 @@ public final class VolleyballPlayer {
         strideCycles = in.strideCycles;
         previousStrideCycles = in.previousStrideCycles;
         actionPose = in.actionPose;
+        swingStyle = in.swingStyle;
+        actionContact.set(in.actionContact);
+        actionContactKnown = in.actionContactKnown;
         actionPoseTime = in.actionPoseTime;
         actionPoseDuration = in.actionPoseDuration;
         actionPoseHeld = in.actionPoseHeld;

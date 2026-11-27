@@ -189,7 +189,7 @@ public final class MatchStatistics implements BallTouchListener {
         if (winner == CourtSide.HOME) homePoints++;
         else awayPoints++;
         Fault reason = point.outcome().reason();
-        boolean ballFault = reason == Fault.BALL_IN || reason == Fault.BALL_OUT || reason == Fault.ANTENNA
+        boolean ballFault = reason == Fault.BALL_IN || reason == Fault.BALL_OUT || reason == Fault.BLOCK_TOUCH_OUT || reason == Fault.ANTENNA
                 || reason == Fault.OUTSIDE_CROSSING_SPACE || reason == Fault.OUT_OF_PLAY_OBJECT || reason == Fault.UNDER_NET;
         if (!ballFault) {
             // A player's fault (net touch, double contact, foot fault...): their error.

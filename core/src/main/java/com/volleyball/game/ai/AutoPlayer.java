@@ -76,6 +76,8 @@ public final class AutoPlayer {
     private int jumpTimingFor = Integer.MIN_VALUE;
     private float defenseSpotX = Float.NaN;
     private float defenseSpotZ = Float.NaN;
+    private boolean attackRunStarted;
+    private float lastAttackFlightTime = -1f;
 
     public AutoPlayer(GameWorld world) {
         this(world, 0L);
@@ -92,6 +94,8 @@ public final class AutoPlayer {
         seenToucher = Integer.MIN_VALUE;
         pendingSurprise = 0f;
         surprise = 0f;
+        attackRunStarted = false;
+        lastAttackFlightTime = -1f;
     }
 
     /**
@@ -170,8 +174,9 @@ public final class AutoPlayer {
         }
         holdingSince = -1;
         noticeTouch(handling, now);
+        boolean setting = behavior == Behavior.SET || behavior == Behavior.JUMP_SET;
         // Never play the ball twice in a row (that would be a double contact).
-        if (!world.ball().isActive() || handling.isArmed(p) || handling.lastToucherId() == p.id) return;
+        if (!world.ball().isActive() || handling.isArmed(p) && !setting || handling.lastToucherId() == p.id) return;
         switch (behavior) {
             case ATTACK -> attack(p, intent, handling, now);
             case BLOCK -> block(p, intent);
@@ -189,6 +194,7 @@ public final class AutoPlayer {
         seenToucher = handling.lastToucherId();
         toucherSeenAt = now;
         setJumpAttempted = false;
+        attackRunStarted = false;
         surprise = pendingSurprise;
         pendingSurprise = 0f;
         float error = skill.readError();
@@ -244,7 +250,7 @@ public final class AutoPlayer {
      */
     private void jumpServe(VolleyballPlayer p, MoveIntent intent, BallHandling handling, ServeType type, double now) {
         ContactZone.idealPoint(p, ContactType.SERVE, type, ideal);
-        float jumpHeight = PlayerLocomotion.jumpHeight(p.attributes);
+        float jumpHeight = PlayerLocomotion.jumpHeight(p);
         if (p.isAirborne()) {
             forecast.watchHeight = ideal.y;
             world.predictor().predict(world.ball(), 3f, forecast);
@@ -283,15 +289,19 @@ public final class AutoPlayer {
     private void play(VolleyballPlayer p, MoveIntent intent, BallHandling handling, ContactType type, ActionKind kind,
                       double now) {
         boolean forearm = type == ContactType.FOREARM_PASS;
-        if (forearm) idealSquareToNet(p, type, ideal);
+        boolean setting = type == ContactType.OVERHEAD_PASS && handling.teamTouches(p.side) == 1;
+        if (forearm || setting) idealSquareToNet(p, type, ideal);
         else ContactZone.idealPoint(p, type, null, ideal);
         forecast.watchHeight = ideal.y - p.position.y;
         world.predictor().predict(world.ball(), 6f, forecast);
         TrajectoryPredictor.dropAtNet(forecast, world.court().net().topHeight(), world.ball().position.x);
         forecast.watchHeight = Float.NaN;
-        if (!forecast.reachesWatchHeight || CourtDimensions.sideOf(forecast.descentPoint.x) != p.side) return;
         if (sinceNewBall(now) < skill.reaction()) {
             intent.crouch = true;
+            return;
+        }
+        if (!forecast.reachesWatchHeight || CourtDimensions.sideOf(forecast.descentPoint.x) != p.side) {
+            if (forearm) diveIfOutOfReach(p, intent, handling, now, forecast.landing.x, forecast.landing.z, 0f);
             return;
         }
         float t = forecast.timeToDescent;
@@ -300,8 +310,9 @@ public final class AutoPlayer {
         // A pass or dig that cannot be reached on foot is not given up: dive for it.
         if (forearm && diveIfOutOfReach(p, intent, handling, now, targetX, targetZ, t)) return;
         moveTowards(p, intent, awayFromNet(p, targetX, PLAY_NET_DISTANCE), targetZ);
-        if (forearm) squareUpWhenClose(p, intent, targetX, targetZ);
-        if (t < ARM_LEAD || arrivingSoon(p)) handling.arm(p, kind, now);
+        if (forearm || setting) squareUpWhenClose(p, intent, targetX, targetZ);
+        // Preparing the hands should not stop the final adjustment step or reset contact timing.
+        if (!handling.isArmed(p) && (t < ARM_LEAD || arrivingSoon(p))) handling.arm(p, kind, now);
     }
 
     /**
@@ -322,12 +333,12 @@ public final class AutoPlayer {
     }
 
     private static float setJumpHeight(VolleyballPlayer p) {
-        return PlayerLocomotion.jumpHeight(p.attributes) * SET_JUMP_FACTOR * p.fatigueFactor(0.1f);
+        return PlayerLocomotion.jumpHeight(p) * SET_JUMP_FACTOR;
     }
 
     /** Estimated time to a high setting contact, given a balanced take-off under the ball. */
     float jumpSetContactTime(VolleyballPlayer p) {
-        if (!p.isUpright() || !p.isAirborne() && (p.recoveryTime() > 0f || p.groundSpeed() > 1.7f)) return Float.NaN;
+        if (!p.isUpright() || !p.isAirborne() && (p.recoveryTime() > 0f || p.groundSpeed() > 1.45f)) return Float.NaN;
         idealSquareToNet(p, ContactType.OVERHEAD_PASS, ideal);
         float height = p.isAirborne() ? Math.max(p.position.y, setJumpHeight(p) * 0.9f) : setJumpHeight(p) * 0.9f;
         forecast.watchHeight = ideal.y - p.position.y + height;
@@ -336,9 +347,13 @@ public final class AutoPlayer {
         forecast.watchHeight = Float.NaN;
         if (!forecast.reachesWatchHeight || CourtDimensions.sideOf(forecast.descentPoint.x) != p.side) return Float.NaN;
         float depth = p.position.x * p.side.sign();
-        float dx = forecast.descentPoint.x - ideal.x;
-        float dz = forecast.descentPoint.z - ideal.z;
-        return depth >= 0.62f && depth <= 3.1f && dx * dx + dz * dz <= 0.7f * 0.7f
+        float carryTime = forecast.timeToDescent * (p.isAirborne() ? 1f : PlayerLocomotion.TAKEOFF_CARRY);
+        float dx = forecast.descentPoint.x - ideal.x - p.velocity.x * carryTime;
+        float dz = forecast.descentPoint.z - ideal.z - p.velocity.z * carryTime;
+        // A setter launches only towards the two-hand window. The outer reach is a rescue,
+        // especially when the jump will carry the shoulders past the falling ball.
+        float cleanReach = ContactZone.horizontalRadius(ContactType.OVERHEAD_PASS) * 0.72f;
+        return depth >= 0.62f && depth <= 3.1f && dx * dx + dz * dz <= cleanReach * cleanReach
                 ? forecast.timeToDescent : Float.NaN;
     }
 
@@ -346,14 +361,20 @@ public final class AutoPlayer {
         if (p.isAirborne()) {
             if (p.role == PlayerRole.SETTER) {
                 intent.facingYaw = VolleyballPlayer.facingNetYaw(p.side);
-                // Arm early enough on ascent. The normal contact solver still checks hand position and timing.
-                handling.arm(p, ActionKind.PRIMARY, now);
+                if (!handling.isArmed(p)) {
+                    // Starting the request at lift-off can exhaust the air window just as the
+                    // ball enters the edge of reach. Open it when the ball arrives at the hands.
+                    var ball = world.ball().position;
+                    float overhead = ContactZone.normalizedOffset(p, ContactType.OVERHEAD_PASS, null, ball, ideal);
+                    float oneHand = ContactZone.normalizedOffset(p, ContactType.ONE_HAND_SET, null, ball, ideal);
+                    if (overhead < 1.25f || oneHand < 1.05f) handling.arm(p, ActionKind.PRIMARY, now);
+                }
             }
             return;
         }
         float rise = PlayerLocomotion.riseTime(setJumpHeight(p));
         float time = setJumpAttempted ? Float.NaN : jumpSetContactTime(p);
-        if (sinceNewBall(now) >= skill.reaction() && time >= rise * 0.65f && time <= rise + 0.035f) {
+        if (!handling.isArmed(p) && sinceNewBall(now) >= skill.reaction() && time >= rise * 0.65f && time <= rise + 0.035f) {
             intent.facingYaw = VolleyballPlayer.facingNetYaw(p.side);
             intent.jump = true;
             intent.jumpHeightFactor = SET_JUMP_FACTOR;
@@ -384,17 +405,36 @@ public final class AutoPlayer {
      */
     private boolean diveIfOutOfReach(VolleyballPlayer p, MoveIntent intent, BallHandling handling, double now, float targetX,
                                      float targetZ, float timeLeft) {
-        if (p.isAirborne() || !p.isUpright()) return false;
+        if (p.isAirborne() || !p.isUpright() || p.recoveryTime() > 0f || !forecast.lands) return false;
         float dx = targetX - p.position.x;
         float dz = targetZ - p.position.z;
         float distance = (float) Math.sqrt(dx * dx + dz * dz);
-        float reachable = PlayerLocomotion.maxRunSpeed(p.attributes) * Math.max(0f, timeLeft - 0.1f) * 0.7f;
+        float reachable = PlayerLocomotion.maxRunSpeed(p) * Math.max(0f, timeLeft - 0.1f) * 0.7f;
         float range = p.role == com.volleyball.game.entities.PlayerRole.LIBERO ? LIBERO_DIVE_RANGE : DIVE_RANGE;
-        if (distance <= reachable + 0.9f || distance <= 1.3f || distance >= range) return false;
-        intent.direction.set(dx / distance, dz / distance);
-        intent.dive = true;
-        handling.arm(p, ActionKind.PRIMARY, now);
-        return true;
+        if (distance <= reachable + 0.9f || distance <= 1.3f || distance > range + 1.2f) return false;
+
+        // Check where the hands and the ball will actually meet, over the dive and early slide.
+        for (int i = 3; i < forecast.pathSize(); i++) {
+            float elapsed = i * TrajectoryPredictor.SAMPLE_INTERVAL;
+            if (elapsed > PlayerLocomotion.DIVE_TIME + 0.1f || elapsed >= forecast.timeToLanding - 0.015f) break;
+            Vector3 ballAtContact = forecast.path.get(i);
+            if (CourtDimensions.sideOf(ballAtContact.x) != p.side) continue;
+            dx = ballAtContact.x - p.position.x;
+            dz = ballAtContact.z - p.position.z;
+            float gap = (float) Math.hypot(dx, dz);
+            if (gap < 1.3f) continue;
+            float along = Math.max(0f, (p.velocity.x * dx + p.velocity.z * dz) / gap);
+            ContactZone.diveReachOffset(p, VolleyballPlayer.diveTilt(elapsed), ideal);
+            float reach = ideal.x + PlayerLocomotion.diveTravel(p, along, elapsed);
+            float horizontal = (gap - reach) / ContactZone.horizontalRadius(ContactType.DIVE);
+            float vertical = (ballAtContact.y - ideal.y) / ContactZone.verticalRadius(ContactType.DIVE);
+            if (horizontal * horizontal + vertical * vertical > 0.65f) continue;
+            intent.direction.set(dx / gap, dz / gap);
+            intent.dive = true;
+            handling.arm(p, ActionKind.PRIMARY, now);
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -414,7 +454,10 @@ public final class AutoPlayer {
     }
 
     private void attack(VolleyballPlayer p, MoveIntent intent, BallHandling handling, double now) {
-        float jump = PlayerLocomotion.jumpHeight(p.attributes);
+        float flightTime = world.ball().timeSinceHit();
+        if (flightTime + 0.04f < lastAttackFlightTime) attackRunStarted = false;
+        lastAttackFlightTime = flightTime;
+        float jump = PlayerLocomotion.jumpHeight(p);
         ContactZone.idealPoint(p, ContactType.ATTACK, null, ideal);
         float relX = ideal.x - p.position.x;
         float relZ = ideal.z - p.position.z;
@@ -431,16 +474,55 @@ public final class AutoPlayer {
         }
         float t = forecast.timeToDescent;
         float riseTime = PlayerLocomotion.riseTime(jump);
-        // The jump keeps part of the run-up: take off that much short of the hitting spot.
+        float timeToPlant = t - riseTime - 0.02f + jumpTiming;
         float carry = PlayerLocomotion.TAKEOFF_CARRY * riseTime;
-        moveTowards(p, intent, awayFromNet(p, forecast.descentPoint.x - relX - p.velocity.x * carry + readX(t) * 0.5f,
-                        backRow ? BACK_ROW_TAKEOFF : ATTACK_NET_DISTANCE),
-                forecast.descentPoint.z - relZ - p.velocity.z * carry + readZ(t) * 0.5f);
+        float forward = -p.side.sign();
+        float bodyX = forecast.descentPoint.x - relX + readX(t) * 0.5f;
+        float bodyZ = forecast.descentPoint.z - relZ + readZ(t) * 0.5f;
+        float maxSpeed = PlayerLocomotion.maxRunSpeed(p);
+        float pace = Math.min(3.35f, maxSpeed * 0.82f);
+        float launchDepth = backRow ? BACK_ROW_TAKEOFF : ATTACK_NET_DISTANCE;
+        boolean dump = p.role == com.volleyball.game.entities.PlayerRole.SETTER && handling.teamTouches(p.side) == 1;
+        if (dump) {
+            moveTowards(p, intent, awayFromNet(p, bodyX - p.velocity.x * carry, launchDepth), bodyZ - p.velocity.z * carry);
+        } else {
+            float plantX = awayFromNet(p, bodyX - forward * pace * carry, launchDepth);
+            float distance = (float) Math.hypot(plantX - p.position.x, bodyZ - p.position.z);
+            float accel = PlayerLocomotion.acceleration(p);
+            float turning = Math.max(0f, -p.velocity.x * forward) / (1.6f * accel);
+            float runTime = Math.max(0.36f, distance / pace + pace / (2f * accel)) + turning;
+            if (!attackRunStarted && timeToPlant > runTime + 0.08f) {
+                // Wait at the start of the run-up. Moving to the plant this early kills the approach.
+                float runway = backRow ? 1.65f : 1.42f;
+                if ((plantX - p.position.x) * forward < 0f) {
+                    // An attacker caught near the net has time for a shorter retreat and reversal.
+                    runway = MathUtils.clamp((timeToPlant - turning - 0.24f) * pace * 0.5f, 0.36f, runway);
+                }
+                float startX = plantX - forward * runway;
+                moveTowards(p, intent, startX, bodyZ);
+                squareUpWhenClose(p, intent, startX, bodyZ);
+                return;
+            }
+            attackRunStarted = true;
+            // Reach the ball with the remaining steps AND the carried movement in the air.
+            // A position target alone slows the player to a stop at the take-off.
+            float horizon = Math.max(0f, timeToPlant) + carry;
+            intent.direction.set((bodyX - p.position.x) / horizon, (bodyZ - p.position.z) / horizon).scl(1f / maxSpeed);
+            intent.direction.limit(1f);
+            squareUpWhenClose(p, intent, plantX, bodyZ);
+        }
         brakeAtNet(p, intent, 1.0f);
         // From the back row: never take off in front of the attack line (stop the run there).
         if (backRow && Math.abs(p.position.x) < BACK_ROW_TAKEOFF && intent.direction.x * -p.side.sign() > 0f) intent.direction.x = 0f;
         boolean legal = !backRow || Math.abs(p.position.x) >= CourtDimensions.ATTACK_LINE_DISTANCE + 0.05f;
-        if (legal && forecast.timeToDescent <= riseTime + 0.02f - jumpTiming) intent.jump = true;
+        float depthAtLanding = (p.position.x + p.velocity.x * carry * 2f) * p.side.sign();
+        if (legal && timeToPlant <= 0f && depthAtLanding >= 0.39f) {
+            float miss = (float) Math.hypot(bodyX - p.position.x - p.velocity.x * carry, bodyZ - p.position.z - p.velocity.z * carry);
+            if (dump || miss <= 0.86f) intent.jump = true;
+        }
+        if (!intent.jump && timeToPlant < -0.15f && handling.teamTouches(p.side) == 2) {
+            play(p, intent, handling, ContactType.FOREARM_PASS, ActionKind.PRIMARY, now);
+        }
     }
 
     /**
@@ -458,10 +540,16 @@ public final class AutoPlayer {
                 forecast.descentPoint.z + blockOffset));
         moveTowards(p, intent, p.side.sign() * 0.4f, spot);
         brakeAtNet(p, intent, 0.7f);
-        float riseTime = PlayerLocomotion.riseTime(PlayerLocomotion.jumpHeight(p.attributes));
-        // Jump straight up: never while still drifting towards the net (that ends in the net).
+        float riseTime = PlayerLocomotion.riseTime(PlayerLocomotion.jumpHeight(p));
+        // The approach closes into a plant, then each blocker times their own rise to the same set.
         float towardsNet = p.velocity.x * -p.side.sign();
-        if (forecast.timeToDescent <= riseTime - 0.08f && towardsNet < 0.5f) intent.jump = true;
+        float alongNet = Math.abs(spot - p.position.z);
+        if (forecast.timeToDescent < riseTime + 0.20f && alongNet < 0.7f) {
+            intent.jumpChargeLevel = MathUtils.clamp((riseTime + 0.20f - forecast.timeToDescent) / 0.27f, 0f, 0.8f);
+        }
+        if (forecast.timeToDescent <= riseTime - 0.065f && towardsNet < 0.5f && alongNet < 0.76f) {
+            intent.jump = true;
+        }
     }
 
     /**
@@ -508,9 +596,12 @@ public final class AutoPlayer {
         world.predictor().predict(world.ball(), 6f, forecast);
         TrajectoryPredictor.dropAtNet(forecast, world.court().net().topHeight(), world.ball().position.x);
         forecast.watchHeight = Float.NaN;
-        if (!forecast.reachesWatchHeight || CourtDimensions.sideOf(forecast.descentPoint.x) != p.side) return;
         // Let a ball that will clearly land out go.
         if (letOutBallsGo && forecast.lands && !CourtDimensions.isInsideCourt(forecast.landing.x, forecast.landing.z, 0.2f)) return;
+        if (!forecast.reachesWatchHeight || CourtDimensions.sideOf(forecast.descentPoint.x) != p.side) {
+            diveIfOutOfReach(p, intent, handling, now, forecast.landing.x, forecast.landing.z, 0f);
+            return;
+        }
         float targetX = forecast.descentPoint.x - (ideal.x - p.position.x) + readX(forecast.timeToDescent);
         float targetZ = forecast.descentPoint.z - (ideal.z - p.position.z) + readZ(forecast.timeToDescent);
         if (diveIfOutOfReach(p, intent, handling, now, targetX, targetZ, forecast.timeToDescent)) return;

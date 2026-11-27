@@ -19,6 +19,7 @@ import com.volleyball.game.world.VolleyballCourt;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashSet;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Random;
 import java.util.Set;
@@ -33,6 +34,7 @@ class TeamsTraitsCoachesTest {
     void everyClubBuildsAFullSquadWithTraitsThatFitTheRoles() {
         assertTrue(TeamCatalog.all().size() >= 8);
         Set<String> ids = new HashSet<>();
+        Set<PlayerTrait> usedTraits = EnumSet.noneOf(PlayerTrait.class);
         for (TeamCatalog.Entry e : TeamCatalog.all()) {
             assertTrue(ids.add(e.id()), "unique ids");
             Team team = TeamFactory.build(e, CourtSide.HOME, 0, TeamCatalog.defaultAway());
@@ -43,6 +45,7 @@ class TeamsTraitsCoachesTest {
             for (VolleyballPlayer p : team.squad()) {
                 assertFalse(p.traits().isEmpty(), p.name + " has a trait");
                 assertTrue(p.traits().size() <= 2);
+                usedTraits.addAll(p.traits());
                 for (PlayerTrait a : p.traits()) {
                     for (PlayerTrait b : p.traits()) if (a != b) assertFalse(a.clashes(b), p.name + ": " + a + " and " + b);
                 }
@@ -51,6 +54,9 @@ class TeamsTraitsCoachesTest {
                 }
             }
         }
+        assertTrue(usedTraits.containsAll(EnumSet.of(PlayerTrait.BLOCK_OUT, PlayerTrait.HARD_RECEIVER,
+                PlayerTrait.BACK_SETTER, PlayerTrait.LATE_BLOCKER, PlayerTrait.QUICK_RECOVERY, PlayerTrait.EXPLOSIVE)),
+                "the new traits show up on the club rosters: " + usedTraits);
     }
 
     @Test

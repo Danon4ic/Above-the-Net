@@ -1,18 +1,20 @@
 package com.volleyball.game.ai;
 
+import com.badlogic.gdx.math.Vector3;
 import com.volleyball.game.entities.PlayerRole;
 import com.volleyball.game.entities.Team;
 import com.volleyball.game.entities.VolleyballPlayer;
 import com.volleyball.game.match.MatchController;
 import com.volleyball.game.mechanics.BallHandling;
+import com.volleyball.game.mechanics.ActionKind;
 import com.volleyball.game.mechanics.BallTouch;
 import com.volleyball.game.mechanics.ContactPurpose;
 import com.volleyball.game.mechanics.ContactType;
 import com.volleyball.game.mechanics.ServeType;
 import com.volleyball.game.multiplayer.MatchSession;
 import com.volleyball.game.multiplayer.SessionMode;
-import com.volleyball.game.physics.TrajectoryPredictor;
 import com.volleyball.game.rules.MatchFormat;
+import com.volleyball.game.rules.MatchScore;
 import com.volleyball.game.rules.RotationManager;
 import com.volleyball.game.rules.RuleMode;
 import com.volleyball.game.simulation.GameWorld;
@@ -139,40 +141,27 @@ class RolesAndLiberoTest {
 
     @Test
     void theAiLeavesABallComingDownAtAHumanToTheHuman() {
-        int[] checked = new int[1];
-        // A few sets until some balls have come down at the person (it depends on where the opponent serves).
-        for (long seed = 9; seed < 12 && checked[0] == 0; seed++) {
-            humanSet(seed, checked);
-        }
-        assertTrue(checked[0] > 0, "some balls came down at the human");
-    }
-
-    private void humanSet(long seed, int[] checked) {
-        GameWorld world = GameWorld.withDefaultTeams(new VolleyballCourt(NetCategory.MEN), seed);
-        MatchController match = new MatchController(world, SHORT, seed, Difficulty.PROFESSIONAL, Difficulty.PROFESSIONAL);
-        VolleyballPlayer human = world.home().players().get(4); // an outside hitter (receiver)
-        TrajectoryPredictor.Prediction forecast = new TrajectoryPredictor.Prediction();
-        match.start(CourtSide.AWAY);
-        // Several minutes of play: the opponent serves at seams and weak receivers, not always at this one.
-        for (int i = 0; i < 120 * 600 && match.phase() != MatchController.Phase.FINISHED; i++) {
-            world.intent(human).clear(); // the person just stands there
-            world.step(DT);
-            match.update(DT, List.of(human));
-            BallHandling handling = world.ballHandling();
-            if (!world.ball().isActive() || handling.lastTouchSide() != CourtSide.AWAY || world.ball().velocity.x >= 0f) continue;
-            forecast.watchHeight = 1f;
-            world.predictor().predict(world.ball(), 6f, forecast);
-            if (!forecast.reachesWatchHeight) continue;
-            float dx = forecast.descentPoint.x - human.position.x;
-            float dz = forecast.descentPoint.z - human.position.z;
-            if (dx * dx + dz * dz > 1.0f || forecast.timeToDescent > 1.2f) continue;
-            checked[0]++;
+        GameWorld world = GameWorld.withDefaultTeams(new VolleyballCourt(NetCategory.MEN), 9);
+        TeamAI ai = new TeamAI(world, world.home(), Difficulty.PROFESSIONAL, 9);
+        RotationManager rotation = new RotationManager(world.home().players().stream().mapToInt(p -> p.id).toArray(),
+                world.away().players().stream().mapToInt(p -> p.id).toArray());
+        MatchScore score = new MatchScore(SHORT);
+        VolleyballPlayer human = world.home().players().get(4);
+        VolleyballPlayer neighbor = world.home().players().get(0);
+        human.placeAt(-6f, 0f);
+        human.setStamina(0.3f);
+        neighbor.placeAt(-5.8f, 1.1f);
+        world.ball().launch(new Vector3(-5f, 2.65f, 0f), new Vector3(-2.25f, -1.8f, 0f), Vector3.Zero, 9);
+        BallHandling handling = world.ballHandling();
+        handling.registerFeed(CourtSide.AWAY, 3);
+        handling.arm(neighbor, ActionKind.PRIMARY, world.time());
+        for (int i = 0; i < 35; i++) {
+            ai.update(world.time(), rotation, score, List.of(human));
+            assertEquals(human.id, ai.responsibleId());
             for (VolleyballPlayer p : world.home().onCourt()) {
-                if (p != human) assertFalse(handling.isArmed(p), "#" + p.number + " went for the human's ball: touch " + handling.lastToucherId()
-                        + " teamTouches " + handling.teamTouches(CourtSide.HOME) + " speed " + world.ball().speed() + " t " + forecast.timeToDescent
-                        + " d " + Math.sqrt(dx * dx + dz * dz) + " ballY " + world.ball().position.y + " p at " + p.position + " human at " + human.position
-                        + " serve " + handling.serveType(world.player(handling.lastToucherId())));
+                if (p != human) assertFalse(handling.isArmed(p), "#" + p.number + " went for the human's ball");
             }
+            world.step(DT);
         }
     }
 

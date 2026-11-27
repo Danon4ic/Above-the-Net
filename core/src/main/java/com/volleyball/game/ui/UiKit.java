@@ -264,12 +264,15 @@ public final class UiKit {
                              boolean wrap, Color color, float alpha) {
         text = Lang.t(text);
         float shadow = 1f;
+        if (width < 0f) return 0f;
+        boolean bounded = width > 0f;
+        float available = bounded ? width - shadow : 0f;
+        if (bounded && (available <= 0f || !wrap && available < font.getLineHeight() && width(font, "…") > available)) return 0f;
+        String truncate = bounded && !wrap ? "…" : null;
         font.setColor(0f, 0f, 0f, 0.35f * alpha * color.a);
-        font.draw(batch, text, x + shadow, y - shadow, width, align, wrap);
+        font.draw(batch, text, x + shadow, y - shadow, 0, text.length(), available, align, wrap, truncate);
         font.setColor(color.r, color.g, color.b, color.a * alpha);
-        LAYOUT.setText(font, text, font.getColor(), width, align, wrap);
-        font.draw(batch, text, x, y, width, align, wrap);
-        return LAYOUT.height;
+        return font.draw(batch, text, x, y, 0, text.length(), available, align, wrap, truncate).height;
     }
 
     public static float width(BitmapFont font, String text) {
@@ -284,8 +287,11 @@ public final class UiKit {
     public static String fit(BitmapFont font, String text, float maxWidth) {
         String t = Lang.t(text);
         if (width(font, t) <= maxWidth) return t;
+        if (width(font, "…") > maxWidth) return "";
         int end = t.length();
-        while (end > 1 && width(font, t.substring(0, end).stripTrailing() + "…") > maxWidth) end--;
+        while (end > 0 && width(font, t.substring(0, end).stripTrailing() + "…") > maxWidth) {
+            end = t.offsetByCodePoints(end, -1);
+        }
         return t.substring(0, end).stripTrailing() + "…";
     }
 

@@ -4,6 +4,8 @@ import com.badlogic.gdx.math.Vector3;
 import com.volleyball.game.ai.Difficulty;
 import com.volleyball.game.entities.VolleyballPlayer;
 import com.volleyball.game.physics.MoveIntent;
+import com.volleyball.game.physics.PhysicsConstants;
+import com.volleyball.game.physics.PlayerLocomotion;
 import com.volleyball.game.rules.MatchFormat;
 import com.volleyball.game.rules.MatchScore;
 import com.volleyball.game.rules.RuleMode;
@@ -119,6 +121,30 @@ class StatisticsTimeoutsReplayTest {
     }
 
     @Test
+    void fatigueLowersTakeoffAndTheBenchRestoresStamina() {
+        GameWorld world = GameWorld.withDefaultTeams(new VolleyballCourt(NetCategory.MEN), 5);
+        VolleyballPlayer p = world.home().players().get(1);
+        float freshHeight = PlayerLocomotion.jumpHeight(p);
+        p.setStamina(0.30f);
+        float tiredHeight = PlayerLocomotion.jumpHeight(p);
+        assertTrue(tiredHeight < freshHeight * 0.81f);
+        MoveIntent jump = world.intent(p);
+        jump.jump = true;
+        world.step(DT);
+        assertEquals(tiredHeight, p.velocity.y * p.velocity.y / (2f * PhysicsConstants.GRAVITY), 0.003f);
+        assertTrue(p.stamina() < 0.28f);
+
+        VolleyballPlayer bench = world.home().substitutes().get(0);
+        assertFalse(bench.isOnCourt());
+        bench.setStamina(0.30f);
+        for (int i = 0; i < 120 * 3; i++) world.step(DT);
+        assertTrue(bench.stamina() > 0.40f);
+        world.setFatigue(false);
+        assertEquals(1f, bench.stamina());
+        assertEquals(freshHeight, PlayerLocomotion.jumpHeight(p));
+    }
+
+    @Test
     void theReplayShowsTheRallyAndGivesTheLiveStateBack() {
         GameWorld world = GameWorld.withDefaultTeams(new VolleyballCourt(NetCategory.MEN), 6);
         ReplayRecorder replay = new ReplayRecorder(world.players(), world.ball());
@@ -129,6 +155,12 @@ class StatisticsTimeoutsReplayTest {
             world.intent(p).clear();
             world.intent(p).direction.set(1f, 0f);
             world.step(DT);
+            if (i == 0) {
+                p.setSwingStyle(com.volleyball.game.entities.SwingStyle.JUMP_TOPSPIN_SERVE);
+                p.setActionPose(com.volleyball.game.entities.ActionPose.SWING, 0.35f);
+                p.recordActionContact(new Vector3(-5f, 3f, 0.16f));
+            }
+            if (i == 120) p.setSwingStyle(com.volleyball.game.entities.SwingStyle.ROLL);
             replay.capture(DT);
         }
         assertTrue(replay.hasReplay());
@@ -138,10 +170,15 @@ class StatisticsTimeoutsReplayTest {
         replay.saveLive();
         replay.apply(0f);
         assertTrue(p.position.x < live.x - 2f, "at the start of the rally the player was further back");
+        assertEquals(com.volleyball.game.entities.SwingStyle.JUMP_TOPSPIN_SERVE, p.swingStyle());
+        Vector3 anchor = new Vector3();
+        assertTrue(p.actionContact(anchor));
+        assertEquals(new Vector3(-5f, 3f, 0.16f), anchor);
         replay.apply(replay.duration());
         assertEquals(live.x, p.position.x, 0.15f);
         replay.apply(0.5f);
         replay.restoreLive();
+        assertEquals(com.volleyball.game.entities.SwingStyle.ROLL, p.swingStyle());
         assertEquals(live.x, p.position.x, 1e-5f, "the live state is back");
     }
 }

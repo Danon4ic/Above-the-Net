@@ -76,7 +76,9 @@ public final class StatsPanel implements Disposable {
         if (!open) return;
         openTime += delta;
         float a = UiKit.ease(openTime / 0.25f);
-        float s = UiFonts.uiScale(height);
+        List<VolleyballPlayer> players = stats.active(shown);
+        float designHeight = Math.max(860f, 604f + 24f * players.size());
+        float s = Math.min(UiFonts.uiScale(height), Math.min(width / 1090f, height / (designHeight + 50f)));
         BitmapFont titleFont = fonts.get(UiFonts.Weight.BLACK, 32f * s);
         BitmapFont sub = fonts.get(UiFonts.Weight.SEMIBOLD, 14f * s);
         BitmapFont team = fonts.get(UiFonts.Weight.EXTRABOLD, 18f * s);
@@ -86,7 +88,7 @@ public final class StatsPanel implements Disposable {
         BitmapFont cell = fonts.get(UiFonts.Weight.SEMIBOLD, 13f * s);
 
         float panelW = Math.min(width - 60f * s, 1180f * s);
-        float panelH = Math.min(height - 50f * s, 860f * s);
+        float panelH = designHeight * s;
         float x0 = (width - panelW) / 2f;
         float y0 = (height - panelH) / 2f - (1f - a) * 16f * s;
         float pad = 34f * s;
@@ -118,7 +120,6 @@ public final class StatsPanel implements Disposable {
         float midX = x0 + panelW / 2f;
         float barW = panelW * 0.22f;
         float tableTop = compareTop - rows.length * rowH - 108f * s;
-        List<VolleyballPlayer> players = stats.active(shown);
         String[] columns = {"#", "PLAYER", "PTS", "K", "ATT", "EFF", "ACE", "SE", "BLK", "DIG", "REC", "AST", "ERR"};
         float[] colX = {0f, 0.05f, 0.33f, 0.40f, 0.46f, 0.53f, 0.61f, 0.67f, 0.73f, 0.79f, 0.85f, 0.91f, 0.96f};
         float tableX = x0 + pad;
@@ -166,8 +167,9 @@ public final class StatsPanel implements Disposable {
         batch.begin();
         UiKit.text(batch, titleFont, title, x0, top, panelW, Align.center, false, UiKit.TEXT, a);
         UiKit.text(batch, sub, subtitle.toUpperCase(java.util.Locale.ROOT), x0, top - 44f * s, panelW, Align.center, false, UiKit.JADE, a);
-        UiKit.text(batch, team, homeName, midX - barW - 300f * s, compareTop + 36f * s, 230f * s, Align.right, false, UiKit.TEXT, a);
-        UiKit.text(batch, team, awayName, midX + barW + 70f * s, compareTop + 36f * s, UiKit.TEXT, a);
+        float teamNameW = panelW / 2f - pad - barW - 70f * s;
+        UiKit.text(batch, team, homeName, x0 + pad, compareTop + 36f * s, teamNameW, Align.right, false, UiKit.TEXT, a);
+        UiKit.text(batch, team, awayName, midX + barW + 70f * s, compareTop + 36f * s, teamNameW, Align.left, false, UiKit.TEXT, a);
         for (int i = 0; i < rows.length; i++) {
             float ry = compareTop - (i + 1) * rowH;
             float ty = ry + rowH / 2f + rowLabel.getCapHeight() / 2f;
@@ -179,7 +181,9 @@ public final class StatsPanel implements Disposable {
                 Align.center, false, UiKit.TEXT_FAINT, a);
         UiKit.sectionTitle(batch, team, "Players  ·  " + (shown == CourtSide.HOME ? homeName : awayName), tableX, tableTop + 62f * s, a);
         for (int c = 0; c < columns.length; c++) {
-            UiKit.text(batch, head, columns[c], tableX + colX[c] * tableW, tableTop + 18f * s, UiKit.TEXT_FAINT, a);
+            float columnW = ((c + 1 < colX.length ? colX[c + 1] : 1f) - colX[c]) * tableW;
+            UiKit.text(batch, head, columns[c], tableX + colX[c] * tableW, tableTop + 18f * s,
+                    columnW - 4f * s, Align.left, false, UiKit.TEXT_FAINT, a);
         }
         for (int i = 0; i < players.size(); i++) {
             VolleyballPlayer p = players.get(i);
@@ -190,7 +194,9 @@ public final class StatsPanel implements Disposable {
                     l.receptions == 0 ? "-" : String.format(java.util.Locale.ROOT, "%.1f", l.receptionAverage()), n(l.assists), n(l.errors)};
             for (int c = 0; c < v.length; c++) {
                 Color color = c == 2 ? UiKit.JADE : c == 1 ? UiKit.TEXT : UiKit.TEXT_DIM;
-                UiKit.text(batch, c == 2 ? value : cell, v[c], tableX + colX[c] * tableW, ty, color, a);
+                float columnW = ((c + 1 < colX.length ? colX[c + 1] : 1f) - colX[c]) * tableW;
+                UiKit.text(batch, c == 2 ? value : cell, v[c], tableX + colX[c] * tableW, ty,
+                        columnW - 4f * s, Align.left, false, color, a);
             }
         }
         if (players.isEmpty()) {

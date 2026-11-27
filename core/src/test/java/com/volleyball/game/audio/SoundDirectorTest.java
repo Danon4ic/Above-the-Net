@@ -34,11 +34,18 @@ class SoundDirectorTest {
 
     static final class RecordingSink implements SoundSink {
         final List<Played> played = new ArrayList<>();
+        final List<Integer> stepTakes = new ArrayList<>();
         final java.util.Map<SoundId, Float> loops = new java.util.EnumMap<>(SoundId.class);
 
         @Override
         public void play(SoundId id, float volume, float pitch, float pan) {
             played.add(new Played(id, volume, pitch, pan));
+        }
+
+        @Override
+        public void playTake(SoundId id, int take, float volume, float pitch, float pan) {
+            play(id, volume, pitch, pan);
+            if (id == SoundId.FOOTSTEP_WOOD && volume > 0f) stepTakes.add(take);
         }
 
         @Override
@@ -81,6 +88,30 @@ class SoundDirectorTest {
         assertNotNull(spike);
         assertNotNull(tip);
         assertTrue(spike.volume() > tip.volume());
+    }
+
+    @Test
+    void defenseAndSoftAttackUseSeparateTakes() {
+        director.onBallTouch(touch(ContactType.DIVE, "", 4f, 0, 0));
+        director.onBallTouch(touch(ContactType.ONE_ARM, "", 4f, 0, 0));
+        director.onBallTouch(touch(ContactType.ATTACK, AttackType.ROLL_SHOT.label, 8f, 0, 0));
+        assertNotNull(sink.last(SoundId.DIG));
+        assertNotNull(sink.last(SoundId.DIG_ONE_ARM));
+        assertNotNull(sink.last(SoundId.SPIKE_ROLL));
+        assertNull(sink.last(SoundId.SPIKE_SOFT));
+    }
+
+    @Test
+    void aFastIncomingBallSoundsHeavierEvenWhenThePassLeavesSlowly() {
+        BallTouch weak = touch(ContactType.FOREARM_PASS, "", 5f, 0, 0);
+        BallTouch strong = new BallTouch(weak.playerId(), weak.side(), weak.type(), weak.purpose(), weak.quality(),
+                weak.rating(), weak.missDistance(), weak.contactPoint(), weak.playerPosition(), weak.airborne(),
+                weak.teamTouchNumber(), weak.outgoingVelocity(), weak.variant(), weak.time(), 23f);
+        director.onBallTouch(weak);
+        director.onBallTouch(strong);
+        assertNotNull(sink.last(SoundId.FOREARM_PASS));
+        assertNotNull(sink.last(SoundId.FOREARM_HARD));
+        assertTrue(sink.last(SoundId.FOREARM_HARD).volume() > sink.last(SoundId.FOREARM_PASS).volume());
     }
 
     @Test
@@ -144,11 +175,11 @@ class SoundDirectorTest {
         director.setListener(p.position, Vector3.X);
         director.setCourtSurface(Venue.BEACH, CourtTheme.WOOD_GYM);
         p.velocity.x = 2f;
-        director.update(0.01f);
-        director.update(0.4f);
+        director.updateMovement(0.01f);
+        director.updateMovement(0.4f);
         assertNull(sink.last(SoundId.FOOTSTEP_SAND));
         p.addStride(0.5f);
-        director.update(0.01f);
+        director.updateMovement(0.01f);
         assertNotNull(sink.last(SoundId.FOOTSTEP_SAND));
         assertNull(sink.last(SoundId.FOOTSTEP));
         director.onBallContact(new BallContact(ColliderKind.FLOOR, -1, p.position, 8f, 0));
@@ -156,8 +187,74 @@ class SoundDirectorTest {
         assertNull(sink.last(SoundId.BALL_FLOOR));
         director.setCourtSurface(Venue.ROOFTOP, CourtTheme.WOOD_GYM);
         p.addStride(0.8f);
-        director.update(0.01f);
+        director.updateMovement(0.01f);
         assertNotNull(sink.last(SoundId.FOOTSTEP_CONCRETE));
+    }
+
+    @Test
+    void movingVenuesReleasesTheOldCrowdLoopAndStopsTheNewOneWhenLeaving() {
+        director.update(0.02f);
+        director.setCourtSurface(Venue.BEACH, CourtTheme.WOOD_GYM);
+        director.update(0.02f);
+        assertEquals(0f, sink.loops.get(SoundId.CROWD_AMBIENT));
+        assertTrue(sink.loops.get(SoundId.CROWD_BEACH) > 0f);
+        director.setCourtSurface(Venue.ROOFTOP, CourtTheme.WOOD_GYM);
+        director.update(0.02f);
+        assertEquals(0f, sink.loops.get(SoundId.CROWD_BEACH));
+        assertTrue(sink.loops.get(SoundId.CROWD_ROOFTOP) > 0f);
+        director.stopAmbience();
+        assertEquals(0f, sink.loops.get(SoundId.CROWD_ROOFTOP));
+    }
+
+    @Test
+    void quietFootfallsUseDistinctTakesAndACutReplacesTheOrdinaryStep() {
+        VolleyballPlayer p = world.home().players().getFirst();
+        director.setListener(p.position, Vector3.X);
+        director.setCourtSurface(Venue.SCHOOL_GYM, CourtTheme.WOOD_GYM);
+        p.velocity.x = 1.7f;
+        director.updateMovement(1f / 120f);
+        for (int i = 0; i < SoundId.FOOTSTEP_WOOD.variants; i++) {
+            p.addStride(p.strideLength() / 2f);
+            director.updateMovement(1f / 120f);
+        }
+        assertEquals(SoundId.FOOTSTEP_WOOD.variants, sink.stepTakes.size());
+        assertEquals(SoundId.FOOTSTEP_WOOD.variants, sink.stepTakes.stream().distinct().count());
+        float walk = sink.last(SoundId.FOOTSTEP_WOOD).volume();
+        p.velocity.x = 4f;
+        director.updateMovement(1f / 120f);
+        assertNull(sink.last(SoundId.PLANT_WOOD), "starting to run does not squeak");
+        p.velocity.set(3.8f, 0f, 0.25f);
+        p.addStride(p.strideLength() / 2f);
+        director.updateMovement(1f / 120f);
+        assertEquals(SoundId.FOOTSTEP_WOOD.variants, sink.stepTakes.size(), "the accent replaces the ordinary footfall");
+        assertNotNull(sink.last(SoundId.PLANT_WOOD));
+        assertTrue(sink.last(SoundId.PLANT_WOOD).volume() > walk);
+        p.setAirborne(true);
+        director.updateMovement(1f / 120f);
+        assertEquals(1, sink.played.stream().filter(sound -> sound.id() == SoundId.PLANT_WOOD).count(),
+                "jumping immediately off that foot does not trigger a second impact");
+    }
+
+    @Test
+    void aRunningJumpUsesOneLoadedPlantOnEachSurface() {
+        var expected = java.util.Map.of(Venue.SCHOOL_GYM, SoundId.PLANT_WOOD, Venue.BEACH, SoundId.PLANT_SAND,
+                Venue.ROOFTOP, SoundId.PLANT_ROOF);
+        VolleyballPlayer p = world.home().players().getFirst();
+        director.setListener(p.position, Vector3.X);
+        for (var surface : expected.entrySet()) {
+            sink.played.clear();
+            director.setCourtSurface(surface.getKey(), CourtTheme.WOOD_GYM);
+            p.velocity.x = 4f;
+            director.updateMovement(1f / 120f);
+            p.addStride(p.strideLength() / 2f);
+            p.velocity.set(1f, 5f, 0f);
+            p.setAirborne(true);
+            director.updateMovement(1f / 120f);
+            assertEquals(List.of(surface.getValue()), sink.played.stream().map(Played::id).toList());
+            p.setAirborne(false);
+            director.updateMovement(1f / 120f);
+            director.updateMovement(0.12f);
+        }
     }
 
     @Test
@@ -207,15 +304,15 @@ class SoundDirectorTest {
     void landingAndDiveFallAreHeard() {
         VolleyballPlayer p = world.home().players().get(2);
         p.setAirborne(true);
-        director.update(0.01f);
+        director.updateMovement(0.01f);
         assertNotNull(sink.last(SoundId.JUMP_TAKEOFF));
         p.setAirborne(false);
-        director.update(0.01f);
+        director.updateMovement(0.01f);
         assertNotNull(sink.last(SoundId.LANDING));
         p.setBodyState(com.volleyball.game.entities.BodyState.DIVING);
-        director.update(0.01f);
+        director.updateMovement(0.01f);
         p.setBodyState(com.volleyball.game.entities.BodyState.ON_FLOOR);
-        director.update(0.01f);
+        director.updateMovement(0.01f);
         assertNotNull(sink.last(SoundId.BODY_FALL));
     }
 }

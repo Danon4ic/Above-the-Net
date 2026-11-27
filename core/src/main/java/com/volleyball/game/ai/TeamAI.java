@@ -10,6 +10,7 @@ import com.volleyball.game.entities.PlayerRole;
 import com.volleyball.game.entities.PlayerTrait;
 import com.volleyball.game.entities.Team;
 import com.volleyball.game.entities.VolleyballPlayer;
+import com.volleyball.game.mechanics.ActionKind;
 import com.volleyball.game.mechanics.AttackType;
 import com.volleyball.game.mechanics.BallHandling;
 import com.volleyball.game.mechanics.BallTouch;
@@ -19,6 +20,7 @@ import com.volleyball.game.mechanics.BallTouchListener;
 import com.volleyball.game.mechanics.ContactType;
 import com.volleyball.game.mechanics.ContactZone;
 import com.volleyball.game.mechanics.PassRating;
+import com.volleyball.game.mechanics.QuickSetWindow;
 import com.volleyball.game.mechanics.ServeType;
 import com.volleyball.game.mechanics.SetType;
 import com.volleyball.game.mechanics.TacticalTargets;
@@ -115,6 +117,15 @@ public final class TeamAI implements BallTouchListener {
     /** Seconds until the setter's contact (estimated each step while the pass travels). */
     private float timeToSet = 1f;
     private int jumpSettingId = -1;
+    private final QuickSetWindow quickWindow = new QuickSetWindow();
+    private final Vector3 quickRelease = new Vector3();
+    private final Vector3 quickPoint = new Vector3();
+    private final Vector3 quickLane = new Vector3();
+    private float quickLead = Float.NaN;
+    private int quickSetterId = -1;
+    private int earlyJumpFor = -1;
+    private int quickHitterId = -1;
+    private double quickUntil;
     /** Decoys who have jumped in this possession. */
     private final java.util.Set<Integer> decoysJumped = new java.util.HashSet<>();
     /** The play the attack now in the air came from (to learn which plays score). */
@@ -126,7 +137,10 @@ public final class TeamAI implements BallTouchListener {
 
     // Per-rally decisions.
     private int responsibleId = -1;
+    private VolleyballPlayer calledBallPlayer;
     private int responsibleForToucher = Integer.MIN_VALUE;
+    private CourtSide responsibleForSide;
+    private int responsibleForCount = -1;
     /** Counts the ball changing hands (a new last toucher); keys per-touch random draws such as the jump timing. */
     private int ballPhase;
     private double responsibleChosenAt;
@@ -143,6 +157,8 @@ public final class TeamAI implements BallTouchListener {
     private boolean dumpDecided;
     /** The last touch was a block (the ball is a rebound off the hands). */
     private boolean offBlock;
+    private boolean attackRebound;
+    private boolean reboundPass;
     /** Our last touch was an attack: when it was hit, and by whom (the cover holds until the block's result). */
     private double ourAttackAt = -10;
     private int ourAttackerId = -1;
@@ -170,6 +186,7 @@ public final class TeamAI implements BallTouchListener {
         double landedAt = Double.NEGATIVE_INFINITY;
         /** The player's own way of playing (shot preferences, risk), so no two hitters are alike. */
         Style style = Style.NEUTRAL;
+        AttackType lastAttack;
 
         Brain(AutoPlayer motor) {
             this.motor = motor;
@@ -292,6 +309,20 @@ public final class TeamAI implements BallTouchListener {
         return o == null || o.dump() ? null : o.set();
     }
 
+    /** Intended hitter while a released quick ball is still playable during the same jump. */
+    public VolleyballPlayer quickHitter() {
+        if (quickHitterId < 0 || world.time() > quickUntil || !world.ball().isActive()
+                || world.ballHandling().teamTouches(side) != 2 || world.ball().position.x * side.sign() <= 0.12f) return null;
+        VolleyballPlayer hitter = world.player(quickHitterId);
+        return hitter != null && hitter.isAirborne() && hitter.isUpright() && hitter.isOnCourt() ? hitter : null;
+    }
+
+    public boolean quickWindowFor(VolleyballPlayer hitter) {
+        VolleyballPlayer setter = world.player(quickSetterId);
+        BallHandling.QuickSet option = setter == null ? null : world.ballHandling().quickSet(setter);
+        return option != null && option.hitter() == hitter;
+    }
+
     /** The active branch of our attack and the player's part in it. */
     public record PlayAssignment(Combination play, SetType set, VolleyballPlayer hitter, Combination.Run run,
                                  VolleyballPlayer decoy, boolean setting, boolean committed, boolean alternate) {
@@ -368,6 +399,11 @@ public final class TeamAI implements BallTouchListener {
         return responsibleId;
     }
 
+    /** Latest live ball call. May be empty when the team leaves the ball or is still reading it. */
+    public VolleyballPlayer calledBallPlayer() {
+        return calledBallPlayer;
+    }
+
     /** The hitter the team plans to set (-1 if none). */
     public int attackerId() {
         return attackerId;
@@ -382,12 +418,18 @@ public final class TeamAI implements BallTouchListener {
     /** Resets per-rally decisions (call before each serve). */
     public void newRally() {
         responsibleId = -1;
+        calledBallPlayer = null;
         responsibleForToucher = Integer.MIN_VALUE;
+        responsibleForSide = null;
+        responsibleForCount = -1;
         attackerId = -1;
         attackDecidedFor = -1;
         serveAimed = false;
         playCaller.reset();
         jumpSettingId = -1;
+        quickSetterId = -1;
+        quickHitterId = -1;
+        earlyJumpFor = -1;
         playForCurrentPass = false;
         deliveredSet = null;
         decoysJumped.clear();
@@ -398,6 +440,8 @@ public final class TeamAI implements BallTouchListener {
         receptionLanes.clear();
         dumpDecided = false;
         offBlock = false;
+        attackRebound = false;
+        reboundPass = false;
         ourAttackAt = -10;
         ourAttackerId = -1;
         coverFor = -1;
@@ -416,7 +460,12 @@ public final class TeamAI implements BallTouchListener {
 
     @Override
     public void onBallTouch(BallTouch touch) {
+        if (touch.teamTouchNumber() == 1) reboundPass = offBlock && touch.side() == side;
+        attackRebound = touch.type() == ContactType.BLOCK && touch.side() != side && holdingCover(touch.time());
+        calledBallPlayer = null;
         memory.record(touch);
+        quickHitterId = touch.side() == side ? touch.quickHitterId() : -1;
+        if (quickHitterId >= 0) quickUntil = touch.time() + 0.38;
         if (touch.side() != side || touch.teamTouchNumber() == 1) playForCurrentPass = false;
         deliveredSet = touch.side() == side && touch.teamTouchNumber() == 2 && touch.purpose() == ContactPurpose.SET
                 ? memory.lastSet() : null;
@@ -489,6 +538,7 @@ public final class TeamAI implements BallTouchListener {
     public void update(double now, RotationManager rotation, MatchScore score, Collection<VolleyballPlayer> humans) {
         BallHandling handling = world.ballHandling();
         Ball ball = world.ball();
+        calledBallPlayer = null;
         court = team.onCourt();
         updateRisk(score);
         lastScore = score;
@@ -534,8 +584,12 @@ public final class TeamAI implements BallTouchListener {
         int touches = handling.teamTouches(side);
         setterRunningId = -1;
 
-        if (handling.lastToucherId() != responsibleForToucher) {
+        CourtSide touchSide = handling.lastTouchSide();
+        int touchCount = touchSide == null ? 0 : handling.teamTouches(touchSide);
+        if (handling.lastToucherId() != responsibleForToucher || touchSide != responsibleForSide || touchCount != responsibleForCount) {
             responsibleForToucher = handling.lastToucherId();
+            responsibleForSide = touchSide;
+            responsibleForCount = touchCount;
             ballPhase++;
             responsibleId = -1;
             attackDecidedFor = -1;
@@ -548,11 +602,13 @@ public final class TeamAI implements BallTouchListener {
             // it, the player it flies at steps out of its way. A touch would make it our ball.
             // Our own serve coming back off the net is lost anyway: touching it is a fault too.
             defendOrWait(now, rotation, humans);
+            calledBallPlayer = null;
             cancelOthers(-1, humans);
             VolleyballPlayer inPath = ballInPath(humans);
             if (inPath != null) dodge(inPath);
-        } else if (comingToUs && (!ourPossession || touches < 3)) {
+        } else if (quickHitter() != null || comingToUs && (!ourPossession || touches < 3)) {
             playOurBall(now, rotation, humans, ourPossession ? touches : 0);
+            calledBallPlayer = world.player(responsibleId);
         } else {
             defendOrWait(now, rotation, humans);
         }
@@ -587,19 +643,44 @@ public final class TeamAI implements BallTouchListener {
     private void playOurBall(double now, RotationManager rotation, Collection<VolleyballPlayer> humans, int touches) {
         BallHandling handling = world.ballHandling();
         VolleyballPlayer setter = setter(rotation);
-        if (responsibleId < 0 || shouldReconsider(now, humans)) {
-            int previous = responsibleId;
+        int previousOwner = responsibleId;
+        if (responsibleId < 0 || shouldReconsider(now, humans, touches, rotation)) {
             responsibleId = chooseResponsible(touches, setter, rotation, humans);
             responsibleChosenAt = now;
-            if (touches == 1 && previous < 0) prepareSet(rotation, setter, humans);
         }
+        VolleyballPlayer quickHitter = touches == 2 ? quickHitter() : null;
+        if (quickHitter != null) {
+            responsibleId = quickHitter.id;
+            attackerId = quickHitter.id;
+        }
+        VolleyballPlayer chosen = world.player(responsibleId);
+        VolleyballPlayer inPath = quickHitter == null ? ballInPath(humans, touches == 0 ? 0.40f : 0.20f) : null;
+        VolleyballPlayer dodging = null;
+        if (inPath != null && inPath != chosen) {
+            boolean personsBall = chosen != null && humans.contains(chosen);
+            boolean spareSetter = touches == 0 && inPath == setter && chosen != null
+                    && reach(chosen, forecast.timeToDescent, forecast.descentPoint) > 0.5f;
+            boolean keepSetter = touches == 1 && chosen != null
+                    && (chosen == setter && reach(chosen, forecast.timeToDescent, forecast.descentPoint) > 0.3f
+                    || chosen.role == PlayerRole.LIBERO && backupSettingReach(chosen) > 0.33f);
+            boolean keepHitter = touches == 2 && chosen != null && chosen.id == attackerId
+                    && (canRunIntoSet(chosen, rotation) || chosen.isAirborne() && ballNearHand(chosen));
+            if (personsBall || spareSetter || keepSetter || keepHitter) {
+                dodging = inPath;
+            } else {
+                responsibleId = inPath.id;
+                responsibleChosenAt = now;
+                if (touches == 2) attackerId = inPath.id;
+            }
+        }
+        if (touches == 1 && previousOwner != responsibleId) prepareSet(rotation, setter, humans);
         // A person setting chooses the set (or leaves it on Auto, which plays the team's combination);
         // the hitter that set goes to gets ready for it.
         VolleyballPlayer ballPlayer = world.player(responsibleId);
         if (touches == 1 && ballPlayer != null && humans.contains(ballPlayer)) {
             plannedSet = handling.setType(ballPlayer);
             // The hitters run for the person's set (route and tempo), not for the play the team called.
-            if (!handling.isAutoSet(ballPlayer)) {
+            if (!handling.isAutoSet(ballPlayer) || advisor.passQuality(side) == ShotAdvisor.PassQuality.POOR) {
                 playCaller.followSet(plannedSet, playbook, advisor.hitters(ballPlayer, rotation));
             }
             VolleyballPlayer hitter = null;
@@ -613,27 +694,9 @@ public final class TeamAI implements BallTouchListener {
             if (hitter == null) hitter = nearestHitterFor(plannedSet, ballPlayer, rotation, humans);
             attackerId = hitter == null ? -1 : hitter.id;
         }
-        if (touches == 1) runPlay(humans);
-        // A ball flying straight at a teammate is played by that teammate (anyone else would be too late).
-        VolleyballPlayer inPath = ballInPath(humans);
-        // The person's ball stays theirs: a teammate in its path gets out of the way instead.
-        VolleyballPlayer dodging = null;
-        boolean personsBall = ballPlayer != null && humans.contains(ballPlayer);
-        // A first ball flying at the setter: the setter gets out of the way (it is needed for the
-        // second touch) when a teammate can take it instead.
-        VolleyballPlayer chosen = world.player(responsibleId);
-        boolean spareSetter = inPath != null && touches == 0 && inPath == setter && chosen != null && chosen != setter
-                && reach(chosen, forecast.timeToDescent, forecast.descentPoint) > 0.5f;
-        boolean leaveBackupSet = touches == 1 && inPath != null && inPath != chosen && chosen != null
-                && chosen.role == PlayerRole.LIBERO && backupSettingReach(chosen) > 0.33f;
-        if (inPath != null && (personsBall || spareSetter || leaveBackupSet)) {
-            dodging = inPath;
-        } else if (inPath != null && inPath.id != responsibleId && !(touches == 1 && chosen != null
-                && (chosen == setter || chosen.role == PlayerRole.LIBERO)
-                && reach(chosen, forecast.timeToDescent, forecast.descentPoint) > 0.5f)) {
-            responsibleId = inPath.id;
-            responsibleChosenAt = now;
-            if (touches == 2) attackerId = inPath.id;
+        if (touches == 1) {
+            runPlay(humans);
+            readQuickSet(ballPlayer, rotation, humans);
         }
         VolleyballPlayer attacker = world.player(attackerId);
         for (VolleyballPlayer p : court) {
@@ -653,7 +716,7 @@ public final class TeamAI implements BallTouchListener {
                             : setterDump(p, rotation) ? AutoPlayer.Behavior.ATTACK
                             : p.role == PlayerRole.SETTER && (p.id == jumpSettingId || p.isAirborne())
                                     ? AutoPlayer.Behavior.JUMP_SET : AutoPlayer.Behavior.SET;
-                    default -> canAttack(p, rotation) ? AutoPlayer.Behavior.ATTACK : AutoPlayer.Behavior.PASS;
+                    default -> p == quickHitter || canAttack(p, rotation) ? AutoPlayer.Behavior.ATTACK : AutoPlayer.Behavior.PASS;
                 };
                 // The shot is chosen in the air; the better the hitter's reading, the later (when the
                 // block has formed): beginners at the take-off, professionals near the top of the jump.
@@ -677,6 +740,10 @@ public final class TeamAI implements BallTouchListener {
                 }
                 brain.motor.setBackRow(!rotation.isFrontRow(side, p.id));
                 if (touches == 1 && p.role == PlayerRole.LIBERO && !p.isUpright()) world.intent(p).clear();
+                else if (p == quickHitter) {
+                    world.intent(p).clear();
+                    if (!handling.isArmed(p)) handling.arm(p, ActionKind.PRIMARY, now);
+                }
                 else brain.motor.act(p, behavior, now);
                 brain.state = switch (behavior) {
                     case SET, JUMP_SET -> AiState.SETTING;
@@ -690,6 +757,9 @@ public final class TeamAI implements BallTouchListener {
                 moveTo(p, target.x, target.z, false);
                 if (horizontalDistance(p, target) < 2f) watchNet(p, false);
                 brain.state = AiState.POSITIONING;
+            } else if (touches == 0 && attackRebound && p != setter && p.id != ourAttackerId) {
+                // Keep the short and deep cover in place while the called defender chases the deflection.
+                coverHitter(p, world.player(ourAttackerId));
             } else if (p == setter && touches == 0) {
                 // Priority 4: the setter runs to the setting spot while the pass is in the air.
                 TacticalTargets.setterTarget(side, target);
@@ -702,13 +772,15 @@ public final class TeamAI implements BallTouchListener {
                 // A receiver whose lane the serve is not in holds the lane, ready.
                 receptionSpot(p);
                 brain.state = AiState.READY_TO_RECEIVE;
-            } else if (touches == 1 && playCaller.runTarget(p, timeToSet, target) != null) {
+            } else if (touches == 1 && playCaller.runTarget(p, approachClock(p), target) != null) {
                 // Priority 5: running the play - the start of the approach, then (at the tempo) the hitting spot.
                 runRoute(p);
+                tryEarlyAttackJump(p, ballPlayer, rotation, humans);
             } else if (touches <= 1 && isAttackOption(p, rotation, setter)) {
                 // Attackers get ready for the set.
                 approachStart(p, rotation, touches);
                 brain.state = AiState.APPROACHING;
+                if (touches == 1) tryEarlyAttackJump(p, ballPlayer, rotation, humans);
             } else if (touches == 2 && attacker != null && p.id != responsibleId && difficulty != Difficulty.BEGINNER) {
                 // Decoys finish their fake; everyone else covers the hitter.
                 if (!finishDecoy(p)) coverHitter(p, world.player(responsibleId));
@@ -765,6 +837,7 @@ public final class TeamAI implements BallTouchListener {
     private boolean setterDump(VolleyballPlayer p, RotationManager rotation) {
         Combination.Option o = playCaller.chosen();
         if (o == null || !o.dump() || p.role != PlayerRole.SETTER || !rotation.isFrontRow(side, p.id)) return false;
+        if (world.ballHandling().quickSet(p) != null) return false;
         if (!dumpDecided) {
             dumpDecided = true;
             // Short, to whichever front side of theirs has nobody behind the net.
@@ -829,13 +902,14 @@ public final class TeamAI implements BallTouchListener {
      * it, or a teammate has become clearly better placed (the ball drifted, a deflection). The
      * better the team, the more often it re-reads the ball.
      */
-    private boolean shouldReconsider(double now, Collection<VolleyballPlayer> humans) {
+    private boolean shouldReconsider(double now, Collection<VolleyballPlayer> humans, int touches, RotationManager rotation) {
         double interval = difficulty == Difficulty.PROFESSIONAL ? 0.12 : 0.3;
         if (difficulty == Difficulty.BEGINNER || now - responsibleChosenAt < interval) return false;
         VolleyballPlayer current = world.player(responsibleId);
         if (current == null || humans.contains(current)) return false;
         if (!current.isUpright() && current.bodyState() != BodyState.DIVING) return true;
         if (world.ballHandling().isArmed(current) || current.isAirborne()) return false;
+        if (touches == 2 && current.id == attackerId && canRunIntoSet(current, rotation)) return false;
         responsibleChosenAt = now;
         float mine = reach(current, forecast.timeToDescent, forecast.descentPoint);
         if (mine < 0.15f) return true;
@@ -849,18 +923,22 @@ public final class TeamAI implements BallTouchListener {
     }
 
     /**
-     * The player (AI, upright, not the last toucher) the ball is about to hit within the next
-     * 0.4 s, judged from its current flight (gravity only): within half a metre of the body axis,
+     * The player (AI, upright, not the last toucher) the ball is about to hit, judged from its
+     * current flight (gravity only): within half a metre of the body axis,
      * between the knees and the top of the head. Null if none.
      */
     private VolleyballPlayer ballInPath(Collection<VolleyballPlayer> humans) {
+        return ballInPath(humans, 0.40f);
+    }
+
+    private VolleyballPlayer ballInPath(Collection<VolleyballPlayer> humans, float horizon) {
         Ball ball = world.ball();
         int lastToucher = world.ballHandling().lastToucherId();
         VolleyballPlayer hit = null;
         float first = Float.MAX_VALUE;
         for (VolleyballPlayer p : court) {
             if (p.id == lastToucher || humans.contains(p) || !p.isUpright() || p.isAirborne()) continue;
-            for (float t = 0f; t <= 0.4f; t += 0.02f) {
+            for (float t = 0f; t <= horizon; t += 0.02f) {
                 float x = ball.position.x + ball.velocity.x * t;
                 float z = ball.position.z + ball.velocity.z * t;
                 float y = ball.position.y + ball.velocity.y * t - 0.5f * PhysicsConstants.GRAVITY * t * t;
@@ -913,7 +991,8 @@ public final class TeamAI implements BallTouchListener {
     private int chooseResponsible(int touches, VolleyballPlayer setter, RotationManager rotation,
                                   Collection<VolleyballPlayer> humans) {
         int lastToucher = world.ballHandling().lastToucherId();
-        if (touches == 1 && setter != null && setter.id != lastToucher && setter.isUpright() && setter.isOnCourt()) return setter.id;
+        if (touches == 1 && setter != null && setter.id != lastToucher && setter.isUpright() && setter.isOnCourt()
+                && (!reboundPass || reach(setter, forecast.timeToDescent, forecast.descentPoint) > 0.23f)) return setter.id;
         // The setter took the first ball (or is down): the libero comes in and sets, as long as it can get there.
         VolleyballPlayer libero = team.libero();
         if (touches == 1 && libero != null && libero.isOnCourt() && libero.id != lastToucher
@@ -930,6 +1009,9 @@ public final class TeamAI implements BallTouchListener {
             if (touches == 2) attackerId = human.id;
             return human.id;
         }
+        VolleyballPlayer calledHitter = touches == 2 && deliveredSet != null ? world.player(attackerId) : null;
+        if (calledHitter != null && calledHitter.id != lastToucher && !humans.contains(calledHitter)
+                && canRunIntoSet(calledHitter, rotation)) return calledHitter.id;
         if (touches == 0 && receivingServe && !receptionLanes.isEmpty()) {
             // The lane's receiver has priority, but a serve on the seam or right at a neighbour
             // goes to whoever can really play it (the lane only breaks ties).
@@ -972,7 +1054,12 @@ public final class TeamAI implements BallTouchListener {
             if (touches == 0 && !offBlock && Math.abs(p.position.x) < 1.2f
                     && Math.abs(forecast.descentPoint.x) > Math.abs(p.position.x) + 1.2f) score -= 0.3f;
             // Covering players expect the rebound; the hitter still in the air cannot move yet.
-            if (offBlock && brain != null && brain.state == AiState.COVERING) score += 0.15f;
+            if (touches == 0 && attackRebound) {
+                Integer slot = coverSlots.get(p.id);
+                boolean shortRebound = forecast.descentPoint.x * side.sign() < coverPoint.x * side.sign() + 2.7f;
+                if (slot != null && chance > 0.28f) score += (shortRebound == (slot < 2) ? 0.18f : 0.07f);
+                if (p.id == ourAttackerId && chance < 0.62f) score -= 0.28f;
+            }
             // The setter took the first ball: the libero (or the right-side player) sets.
             if (touches == 1 && p.role == PlayerRole.LIBERO) score += 0.25f;
             if (touches == 0) score += PlayerAttributes.normalized(p.attributes.receiving) * 0.1f;
@@ -989,6 +1076,24 @@ public final class TeamAI implements BallTouchListener {
         }
         if (touches == 2 && best != null) attackerId = best.id;
         return best == null ? -1 : best.id;
+    }
+
+    /** The hitter can still meet this set at attacking height after a run and a jump. */
+    private boolean canRunIntoSet(VolleyballPlayer p, RotationManager rotation) {
+        if (!p.isOnCourt() || !p.isUpright() || p.role == PlayerRole.LIBERO) return false;
+        float jump = PlayerLocomotion.jumpHeight(p);
+        hitRead.watchHeight = p.standingReach() - 0.02f + (p.isAirborne() ? p.position.y : jump);
+        world.predictor().predict(world.ball(), 6f, hitRead);
+        hitRead.watchHeight = Float.NaN;
+        if (!hitRead.reachesWatchHeight || CourtDimensions.sideOf(hitRead.descentPoint.x) != side) return false;
+        float depth = hitRead.descentPoint.x * side.sign();
+        if (!rotation.isFrontRow(side, p.id) && depth < CourtDimensions.ATTACK_LINE_DISTANCE - 0.2f) return false;
+        float dx = hitRead.descentPoint.x + side.sign() * 0.82f - p.position.x;
+        float dz = hitRead.descentPoint.z - p.position.z;
+        float distance = (float) Math.hypot(dx, dz);
+        if (p.isAirborne()) return distance < 1.25f;
+        float time = hitRead.timeToDescent - PlayerLocomotion.riseTime(jump);
+        return distance <= 0.72f + PlayerLocomotion.maxRunSpeed(p) * Math.max(0f, time - 0.10f);
     }
 
     /**
@@ -1069,7 +1174,7 @@ public final class TeamAI implements BallTouchListener {
         float distance = Math.max(0f, (float) Math.sqrt(dx * dx + dz * dz) - stretch);
         Brain brain = brains.get(p.id);
         float reaction = brain == null ? 0.1f : brain.motor.skill().reaction();
-        float needed = reaction + 0.25f + distance / PlayerLocomotion.maxRunSpeed(p.attributes) + (p.isAirborne() ? 0.35f : 0f);
+        float needed = reaction + 0.25f + distance / PlayerLocomotion.maxRunSpeed(p) + (p.isAirborne() ? 0.35f : 0f);
         return (float) (1.0 / (1.0 + Math.exp(-(timeAvailable - needed) / 0.2)));
     }
 
@@ -1130,6 +1235,7 @@ public final class TeamAI implements BallTouchListener {
         EnumMap<SetType.Lane, VolleyballPlayer> lanes = new EnumMap<>(advisor.hitters(from, rotation));
         boolean setterFront = from.role == PlayerRole.SETTER && rotation.isFrontRow(side, from.id);
         decoysJumped.clear();
+        earlyJumpFor = -1;
         dumpDecided = false;
         playCaller.setSetter(from);
         playCaller.call(difficulty, playbook, tactics, lanes, memory.lastOwnPass(), setterFront, humans);
@@ -1139,6 +1245,20 @@ public final class TeamAI implements BallTouchListener {
         VolleyballPlayer hitter = playCaller.chosenHitter(from);
         attackerId = hitter == null ? -1 : hitter.id;
         if (whoSets != null && !humans.contains(whoSets) && o != null && !o.dump()) world.ballHandling().setSetType(whoSets, o.set());
+        boolean playerSetting = whoSets != null && humans.contains(whoSets);
+        BallHandling handling = world.ballHandling();
+        if (whoSets != null && whoSets.role == PlayerRole.SETTER
+                && (playerSetting ? handling.isAutoSet(whoSets) : difficulty.readsPlay && tactics.active(TeamCommand.Group.OFFENSE) == null)
+                && advisor.passQuality(side) == ShotAdvisor.PassQuality.POOR) {
+            SetType bailOut = advisor.recommendSet(whoSets, rotation);
+            VolleyballPlayer receiver = lanes.get(bailOut.lane);
+            if (advisor.setReadiness(whoSets, bailOut, receiver) != ShotAdvisor.SetReadiness.UNAVAILABLE) {
+                plannedSet = bailOut;
+                playCaller.followSet(bailOut, playbook, lanes);
+                attackerId = receiver.id;
+                handling.setSetType(whoSets, bailOut);
+            }
+        }
         if (whoSets != null && whoSets.role != PlayerRole.SETTER) {
             // Anyone but the setter (the libero after the setter's own pass) puts up a high ball to
             // a wing: a bump set has no tempo for a quick or a combination.
@@ -1178,9 +1298,14 @@ public final class TeamAI implements BallTouchListener {
                 }
             }
         }
-        if (!humans.contains(whoSets)) playCaller.checkSetter(reach(whoSets, groundTime, setterRead.descentPoint));
-        if (playCaller.decided() || !(groundTime < 0.3f || world.ballHandling().isArmed(whoSets) || whoSets.isAirborne())) return;
         float placement = (float) Math.hypot(whoSets.position.x - setterRead.descentPoint.x, whoSets.position.z - setterRead.descentPoint.z);
+        boolean fast = difficulty.readsPlay && plannedSet.fast();
+        boolean armed = world.ballHandling().isArmed(whoSets);
+        // A setter already under the ball doesn't need the movement and reaction time of a chase.
+        if (!humans.contains(whoSets) && !(fast && (placement < 0.82f || jumpSettingId == whoSets.id || armed))) {
+            playCaller.checkSetter(reach(whoSets, groundTime, setterRead.descentPoint));
+        }
+        if (playCaller.decided() || !(groundTime < (fast ? 0.20f : 0.30f) || armed || whoSets.isAirborne())) return;
         float quality = Math.max(0f, 1f - placement / 1.6f);
         boolean readBlock = difficulty.readsPlay || tactics.is(TeamCommand.VS_SINGLE_BLOCK);
         Combination.Option o = playCaller.decide(whoSets, quality, readBlock, opponents());
@@ -1191,6 +1316,108 @@ public final class TeamAI implements BallTouchListener {
         }
         VolleyballPlayer hitter = playCaller.chosenHitter(whoSets);
         if (hitter != null) attackerId = hitter.id;
+    }
+
+    private void readQuickSet(VolleyballPlayer setter, RotationManager rotation, Collection<VolleyballPlayer> humans) {
+        BallHandling handling = world.ballHandling();
+        int setterId = setter == null ? -1 : setter.id;
+        if (quickSetterId >= 0 && quickSetterId != setterId) handling.setQuickSet(world.player(quickSetterId), null);
+        quickSetterId = setterId;
+        quickLead = Float.NaN;
+        if (setter == null) return;
+        handling.setQuickSet(setter, null);
+        boolean personSetting = humans.contains(setter);
+        Ball ball = world.ball();
+        PassRating pass = memory.lastOwnPass();
+        if (setter.role != PlayerRole.SETTER || !setter.isUpright() || !setter.isOnCourt()
+                || (personSetting ? handling.isAutoSet(setter) || !plannedSet.fast() : !difficulty.meaningfulBlock)
+                || pass == PassRating.LIMITED || pass == PassRating.EMERGENCY) return;
+
+        quickLead = quickWindow.passLead(setter, ball, world.predictor(), quickRelease);
+        if (!Float.isFinite(quickLead)) return;
+        float netTop = world.court().net().topHeight();
+        VolleyballPlayer called = world.player(attackerId);
+        if (plannedSet.fast() && viableQuickHitter(called, setter, plannedSet, rotation)
+                && Float.isFinite(quickWindow.read(called, quickRelease, netTop, quickLead, quickPoint))) {
+            boolean contested = blockAlreadyUp(rotation, quickPoint.z);
+            if (personSetting || !contested) {
+                handling.setQuickSet(setter, new BallHandling.QuickSet(called, plannedSet, contested));
+                return;
+            }
+        }
+        // A bot may turn an early jump into a real first tempo if the opposing block stayed
+        // elsewhere. A manual set stays on the chosen lane.
+        if (personSetting) return;
+        var lanes = advisor.hitters(setter, rotation);
+        TeamCommand offense = tactics.active(TeamCommand.Group.OFFENSE);
+        boolean useDecoy = offense == TeamCommand.QUICK_ATTACK || offense == null && difficulty.readsPlay;
+        BallHandling.QuickSet option = null;
+        float best = Float.POSITIVE_INFINITY;
+        for (SetType type : SetType.values()) {
+            if (!type.fast()) continue;
+            VolleyballPlayer hitter = lanes.get(type.lane);
+            if (!viableQuickHitter(hitter, setter, type, rotation)
+                    || !(humans.contains(hitter) || useDecoy && (decoysJumped.contains(hitter.id) || earlyJumpFor == hitter.id))) continue;
+            float flight = quickWindow.read(hitter, quickRelease, netTop, quickLead, quickPoint);
+            if (!Float.isFinite(flight) || blockAlreadyUp(rotation, quickPoint.z)) continue;
+            type.target(side, quickLane);
+            float score = flight + 0.16f * Math.abs(quickPoint.z - quickLane.z);
+            if (score < best) {
+                best = score;
+                option = new BallHandling.QuickSet(hitter, type, false);
+            }
+        }
+        handling.setQuickSet(setter, option);
+    }
+
+    private boolean blockAlreadyUp(RotationManager rotation, float z) {
+        for (VolleyballPlayer blocker : opponents()) {
+            if (blocker.isAirborne() && Math.abs(blocker.position.x) < 1.15f && Math.abs(blocker.position.z - z) < 0.85f
+                    && rotation.isFrontRow(side.opposite(), blocker.id)) return true;
+        }
+        return false;
+    }
+
+    private boolean viableQuickHitter(VolleyballPlayer hitter, VolleyballPlayer setter, SetType type, RotationManager rotation) {
+        if (hitter == null || hitter == setter || hitter.role == PlayerRole.LIBERO || !hitter.isOnCourt()
+                || !hitter.isUpright() || !hitter.isAirborne() || hitter.id == world.ballHandling().lastToucherId()) return false;
+        boolean front = rotation.isFrontRow(side, hitter.id);
+        if (front == (type.depth >= CourtDimensions.ATTACK_LINE_DISTANCE)
+                || !front && hitter.takeoffPosition.x * side.sign() <= CourtDimensions.ATTACK_LINE_DISTANCE + 0.03f) return false;
+        type.target(side, quickLane);
+        return horizontalDistance(hitter, quickLane) <= 1.45f;
+    }
+
+    private void tryEarlyAttackJump(VolleyballPlayer hitter, VolleyballPlayer setter, RotationManager rotation,
+                                    Collection<VolleyballPlayer> humans) {
+        float lead = quickLead;
+        if (setter != null && (jumpSettingId == setter.id || !Float.isFinite(lead) && setterRead.reachesWatchHeight
+                && horizontalDistance(setter, setterRead.descentPoint) < 0.9f)) lead = timeToSet;
+        boolean personSetting = setter != null && humans.contains(setter);
+        if (setter == null || hitter.id != attackerId || earlyJumpFor >= 0 || !plannedSet.fast()
+                || !difficulty.meaningfulBlock || !personSetting && !difficulty.readsPlay && !tactics.is(TeamCommand.QUICK_ATTACK)
+                || !Float.isFinite(lead) || lead < 0.12f || lead > 0.24f
+                || hitter.isAirborne() || !hitter.isUpright() || hitter.recoveryTime() > 0f
+                || personSetting && !world.ballHandling().isArmed(setter)) return;
+        boolean front = rotation.isFrontRow(side, hitter.id);
+        float depth = hitter.position.x * side.sign();
+        float airTime = 2f * PlayerLocomotion.riseTime(PlayerLocomotion.jumpHeight(hitter));
+        if (front == (plannedSet.depth >= CourtDimensions.ATTACK_LINE_DISTANCE)
+                || !front && depth < CourtDimensions.ATTACK_LINE_DISTANCE + 0.12f
+                || depth + hitter.velocity.x * side.sign() * PlayerLocomotion.TAKEOFF_CARRY * airTime < 0.52f) return;
+        plannedSet.target(side, quickLane);
+        if (horizontalDistance(hitter, quickLane) > 1.34f) return;
+        MoveIntent intent = world.intent(hitter);
+        intent.facingYaw = VolleyballPlayer.facingNetYaw(side);
+        intent.jump = true;
+        intent.jumpHeightFactor = 0.76f;
+        hitter.setActionPose(ActionPose.QUICK_READY, 0.48f);
+        earlyJumpFor = hitter.id;
+        brain(hitter).state = AiState.JUMPING;
+    }
+
+    private float approachClock(VolleyballPlayer hitter) {
+        return difficulty.readsPlay && hitter.id == attackerId && plannedSet.fast() ? timeToSet - 0.12f : timeToSet;
     }
 
     /** A runner of the play heads for the spot in {@link #target}; a decoy jumps as the set is released. */
@@ -1204,7 +1431,7 @@ public final class TeamAI implements BallTouchListener {
         Tempo tempo = playCaller.tempoOf(p);
         if (!playCaller.isDecoy(p) || tempo == null || tempo == Tempo.THIRD) return;
         if (p.isAirborne() || decoysJumped.contains(p.id) || !p.isUpright()) return;
-        float rise = PlayerLocomotion.riseTime(PlayerLocomotion.jumpHeight(p.attributes));
+        float rise = PlayerLocomotion.riseTime(PlayerLocomotion.jumpHeight(p));
         float jumpAt = tempo == Tempo.FIRST ? rise * 0.7f : 0.05f;
         if (timeToSet < jumpAt && Math.hypot(p.position.x - target.x, p.position.z - target.z) < 1.2f && !runningAtNet(p)) decoyJump(p);
     }
@@ -1219,7 +1446,7 @@ public final class TeamAI implements BallTouchListener {
     private boolean runningAtNet(VolleyballPlayer p) {
         float towards = p.velocity.x * -side.sign();
         if (towards <= 0.3f) return false;
-        float airTime = 2f * PlayerLocomotion.riseTime(PlayerLocomotion.jumpHeight(p.attributes));
+        float airTime = 2f * PlayerLocomotion.riseTime(PlayerLocomotion.jumpHeight(p));
         return Math.abs(p.position.x) - towards * airTime < 0.6f;
     }
 
@@ -1243,6 +1470,7 @@ public final class TeamAI implements BallTouchListener {
     private void decoyJump(VolleyballPlayer p) {
         world.intent(p).jump = true;
         world.intent(p).jumpHeightFactor = 0.85f;
+        p.setActionPose(ActionPose.QUICK_READY, 0.42f);
         decoysJumped.add(p.id);
         brain(p).state = AiState.JUMPING;
     }
@@ -1274,7 +1502,8 @@ public final class TeamAI implements BallTouchListener {
         attackDecidedFor = a.id;
         BallHandling handling = world.ballHandling();
         CourtSide opponent = side.opposite();
-        Style style = brain(a).style;
+        Brain hitter = brain(a);
+        Style style = hitter.style;
         float margin = switch (difficulty) {
             case BEGINNER -> 1.3f;
             case INTERMEDIATE -> 0.95f;
@@ -1287,10 +1516,12 @@ public final class TeamAI implements BallTouchListener {
         float maxDepth = CourtDimensions.HALF_LENGTH - margin;
         float hitterLateral = -a.position.z * opponent.sign();
         int blockers = 0;
+        int raisedBlockers = 0;
         float blockLateral = 0f;
         for (VolleyballPlayer o : opponents()) {
             if (Math.abs(o.position.x) < ShotAdvisor.BLOCK_NET_DISTANCE && Math.abs(o.position.z - a.position.z) < ShotAdvisor.BLOCK_LATERAL) {
                 blockers++;
+                if (o.isBlocking()) raisedBlockers++;
                 blockLateral += -o.position.z * opponent.sign();
             }
         }
@@ -1304,20 +1535,21 @@ public final class TeamAI implements BallTouchListener {
             maxDepth = CourtDimensions.HALF_LENGTH - margin;
         }
         AttackType advised = advisor.recommendAttack(a, false);
+        boolean atPin = Math.abs(a.position.z) > CourtDimensions.HALF_WIDTH - 1.2f;
 
         shotWeights.clear();
         switch (difficulty) {
             case BEGINNER -> {
                 shotWeights.put(AttackType.POWER, 1f);
-                shotWeights.put(AttackType.TIP, 0.08f);
-                shotWeights.put(AttackType.ROLL_SHOT, 0.05f);
+                shotWeights.put(AttackType.TIP, 0.13f);
+                shotWeights.put(AttackType.ROLL_SHOT, 0.14f);
             }
             case INTERMEDIATE -> {
                 shotWeights.put(AttackType.POWER, style.power());
                 shotWeights.put(AttackType.TIP, style.tip() * 0.4f);
-                shotWeights.put(AttackType.ROLL_SHOT, style.roll() * 0.5f);
-                shotWeights.put(AttackType.CUT, style.cut() * 0.3f);
-                if (blockers >= 1) shotWeights.put(AttackType.FEINT, style.tip() * 0.15f);
+                shotWeights.put(AttackType.ROLL_SHOT, style.roll() * 0.65f);
+                shotWeights.put(AttackType.CUT, style.cut() * 0.42f);
+                if (blockers >= 1) shotWeights.put(AttackType.FEINT, style.tip() * 0.25f);
                 shotWeights.merge(advised, advised == AttackType.TIP ? 0.5f : 1.2f, Float::sum);
             }
             case PROFESSIONAL -> {
@@ -1325,11 +1557,11 @@ public final class TeamAI implements BallTouchListener {
                 shotWeights.put(AttackType.TIP, style.tip() * (blockers >= 2 ? 0.5f : 0.25f));
                 shotWeights.put(AttackType.ROLL_SHOT, style.roll() * 0.4f);
                 shotWeights.put(AttackType.CUT, style.cut() * (blockers >= 1 ? 0.4f : 0.15f));
-                if (blockers >= 2 && Math.abs(a.position.z) > CourtDimensions.HALF_WIDTH - 1.2f) shotWeights.put(AttackType.TOOL, 0.2f);
+                if (raisedBlockers >= 1 && atPin) shotWeights.put(AttackType.TOOL, 0.35f);
                 // A block in front: fake the swing and push it behind the block, or wipe it off a tall
                 // block's fingertips (from the middle of the net, where a tool is no option).
-                if (blockers >= 1) shotWeights.put(AttackType.FEINT, style.tip() * 0.3f);
-                if (blockers >= 2 && Math.abs(a.position.z) <= CourtDimensions.HALF_WIDTH - 1.2f) shotWeights.put(AttackType.OFF_THE_TOP, 0.15f);
+                if (blockers >= 1) shotWeights.put(AttackType.FEINT, style.tip() * 0.52f);
+                if (raisedBlockers >= 1) shotWeights.put(AttackType.OFF_THE_TOP, atPin ? 0.18f : 0.45f);
                 shotWeights.merge(advised, advised == AttackType.TIP ? 0.5f : 1.2f, Float::sum);
                 // Against defenders who read this hitter's tips, tip less.
                 if (memory.habit(a.id) != null && memory.habit(a.id).tipShare() > 0.35f) shotWeights.computeIfPresent(AttackType.TIP, (k, v) -> v * 0.4f);
@@ -1337,6 +1569,17 @@ public final class TeamAI implements BallTouchListener {
         }
         // Against a single block the coach wants it hard.
         if (tactics.is(TeamCommand.VS_SINGLE_BLOCK) && blockers <= 1) shotWeights.merge(AttackType.POWER, 1.5f, Float::sum);
+        if (a.has(PlayerTrait.BLOCK_OUT) && raisedBlockers >= 1 && difficulty != Difficulty.BEGINNER) {
+            shotWeights.merge(atPin ? AttackType.TOOL : AttackType.OFF_THE_TOP, 1.6f, Float::sum);
+        }
+        if (raisedBlockers == 0) {
+            shotWeights.remove(AttackType.TOOL);
+            shotWeights.remove(AttackType.OFF_THE_TOP);
+        }
+        if (hitter.lastAttack != null && difficulty != Difficulty.BEGINNER) {
+            shotWeights.computeIfPresent(hitter.lastAttack, (k, v) -> v * 0.64f);
+        }
+        shotWeights.computeIfPresent(AttackType.POWER, (k, v) -> v * a.fatigueFactor(0.60f));
         AttackType type = cautious ? (random.nextFloat() < 0.5f ? AttackType.ROLL_SHOT : AttackType.TIP) : WeightedPick.pick(random, shotWeights, AttackType.POWER);
         if (advised == AttackType.TIP && cautious) type = AttackType.TIP;
 
@@ -1368,6 +1611,17 @@ public final class TeamAI implements BallTouchListener {
                 depth = 2.6f + random.nextFloat() * 1.6f;
                 lateral = away * maxLateral;
             }
+            case ROLL_SHOT -> {
+                depth = cautious ? 6.5f : 3.8f + random.nextFloat() * 2f;
+                lateral = cautious ? 0f : hitterLateral * 0.5f;
+                if (difficulty.readsPlay && !cautious) {
+                    float far = Math.copySign(maxLateral * 0.72f, -hitterLateral);
+                    for (int i = -1; i <= 1; i++) {
+                        float lane = i * far;
+                        if (gapAt(opponent, depth, lane, true) > gapAt(opponent, depth, lateral, true)) lateral = lane;
+                    }
+                }
+            }
             case TOOL -> {
                 // The mechanic aims at the block's outside hand; this is only the fallback.
                 depth = maxDepth;
@@ -1397,7 +1651,7 @@ public final class TeamAI implements BallTouchListener {
                     }
                     // Professionals check the spot: a defender standing right there means the gap instead.
                     if (difficulty.readsPlay && gapAt(opponent, depth, lateral, true) < 1.3f) {
-                        float[] best = bestGap(opponent, a, blockers, blockLateral, maxLateral, maxDepth, type == AttackType.ROLL_SHOT, style);
+                        float[] best = bestGap(opponent, a, blockers, blockLateral, maxLateral, maxDepth, style);
                         depth = best[0];
                         lateral = best[1];
                     }
@@ -1411,6 +1665,7 @@ public final class TeamAI implements BallTouchListener {
         TacticalTargets.teamPoint(opponent, depth, lateral, 0f, target);
         handling.setAim(a, target.x, target.z);
         handling.setAttackType(a, type);
+        hitter.lastAttack = type;
     }
 
     /**
@@ -1420,16 +1675,15 @@ public final class TeamAI implements BallTouchListener {
      * best keeps it unpredictable.
      */
     private float[] bestGap(CourtSide opponent, VolleyballPlayer a, int blockers, float blockLateral, float maxLateral,
-                            float maxDepth, boolean roll, Style style) {
+                            float maxDepth, Style style) {
         float hitterLateral = -a.position.z * opponent.sign();
         float bestScore = -Float.MAX_VALUE;
         float[] best = {maxDepth - 0.5f, 0f};
         for (int i = 0; i < 14; i++) {
-            float d = roll ? (random.nextBoolean() ? 3f + random.nextFloat() * 1.5f : maxDepth - random.nextFloat() * 1.2f)
-                    : 4.5f + random.nextFloat() * (maxDepth - 4.5f);
+            float d = 4.5f + random.nextFloat() * (maxDepth - 4.5f);
             float l = (random.nextFloat() * 2f - 1f) * maxLateral;
             float score = gapAt(opponent, d, l, true);
-            if (blockers > 0 && !roll) {
+            if (blockers > 0) {
                 // The block's shadow: spots in line with the block from the hitter are covered by it.
                 float atNet = hitterLateral + (l - hitterLateral) * (0.6f / (d + 0.6f));
                 if (Math.abs(atNet - blockLateral) < 0.45f * blockers + 0.3f) score -= 2f;
@@ -1480,9 +1734,8 @@ public final class TeamAI implements BallTouchListener {
     }
 
     /**
-     * Cover of the own hitter, for balls coming back off the block, in two rings as real teams
-     * cover: three players close (a cup about 1.4-2 m behind the hitter, left, behind and right) and
-     * the other two deeper (about 3.7 m, in the gaps of the cup). Every coverer gets its own slot,
+     * Cover of the own hitter for balls coming back off the block. Two players cover the short
+     * rebounds from the sides and three stay spread deeper. Every coverer gets its own slot,
      * kept for the whole attack, so nobody covers the same spot as a teammate.
      */
     private void coverHitter(VolleyballPlayer p, VolleyballPlayer hitter) {
@@ -1499,26 +1752,36 @@ public final class TeamAI implements BallTouchListener {
         }
         // Professionals close in tight; the others stay a little looser.
         boolean pro = difficulty == Difficulty.PROFESSIONAL;
-        coverSpot(hitter, slot, pro ? 0f : 0.4f, target);
+        coverSpot(slot, pro ? 0f : 0.35f, target);
         moveTo(p, target.x, target.z, true);
         watchNet(p, horizontalDistance(p, target) < 0.9f);
         brain(p).state = AiState.COVERING;
     }
 
     /** Cover slots: depth behind the hitter and lateral offset (team frame), close cup first. */
-    static final float[][] COVER_SLOTS = {{1.4f, -1.5f}, {1.4f, 1.5f}, {2.1f, 0f}, {3.7f, -2.1f}, {3.7f, 2.1f}};
+    static final float[][] COVER_SLOTS = {{1.18f, -1.55f}, {1.18f, 1.55f}, {2.7f, 0f}, {4.2f, -2.15f}, {4.2f, 2.15f}};
     /** Coverer id → slot index, for the attack of {@link #coverFor}. */
     private final Map<Integer, Integer> coverSlots = new HashMap<>();
     private int coverFor = -1;
     private int coverPhase = Integer.MIN_VALUE;
+    private final Vector3 coverPoint = new Vector3();
 
-    /** Where a cover slot is now: behind the hitter (kept inside the court and off the net). */
-    private void coverSpot(VolleyballPlayer hitter, int slot, float looser, Vector3 out) {
-        float hitterDepth = hitter.position.x * side.sign();
-        // Near the antenna the cup slides inwards, so no slot ends up outside the sideline.
-        float hitterLateral = Math.max(-2.6f, Math.min(2.6f, lateral(hitter.position.z)));
-        float depth = Math.max(1.2f, hitterDepth) + COVER_SLOTS[slot][0] + looser;
-        float lat = hitterLateral + COVER_SLOTS[slot][1] * (1f + looser * 0.5f);
+    /** Cover the expected touch, so the cup does not drift forward while the hitter runs. */
+    private void coverSpot(int slot, float looser, Vector3 out) {
+        float hitterDepth = Math.max(0.8f, coverPoint.x * side.sign());
+        float hitterLateral = lateral(coverPoint.z);
+        float depth = hitterDepth + COVER_SLOTS[slot][0] + looser;
+        float lat = hitterLateral + COVER_SLOTS[slot][1];
+        if (slot < 2 && Math.abs(hitterLateral) > 2.65f) {
+            // At the pin, stagger the short coverers inside the court and away from the approach.
+            float inward = -Math.signum(hitterLateral);
+            lat = hitterLateral + inward * (slot == 0 ? 1.45f : 2.95f);
+            depth += slot == 0 ? 0f : 0.85f;
+        } else if (slot >= 2) {
+            // The back line stays spread across the court even when the strike is at a pin.
+            lat = hitterLateral * 0.28f + COVER_SLOTS[slot][1];
+            if (slot == 2 && Math.abs(lat - hitterLateral) < 1.25f) depth = Math.max(depth, hitterDepth + 3.45f);
+        }
         TacticalTargets.teamPoint(side, Math.min(depth, CourtDimensions.HALF_LENGTH - 0.5f),
                 Math.max(-CourtDimensions.HALF_WIDTH + 0.4f, Math.min(CourtDimensions.HALF_WIDTH - 0.4f, lat)), 0f, out);
     }
@@ -1528,9 +1791,19 @@ public final class TeamAI implements BallTouchListener {
      * (cheapest total run, greedy), people included so nobody is sent to a person's spot.
      */
     private void assignCover(VolleyballPlayer hitter) {
-        if (coverFor == hitter.id && ballPhase - coverPhase <= 1) return;
+        if (coverFor == hitter.id && (ballPhase == coverPhase
+                || ourAttackerId == hitter.id && (holdingCover(world.time()) || attackRebound))) return;
         coverFor = hitter.id;
         coverPhase = ballPhase;
+        coverPoint.set(hitter.position);
+        if (world.ballHandling().teamTouches(side) == 2) {
+            hitRead.watchHeight = 3.05f;
+            world.predictor().predict(world.ball(), 6f, hitRead);
+            hitRead.watchHeight = Float.NaN;
+            if (hitRead.reachesWatchHeight && CourtDimensions.sideOf(hitRead.descentPoint.x) == side) {
+                coverPoint.set(hitRead.descentPoint);
+            }
+        }
         coverSlots.clear();
         List<VolleyballPlayer> coverers = new java.util.ArrayList<>();
         for (VolleyballPlayer o : court) if (o != hitter) coverers.add(o);
@@ -1540,10 +1813,11 @@ public final class TeamAI implements BallTouchListener {
         float[][] cost = new float[n][COVER_SLOTS.length];
         Vector3 slotSpot = new Vector3();
         for (int s = 0; s < COVER_SLOTS.length; s++) {
-            coverSpot(hitter, s, 0f, slotSpot);
+            coverSpot(s, 0f, slotSpot);
             for (int i = 0; i < n; i++) {
                 float d = horizontalDistance(coverers.get(i), slotSpot);
-                cost[i][s] = d * d;
+                VolleyballPlayer coverer = coverers.get(i);
+                cost[i][s] = d * d + (s < 2 && (coverer.isAirborne() || !coverer.isUpright()) ? 9f : 0f);
             }
         }
         // Few players and slots: try every assignment, keep the one with the least running.
@@ -1583,6 +1857,7 @@ public final class TeamAI implements BallTouchListener {
         // all if it is a human's ball.
         boolean ballHere = CourtDimensions.sideOf(world.ball().position.x) == side;
         VolleyballPlayer digger = opponentHas && ballHere ? closestDefender(forecast.descentPoint, humans) : null;
+        calledBallPlayer = digger;
 
         for (VolleyballPlayer p : court) {
             if (humans.contains(p) || serving(p)) continue;
@@ -1820,7 +2095,7 @@ public final class TeamAI implements BallTouchListener {
         if (difficulty == Difficulty.BEGINNER) return ServeType.POWER;
         boolean strong = server.attributes.serving >= 68 || server.has(PlayerTrait.POWER_SERVER);
         float chance = strong ? (difficulty == Difficulty.PROFESSIONAL ? 0.85f : 0.55f) : 0.15f;
-        return random.nextFloat() < chance ? ServeType.JUMP_TOPSPIN : ServeType.POWER;
+        return random.nextFloat() < chance * server.fatigueFactor(0.55f) ? ServeType.JUMP_TOPSPIN : ServeType.POWER;
     }
 
     /** The placed serve: the jump float for good servers and float specialists, the standing float otherwise. */
@@ -1828,7 +2103,7 @@ public final class TeamAI implements BallTouchListener {
         if (difficulty == Difficulty.BEGINNER) return ServeType.FLOAT;
         boolean good = server.attributes.serving >= 62 || server.has(PlayerTrait.FLOAT_SPECIALIST);
         float chance = good ? (difficulty == Difficulty.PROFESSIONAL ? 0.6f : 0.35f) : 0.1f;
-        return random.nextFloat() < chance ? ServeType.JUMP_FLOAT : ServeType.FLOAT;
+        return random.nextFloat() < chance * server.fatigueFactor(0.55f) ? ServeType.JUMP_FLOAT : ServeType.FLOAT;
     }
 
     /** Lateral (opponent frame) of the gap between the two receivers standing closest together, or null. */
@@ -1896,6 +2171,15 @@ public final class TeamAI implements BallTouchListener {
         court = team.onCourt();
         idleOnBench(humans);
         double elapsed = celebrationStart < 0 ? 99 : now - celebrationStart;
+        for (VolleyballPlayer p : team.squad()) {
+            Brain bench = brain(p);
+            if (p.isOnCourt() || bench.reactedToPoint || p.number % 3 == 1) continue;
+            double cue = 0.36 + Math.floorMod(p.number, 3) * 0.08;
+            if (elapsed >= cue && elapsed < 0.75) {
+                bench.reactedToPoint = true;
+                p.setActionPose(wonLastPoint ? ActionPose.CLAP : ActionPose.DISAPPOINTED, 0.73f);
+            }
+        }
         for (VolleyballPlayer p : court) {
             world.intent(p).clear();
             Brain brain = brain(p);
@@ -1954,10 +2238,17 @@ public final class TeamAI implements BallTouchListener {
                 moveTo(mate, mate.position.x - dx * share, mate.position.z - dz * share, false);
                 world.intent(p).sprint = false;
                 world.intent(mate).sprint = false;
-            } else if (calmForHighFive(p) && calmForHighFive(mate)) {
+            } else if (calmForHighFive(p) && calmForHighFive(mate)
+                    && p.facingX() * dx + p.facingZ() * dz >= 0.90f * distance
+                    && mate.facingX() * dx + mate.facingZ() * dz <= -0.90f * distance) {
                 brain.highFiveDone = true;
                 p.setActionPose(ActionPose.HIGH_FIVE, 0.55f);
                 mate.setActionPose(ActionPose.HIGH_FIVE, 0.55f);
+                float reach = Math.min(p.height, mate.height) * 0.85f;
+                float x = (p.position.x + mate.position.x) * 0.5f;
+                float z = (p.position.z + mate.position.z) * 0.5f;
+                p.recordActionContact(x, reach, z);
+                mate.recordActionContact(x, reach, z);
             }
             faceTeammate(p, mate);
             faceTeammate(mate, p);

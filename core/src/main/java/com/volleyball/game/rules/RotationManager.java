@@ -129,6 +129,14 @@ public final class RotationManager {
         return zones[index(side)].clone();
     }
 
+    /** Imports the host's actual line-up and replacement into a presentation-only rotation. */
+    public void present(CourtSide side, int[] lineUp, int replacedId, int liberoId) {
+        int i = index(side);
+        System.arraycopy(lineUp, 0, zones[i], 0, 6);
+        replaced[i] = replacedId;
+        libero[i] = liberoId;
+    }
+
     private static int index(CourtSide side) {
         return side == CourtSide.HOME ? 0 : 1;
     }

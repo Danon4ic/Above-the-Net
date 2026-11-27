@@ -96,6 +96,19 @@ class RallyManagerTest {
     }
 
     @Test
+    void outOffTheBlockAwardsTheAttackingTeamThePoint() {
+        RallyManager r = rally(MatchFormat.official());
+        r.onBallTouch(touch(0, ContactType.SERVE, 3f, 0.9f));
+        r.onBallTouch(touch(10, ContactType.FOREARM_PASS));
+        r.onBallTouch(touch(6, ContactType.OVERHEAD_PASS));
+        r.onBallTouch(touch(9, ContactType.ATTACK, 3.2f, 0.9f));
+        r.onBallTouch(touch(2, ContactType.BLOCK, 3.0f, 0.8f));
+        floor(r, -11f, 0.5f);
+        assertFault(r, AWAY, Fault.BLOCK_TOUCH_OUT);
+        assertEquals(2, r.outcome().playerId());
+    }
+
+    @Test
     void fourthTeamTouchIsAFault() {
         RallyManager r = rally(MatchFormat.official());
         r.onBallTouch(touch(0, ContactType.SERVE, 3f, 0.9f));

@@ -59,9 +59,21 @@ public enum SetType {
         return TacticalTargets.teamPoint(side, depth, lateral, height, out);
     }
 
+    /** A deep setting contact leaves the hit farther from the net and buys time on fast sets. */
+    public float targetFrom(CourtSide side, float releaseDepth, Vector3 out) {
+        target(side, out);
+        float extra = Math.max(0f, releaseDepth - 1.5f);
+        out.x += side.sign() * Math.min(1.2f, 0.35f * extra);
+        return apex + (fast() ? Math.min(1.2f, 0.4f * extra) : 0f);
+    }
+
     /** A fast set (quick, shoot, slide): the hitter is in the air as the ball arrives. */
     public boolean fast() {
         return apex < 4.5f;
+    }
+
+    public static boolean isBackSet(SetType type) {
+        return type == BACK_SET || type == SLIDE;
     }
 
     public SetType next() {

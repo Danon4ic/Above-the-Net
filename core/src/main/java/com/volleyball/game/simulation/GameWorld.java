@@ -91,8 +91,10 @@ public final class GameWorld {
 
     public void step(float dt) {
         for (VolleyballPlayer player : players) {
-            // Players on the bench sit still.
-            if (!player.isOnCourt()) continue;
+            if (!player.isOnCourt()) {
+                if (locomotion.fatigue()) player.rest(0.07f * dt);
+                continue;
+            }
             MoveIntent intent = intents[player.id];
             intent.attentionYaw = attentionYaw(player, intent.faceMovement);
             locomotion.update(player, intent, dt);
@@ -142,6 +144,11 @@ public final class GameWorld {
     /** Fatigue on (players tire and recover) or off (arcade). */
     public void setFatigue(boolean enabled) {
         locomotion.setFatigue(enabled);
+        if (!enabled) for (VolleyballPlayer player : players) player.setStamina(1f);
+    }
+
+    public boolean fatigue() {
+        return locomotion.fatigue();
     }
 
     /** Must be called after the net height changes so collisions match the new net. */
@@ -209,5 +216,10 @@ public final class GameWorld {
 
     public double time() {
         return time;
+    }
+
+    /** Clock of a world used only to display a network match. */
+    public void presentTime(double seconds) {
+        time = seconds;
     }
 }

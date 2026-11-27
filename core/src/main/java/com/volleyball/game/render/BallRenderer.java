@@ -1,7 +1,9 @@
 package com.volleyball.game.render;
 
+import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.GL20;
+import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.VertexAttributes.Usage;
 import com.badlogic.gdx.graphics.g3d.Environment;
 import com.badlogic.gdx.graphics.g3d.Material;
@@ -9,6 +11,7 @@ import com.badlogic.gdx.graphics.g3d.Model;
 import com.badlogic.gdx.graphics.g3d.ModelBatch;
 import com.badlogic.gdx.graphics.g3d.ModelInstance;
 import com.badlogic.gdx.graphics.g3d.attributes.ColorAttribute;
+import com.badlogic.gdx.graphics.g3d.attributes.TextureAttribute;
 import com.badlogic.gdx.graphics.g3d.utils.MeshPartBuilder;
 import com.badlogic.gdx.graphics.g3d.utils.ModelBuilder;
 import com.badlogic.gdx.math.MathUtils;
@@ -16,6 +19,7 @@ import com.badlogic.gdx.math.Quaternion;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.utils.Disposable;
 import com.volleyball.game.entities.Ball;
+import com.volleyball.game.entities.VolleyballPlayer;
 import com.volleyball.game.physics.TrajectoryPredictor;
 
 import java.util.ArrayList;
@@ -46,6 +50,8 @@ public final class BallRenderer implements Disposable {
     private final Model aimModel = MarkerModels.ring(new Color(0.2f, 0.9f, 1f, 1f), 0.85f, 0.8f);
     private final Model receptionDiscModel = MarkerModels.disc(new Color(1f, 1f, 1f, 1f), 0.16f);
     private final Model receptionRingModel = MarkerModels.ring(new Color(1f, 1f, 1f, 1f), 0.9f, 0.55f);
+    private final Model calledPlayerModel = MarkerModels.ring(new Color(0.55f, 0.85f, 1f, 1f), 0.92f, 0.83f);
+    private final ModelInstance calledPlayer = new ModelInstance(calledPlayerModel);
     private final ModelInstance receptionDisc = new ModelInstance(receptionDiscModel);
     private final ModelInstance receptionRing = new ModelInstance(receptionRingModel);
     private final ModelInstance aim = new ModelInstance(aimModel);
@@ -171,47 +177,52 @@ public final class BallRenderer implements Disposable {
         batch.render(aim);
     }
 
+    /** The team's called player in the current rally, using the same interpolation as their model. */
+    public void renderCalledPlayer(ModelBatch batch, VolleyballPlayer player, float alpha) {
+        position.set(player.previousPosition).lerp(player.position, alpha);
+        calledPlayer.transform.setToTranslation(position.x, 0.018f, position.z).scale(0.53f, 1f, 0.53f);
+        batch.render(calledPlayer);
+    }
+
     /**
-     * UV sphere whose faces are coloured by the dominant axis of their centre, giving six
-     * patches in three colours — enough to see the ball rotate.
+     * The three panel colors show spin at a distance. Mipmaps filter the finer seams and leather
+     * grain as the ball gets smaller on screen.
      */
     private static Model buildPanelBall() {
-        Color[] colors = {
-                new Color(0.98f, 0.82f, 0.10f, 1f),
-                new Color(0.10f, 0.30f, 0.80f, 1f),
-                new Color(0.97f, 0.97f, 0.95f, 1f)};
+        Texture texture = new Texture(Gdx.files.classpath("textures/ball.png"), true);
+        texture.setFilter(Texture.TextureFilter.MipMapLinearLinear, Texture.TextureFilter.Linear);
+        texture.setWrap(Texture.TextureWrap.Repeat, Texture.TextureWrap.ClampToEdge);
         ModelBuilder builder = new ModelBuilder();
         builder.begin();
         MeshPartBuilder part = builder.part("ball", GL20.GL_TRIANGLES,
-                Usage.Position | Usage.Normal | Usage.ColorPacked, new Material(ColorAttribute.createDiffuse(Color.WHITE),
-                        ShadingAttribute.glossy()));
-        int slices = 28;
-        int stacks = 18;
-        float r = Ball.RADIUS;
-        Vector3[] corners = {new Vector3(), new Vector3(), new Vector3(), new Vector3()};
-        Vector3 centre = new Vector3();
+                Usage.Position | Usage.Normal | Usage.TextureCoordinates,
+                new Material(TextureAttribute.createDiffuse(texture),
+                        ColorAttribute.createSpecular(0.24f, 0.24f, 0.24f, 1f),
+                        new ShadingAttribute(0f, 40f, 0.23f, 0.18f, ShadingAttribute.PATTERN_NONE, 0f)));
+        int slices = 40;
+        int stacks = 26;
+        short[][] indices = new short[stacks + 1][slices + 1];
+        Vector3 point = new Vector3();
         MeshPartBuilder.VertexInfo vertex = new MeshPartBuilder.VertexInfo();
-        for (int i = 0; i < stacks; i++) {
-            for (int j = 0; j < slices; j++) {
-                spherePoint(i, j, stacks, slices, corners[0]);
-                spherePoint(i + 1, j, stacks, slices, corners[1]);
-                spherePoint(i + 1, j + 1, stacks, slices, corners[2]);
-                spherePoint(i, j + 1, stacks, slices, corners[3]);
-                centre.set(corners[0]).add(corners[1]).add(corners[2]).add(corners[3]);
-                float ax = Math.abs(centre.x), ay = Math.abs(centre.y), az = Math.abs(centre.z);
-                Color color = ax >= ay && ax >= az ? colors[0] : ay >= az ? colors[1] : colors[2];
-                short[] index = new short[4];
-                for (int k = 0; k < 4; k++) {
-                    vertex.set(null, null, color, null);
-                    vertex.setPos(corners[k].x * r, corners[k].y * r, corners[k].z * r);
-                    vertex.setNor(corners[k].x, corners[k].y, corners[k].z);
-                    index[k] = part.vertex(vertex);
-                }
-                part.triangle(index[0], index[1], index[2]);
-                part.triangle(index[0], index[2], index[3]);
+        for (int i = 0; i <= stacks; i++) {
+            for (int j = 0; j <= slices; j++) {
+                spherePoint(i, j, stacks, slices, point);
+                vertex.setNor(point.x, point.y, point.z);
+                vertex.setPos(point.x * Ball.RADIUS, point.y * Ball.RADIUS, point.z * Ball.RADIUS);
+                // Duplicate the longitude seam so each side interpolates locally (0 or 1).
+                vertex.setUV(j / (float) slices, i / (float) stacks);
+                indices[i][j] = part.vertex(vertex);
             }
         }
-        return builder.end();
+        for (int i = 0; i < stacks; i++) {
+            for (int j = 0; j < slices; j++) {
+                if (i < stacks - 1) part.triangle(indices[i][j], indices[i + 1][j], indices[i + 1][j + 1]);
+                if (i > 0) part.triangle(indices[i][j], indices[i + 1][j + 1], indices[i][j + 1]);
+            }
+        }
+        Model model = builder.end();
+        model.manageDisposable(texture);
+        return model;
     }
 
     /** Unit-sphere point for stack i (0 = north pole) and slice j, wound counter-clockwise from outside. */
@@ -231,5 +242,6 @@ public final class BallRenderer implements Disposable {
         trailModel.dispose();
         receptionDiscModel.dispose();
         receptionRingModel.dispose();
+        calledPlayerModel.dispose();
     }
 }

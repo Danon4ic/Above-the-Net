@@ -2,6 +2,7 @@ package com.volleyball.game.mechanics;
 
 import com.badlogic.gdx.math.Vector3;
 import com.volleyball.game.entities.PlayerAttributes;
+import com.volleyball.game.entities.PlayerTrait;
 import com.volleyball.game.physics.LaunchSolver;
 
 import java.util.Random;
@@ -34,6 +35,7 @@ public final class ReceiveMechanic {
         float skill = PlayerAttributes.normalized(overhead ? (a.receiving + a.setting) / 2 : a.receiving);
         // Fingers handle hard balls much worse than a platform.
         float difficulty = difficulty(c.incomingVelocity) * (overhead ? 1.6f : 1f);
+        if (c.type == ContactType.FOREARM_PASS && c.player.has(PlayerTrait.HARD_RECEIVER)) difficulty *= 0.65f;
 
         if (!solver.solveArc(c.ballPosition, c.target, c.apex, -2f, out)) {
             // Target unreachable as a lob (e.g. above the apex): just keep the ball up.

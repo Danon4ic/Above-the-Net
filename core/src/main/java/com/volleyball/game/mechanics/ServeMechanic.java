@@ -47,7 +47,7 @@ public final class ServeMechanic {
     static float expectedContactHeight(VolleyballPlayer p, ServeType type) {
         if (!type.overhand) return p.height * 0.42f;
         float reach = p.standingReach() - 0.05f;
-        return type.jump ? reach + 0.9f * PlayerLocomotion.jumpHeight(p.attributes) : reach;
+        return type.jump ? reach + 0.9f * PlayerLocomotion.jumpHeight(p) : reach;
     }
 
     /** Launches the toss from the hold point. */

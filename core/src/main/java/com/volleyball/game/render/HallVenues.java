@@ -682,30 +682,30 @@ final class HallVenues {
     }
 
     /** LED or painted boards (the texture's U runs along the board). */
-    void ledBoards(Venue venue, MeshPartBuilder led) {
+    void ledBoards(Venue venue, ArenaModelFactory.RibbonBoards boards) {
         switch (venue) {
             case SCHOOL_GYM -> {
                 // Painted banners high on the end walls.
                 float x = GYM_END_WALL_X - 0.05f;
-                ArenaModelFactory.board(led, -x, 10.2f, 8f, -x, 11.2f, -8f, 1f, 0f, 0f, 2f);
-                ArenaModelFactory.board(led, x, 10.2f, -8f, x, 11.2f, 8f, -1f, 0f, 0f, 2f);
+                boards.add(-x, 10.2f, 8f, -x, 11.2f, -8f, 1f, 0f, 0f);
+                boards.add(x, 10.2f, -8f, x, 11.2f, 8f, -1f, 0f, 0f);
             }
             case SPORTS_PALACE -> {
                 // Perimeter boards around the free zone (not in front of the scorer's table).
                 float zb = HALF_WIDTH + FREE_ZONE_SIDE + 0.3f;
                 float xb = HALF_LENGTH + FREE_ZONE_END + 0.3f;
-                ArenaModelFactory.board(led, -15f, 0f, -zb, 15f, 0.9f, -zb, 0f, 0f, 1f, 4f);
-                ArenaModelFactory.board(led, -xb, 0f, 8f, -xb, 0.9f, -8f, 1f, 0f, 0f, 2f);
-                ArenaModelFactory.board(led, xb, 0f, -8f, xb, 0.9f, 8f, -1f, 0f, 0f, 2f);
+                boards.add(-15f, 0f, -zb, 15f, 0.9f, -zb, 0f, 0f, 1f);
+                boards.add(-xb, 0f, 8f, -xb, 0.9f, -8f, 1f, 0f, 0f);
+                boards.add(xb, 0f, -8f, xb, 0.9f, 8f, -1f, 0f, 0f);
             }
             case ROOFTOP -> {
-                // Neon strips on the stand fronts and on the glass barriers.
-                float zb = SIDE_STAND_START_Z - 0.02f;
-                float xb = END_STAND_START_X + 0.26f;
-                ArenaModelFactory.board(led, -ROOF_STAND_HALF_X, 0.05f, -zb, ROOF_STAND_HALF_X, 0.48f, -zb, 0f, 0f, 1f, 4f);
-                ArenaModelFactory.board(led, ROOF_STAND_HALF_X, 0.05f, zb, -ROOF_STAND_HALF_X, 0.48f, zb, 0f, 0f, -1f, 4f);
-                ArenaModelFactory.board(led, -xb, 0.05f, 9f, -xb, 0.42f, -9f, 1f, 0f, 0f, 2.4f);
-                ArenaModelFactory.board(led, xb, 0.05f, -9f, xb, 0.42f, 9f, -1f, 0f, 0f, 2.4f);
+                // Rails in front of the first row's knees and the glass barrier posts.
+                float zb = SIDE_STAND_START_Z - 0.44f;
+                float xb = END_STAND_START_X + 0.19f;
+                boards.add(-ROOF_STAND_HALF_X, 0.025f, -zb, ROOF_STAND_HALF_X, 0.58f, -zb, 0f, 0f, 1f);
+                boards.add(ROOF_STAND_HALF_X, 0.025f, zb, -ROOF_STAND_HALF_X, 0.58f, zb, 0f, 0f, -1f);
+                boards.add(-xb, 0.025f, 9f, -xb, 0.50f, -9f, 1f, 0f, 0f);
+                boards.add(xb, 0.025f, -9f, xb, 0.50f, 9f, -1f, 0f, 0f);
             }
             default -> throw new IllegalArgumentException(venue.name());
         }

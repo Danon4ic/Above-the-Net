@@ -75,12 +75,17 @@ public final class ContactZone {
      * out beyond the head, ending just above the floor.
      */
     static Vector3 diveReachPoint(VolleyballPlayer p, Vector3 out) {
-        float angle = p.bodyTilt() * MathUtils.HALF_PI * 0.95f;
+        diveReachOffset(p, p.bodyTilt(), out);
+        return out.set(p.diveDirection.x * out.x, out.y, p.diveDirection.z * out.x).add(p.position);
+    }
+
+    /** Forward reach (X) and ball-centre height (Y) relative to the feet. */
+    public static Vector3 diveReachOffset(VolleyballPlayer p, float tilt, Vector3 out) {
+        float angle = tilt * MathUtils.HALF_PI * 0.95f;
         float reach = p.standingReach() - 0.1f;
-        float lift = 0.14f * p.bodyTilt();
-        return out.set(p.position.x + p.diveDirection.x * MathUtils.sin(angle) * reach,
-                p.position.y + lift + MathUtils.cos(angle) * reach + 0.08f,
-                p.position.z + p.diveDirection.z * MathUtils.sin(angle) * reach);
+        float lift = 0.14f * tilt;
+        float forward = MathUtils.sin(angle) * reach;
+        return out.set(forward, lift + MathUtils.cos(angle) * reach + 0.08f, 0f);
     }
 
     public static float horizontalRadius(ContactType type) {
@@ -155,9 +160,14 @@ public final class ContactZone {
         boolean jumpSet = type.fingerSet() && p.role == com.volleyball.game.entities.PlayerRole.SETTER;
         if (p.isAirborne() && (type == ContactType.FOREARM_PASS || type.fingerSet())) factor *= jumpSet ? 0.92f : 0.6f;
         if (p.recoveryTime() > 0f) factor *= 0.8f;
-        // Tiredness costs a little control (at most 10 %).
-        factor *= p.fatigueFactor(0.1f);
-        if (type == ContactType.DIVE) factor = 1f; // the dive is its own balance; its cap applies instead
-        return factor;
+        return type == ContactType.DIVE ? 1f : factor; // The dive uses its own contact cap.
+    }
+
+    static float fatigueControl(VolleyballPlayer p, ContactType type) {
+        float fatigueLoss = switch (type) {
+            case FOREARM_PASS, OVERHEAD_PASS, ONE_HAND_SET, DIVE, ONE_ARM -> 0.32f;
+            default -> 0.24f;
+        };
+        return p.fatigueFactor(fatigueLoss);
     }
 }

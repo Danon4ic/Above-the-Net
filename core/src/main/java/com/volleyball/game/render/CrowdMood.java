@@ -21,6 +21,9 @@ public final class CrowdMood implements MatchListener {
     private final Random random = new Random(5);
     private float excitement = 0.2f;
     private float cheer;
+    private float nextCheer;
+    private float cheerDelay;
+    private float cheerHold;
     private float waveFront;
     private float waveTime = -1f;
     private float sinceWave;
@@ -32,6 +35,7 @@ public final class CrowdMood implements MatchListener {
     public void onServeWhistle(VolleyballPlayer server, MatchScore score) {
         rallyLive = true;
         rallyTime = 0f;
+        cheerHold = 0f;
     }
 
     @Override
@@ -42,7 +46,9 @@ public final class CrowdMood implements MatchListener {
         // Longer rallies get a bigger reaction; set and match points bring the house down.
         float size = 0.65f + 0.35f * Math.min(1f, rallyTime / 10f);
         if (point.setWon() || point.matchWon()) size = 1f;
-        cheer = Math.max(cheer, home ? size : 0.3f * size);
+        nextCheer = home ? size : 0.38f * size;
+        cheerDelay = home ? 0.12f : 0.20f;
+        cheerHold = point.setWon() ? 0.85f : 0.42f;
         excitement = Math.min(1f, excitement + 0.2f);
     }
 
@@ -51,7 +57,14 @@ public final class CrowdMood implements MatchListener {
         if (rallyLive) rallyTime += dt;
         float target = rallyLive ? 0.25f + 0.55f * Math.min(1f, rallyTime / 9f) : 0.18f;
         excitement += (target - excitement) * Math.min(1f, dt * 0.8f);
-        cheer = Math.max(0f, cheer - dt * 0.35f);
+        if (cheerDelay > 0f) {
+            cheerDelay -= dt;
+            if (cheerDelay <= 0f) cheer = Math.max(cheer, nextCheer);
+        } else if (cheerHold > 0f) {
+            cheerHold -= dt;
+        } else {
+            cheer = Math.max(0f, cheer - dt * (rallyLive ? 0.80f : 0.48f));
+        }
         // The wave: now and then, when the game is calm.
         sinceWave += dt;
         if (waveTime < 0f && sinceWave > nextWave && cheer < 0.1f) {

@@ -481,10 +481,13 @@ final class PlayCaller {
         if (setter != null && !first.dump()) {
             if (setter.has(PlayerTrait.TEMPO_SETTER)) bias *= first.set().fast() ? 1.7f : 0.8f;
             if (setter.has(PlayerTrait.HIGH_BALL_SETTER)) bias *= first.set().fast() ? 0.6f : 1.5f;
+            if (setter.has(PlayerTrait.BACK_SETTER) && SetType.isBackSet(first.set())) bias *= 1.65f;
+            if (first.set().fast()) bias *= setter.fatigueFactor(0.55f);
         }
         if (setter != null && first.dump() && setter.has(PlayerTrait.CRAFTY)) bias *= 2f;
         if (hitter != null && hitter.has(PlayerTrait.CANNON)) bias *= 1.3f;
         if (hitter != null && hitter.has(PlayerTrait.NERVOUS)) bias *= 0.85f;
+        if (hitter != null) bias *= hitter.fatigueFactor(first.dump() || !first.set().fast() ? 0.25f : 0.50f);
         return bias;
     }
 }

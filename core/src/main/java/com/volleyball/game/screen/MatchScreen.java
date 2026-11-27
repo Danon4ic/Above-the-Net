@@ -12,11 +12,20 @@ import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.math.collision.Ray;
 import com.volleyball.game.VolleyballGame;
 import com.volleyball.game.ai.AiState;
+import com.volleyball.game.ai.ShotAdvisor;
 import com.volleyball.game.ai.TeamAI;
 import com.volleyball.game.audio.SoundDirector;
+import com.volleyball.game.audio.SoundId;
 import com.volleyball.game.audio.SoundSink;
 import com.volleyball.game.multiplayer.ControllerKind;
 import com.volleyball.game.multiplayer.MatchSession;
+import com.volleyball.game.net.InputCommand;
+import com.volleyball.game.net.MatchLink;
+import com.volleyball.game.net.NetworkControls;
+import com.volleyball.game.net.NetworkEvent;
+import com.volleyball.game.net.NetworkInput;
+import com.volleyball.game.net.NetworkPrediction;
+import com.volleyball.game.net.NetworkState;
 import com.volleyball.game.ui.ScoreOverlay;
 import com.volleyball.game.ui.PauseMenu;
 import com.volleyball.game.ui.SubstitutionMenu;
@@ -150,11 +159,13 @@ public final class MatchScreen extends ScreenAdapter {
     private com.volleyball.game.match.ReplayRecorder replay;
     private boolean replaying;
     private float replayTime;
+    private float replaySoundFrom;
     private boolean replaySlow;
     /** The automatic replay of a set point: the last seconds of the rally, at half speed. */
     private boolean autoReplay;
     /** Seconds until the set point's replay starts (negative: none pending). */
     private float autoReplayIn = -1f;
+    private boolean replaySidesSwapped;
     /** Manually chosen replay angle (index into REPLAY_ANGLES), or -1 for the automatic sequence. */
     private int replayAngle = -1;
     private CameraMode cameraBeforeReplay;
@@ -179,12 +190,36 @@ public final class MatchScreen extends ScreenAdapter {
     }
 
     public MatchScreen(VolleyballGame game, MatchSetup setup) {
+        this(game, setup, null);
+    }
+
+    private final MatchLink network;
+    private final NetworkControls networkControls;
+    private final NetworkPrediction prediction;
+    private final com.volleyball.game.physics.MoveIntent networkMove = new com.volleyball.game.physics.MoveIntent();
+    private final List<NetworkInput> remotePresses = new ArrayList<>();
+    private boolean localNetworkInput;
+    private long guestAssigned;
+    private int networkPresses;
+    private int networkVariant = -1;
+    private int networkSpin;
+    private int networkOut = -1;
+    private int networkIn = -1;
+    private boolean networkTimeout;
+    private int recordedTick;
+    private boolean recordedTickSet;
+    private int loggedNetworkRally = -1;
+    private NetworkState displayedNetworkState;
+
+    public MatchScreen(VolleyballGame game, MatchSetup setup, MatchLink network) {
         this.game = game;
         this.setup = setup;
         this.config = game.config();
-        this.court = new VolleyballCourt(config.netCategory());
+        this.network = network;
+        this.court = new VolleyballCourt(network == null ? config.netCategory() : network.setup().net());
         // One seed drives every random choice of the session, so a match can be replayed with --seed.
-        long seed = game.launchOptions().seed() != null ? game.launchOptions().seed() : System.nanoTime();
+        long seed = network != null ? network.setup().seed()
+                : game.launchOptions().seed() != null ? game.launchOptions().seed() : System.nanoTime();
         Gdx.app.log("Match", "seed " + seed);
         java.util.Random seeds = new java.util.Random(seed);
         TeamCatalog.Entry[] teams = setup.teams(new java.util.Random(seeds.nextLong()));
@@ -205,6 +240,43 @@ public final class MatchScreen extends ScreenAdapter {
         drills.setFirstServe(setup.firstServe());
         drills.setSystem(setup.system());
         drills.start(setup.drill());
+        networkControls = network != null && network.isHost() ? new NetworkControls(world, drills.session(), drills.match()) : null;
+        prediction = remoteViewer() ? new NetworkPrediction(network.setup().fatigue()) : null;
+        if (network != null) {
+            world.aerodynamics().setAirEnabled(network.setup().air());
+            if (network.isHost()) attachNetworkEvents();
+            else network.attachClient();
+        }
+    }
+
+    private boolean remoteViewer() { return network != null && !network.isHost(); }
+
+    private VolleyballPlayer controlledPlayer() {
+        return network == null ? drills.trainee() : drills.session().slot(remoteViewer() ? 1 : 0).player();
+    }
+
+    private void attachNetworkEvents() {
+        world.ballHandling().addListener(touch -> network.emit(NetworkEvent.touch(touch)));
+        world.addContactListener(hit -> {
+            if (hit.impactSpeed() > 0.8f && hit.kind() != ColliderKind.BLOCK) network.emit(NetworkEvent.collision(hit));
+        });
+        drills.addMatchListener(new com.volleyball.game.match.MatchListener() {
+            @Override public void onServeWhistle(VolleyballPlayer server, MatchScore score) {
+                network.emit(NetworkEvent.serve(server.id));
+            }
+            @Override public void onPoint(MatchRules.PointSummary point, MatchScore score) {
+                network.emit(NetworkEvent.point(point));
+            }
+            @Override public void onChangeOfEnds(boolean swapped) {
+                network.emit(NetworkEvent.ends(swapped));
+            }
+            @Override public void onSubstitution(CourtSide side, VolleyballPlayer out, VolleyballPlayer in, int used) {
+                network.emit(NetworkEvent.substitution(side, out.id, in.id, used));
+            }
+            @Override public void onTimeout(CourtSide side, int used) {
+                network.emit(NetworkEvent.timeout(side, used));
+            }
+        });
     }
 
     /** The camera to start with: the one given for this run ({@code --camera}), else the saved one. */
@@ -220,7 +292,7 @@ public final class MatchScreen extends ScreenAdapter {
 
     @Override
     public void show() {
-        scene = new ArenaScene(court, config.venue(), config.courtTheme(), config.lighting(), config.graphicsQuality(),
+        scene = new ArenaScene(court, network == null ? config.venue() : network.setup().venue(), config.courtTheme(), config.lighting(), config.graphicsQuality(),
                 ArenaScene.Matchup.of(world.home(), world.away()));
         scene.setShadowMapSize(config.shadowMapSize);
         playerRenderer = new PlayerRenderer(List.of(world.home(), world.away()));
@@ -253,13 +325,18 @@ public final class MatchScreen extends ScreenAdapter {
         statsPanel.resize(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         replayOverlay = new com.volleyball.game.ui.ReplayOverlay(game.fonts());
         replayOverlay.resize(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
-        replay = new com.volleyball.game.match.ReplayRecorder(world.players(), world.ball());
-        world.setFatigue(config.fatigue);
+        List<VolleyballPlayer> replayFigures = new ArrayList<>(world.players());
+        replayFigures.addAll(coaches.coaches());
+        replayFigures.add(referee.figure());
+        replay = new com.volleyball.game.match.ReplayRecorder(replayFigures, world.ball());
+        soundDirector.setReplayRecorder(replay);
+        world.setFatigue(network == null ? config.fatigue : network.setup().fatigue());
         // The rally clock and the replay start with every serve.
         drills.addMatchListener(new com.volleyball.game.match.MatchListener() {
             @Override
             public void onServeWhistle(VolleyballPlayer server, MatchScore score) {
                 replay.start();
+                replaySidesSwapped = world.benchSign() < 0f;
                 rallyStartedAt = world.time();
             }
 
@@ -267,7 +344,13 @@ public final class MatchScreen extends ScreenAdapter {
             public void onPoint(MatchRules.PointSummary point, MatchScore score) {
                 rallyStartedAt = -1;
                 // The point that won a set is shown again once the banner has been read.
-                if (point.setWon() && !point.matchWon() && !point.outcome().isReplay()) autoReplayIn = 1.6f;
+                if (network == null && point.setWon() && !point.matchWon() && !point.outcome().isReplay()) autoReplayIn = 1.6f;
+            }
+
+            @Override
+            public void onChangeOfEnds(boolean swapped) {
+                // The last sample was taken before the hall turned. Keep the whole replay on that end.
+                replay.stop();
             }
         });
         tacticsPanel = new com.volleyball.game.ui.TacticsPanel(game.fonts());
@@ -283,7 +366,7 @@ public final class MatchScreen extends ScreenAdapter {
         pauseMenu.resize(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         substitutionMenu = new SubstitutionMenu(world, game.fonts());
         substitutionMenu.resize(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
-        if (config.showHelpOnStart) {
+        if (network == null && config.showHelpOnStart) {
             // First launch: show the controls once, then only on F1.
             helpMenu.toggle();
             config.showHelpOnStart = false;
@@ -295,29 +378,43 @@ public final class MatchScreen extends ScreenAdapter {
 
     @Override
     public void render(float delta) {
+        boolean wasReplaying = replaying;
+        if (network != null) {
+            network.exchange(System.nanoTime());
+            if (remoteViewer() && !replaying) presentNetwork(delta);
+        }
         if (settingsOpen) {
             if (leavingSettings || settings.handleKeys()) closeSettings();
         } else if (replaying) updateReplay(delta);
         else if (statsPanel.isOpen()) handleStatsKeys();
         else handleMenuKeys();
-        if (!settingsOpen && !pauseMenu.isOpen()) autoOpenFinalStats();
-        VolleyballPlayer trainee = drills.trainee();
+        if (!wasReplaying && !settingsOpen && !pauseMenu.isOpen()) autoOpenFinalStats();
+        VolleyballPlayer trainee = controlledPlayer();
         // The game is paused while a menu is open (and during a replay): no gameplay input, no simulation.
         boolean paused = settingsOpen || helpMenu.isOpen() || drillMenu.isOpen() || pauseMenu.isOpen() || substitutionMenu.isOpen()
-                || statsPanel.isOpen() || replaying;
+                || statsPanel.isOpen() || replaying || wasReplaying;
         updateAutoReplay(delta, paused);
-        updateMouseLook(paused);
+        paused |= replaying;
         if (!paused) {
             handleKeys(trainee);
-            trainee = drills.trainee();
-            input.poll(world.time());
+            trainee = controlledPlayer();
+            paused = replaying;
+        }
+        soundDirector.setCourtSurface(scene.venue(), scene.theme());
+        updateMouseLook(paused);
+        if (!paused) {
+            input.poll(inputClock());
             updateAim(trainee);
-            handleBallActions(trainee);
+            if (network == null) handleBallActions(trainee);
+            else collectNetworkInput();
             VolleyballPlayer second = secondPerson();
             if (second != null) {
                 input2.poll(world.time());
                 handleSecondPerson(second);
             }
+        }
+        localNetworkInput = !paused && network != null && network.started();
+        if (network == null && !paused || network != null && network.started() && (!replaying || remoteViewer())) {
             loop.advance(delta, this::simulationStep);
         }
         float alpha = loop.alpha();
@@ -331,17 +428,24 @@ public final class MatchScreen extends ScreenAdapter {
         // First person: the eyes are in the head as it was drawn (one frame back): down in a crouch, along in a dive or a fall.
         cameraController.setEyes(second == null && playerRenderer.eyes(trainee, eyePoint) ? eyePoint : null);
         if (!replaying) updateCameraSubject(trainee);
+        // The replay belongs to the rally before the change of ends.
+        boolean swapped = replaying ? replaySidesSwapped : world.benchSign() < 0f;
+        scene.setSidesSwapped(swapped);
+        cameraController.setSidesSwapped(swapped);
+        if (wasReplaying && !replaying) cameraController.setMode(cameraController.mode(), true);
         cameraController.update(delta);
         updateSound(delta, paused);
 
         Ball ball = world.ball();
         if (ball.isActive()) world.predictor().predict(ball, 6f, forecast);
+        MatchController match = drills.match();
+        VolleyballPlayer called = !paused && !autoplay && match != null && match.phase() == MatchController.Phase.RALLY
+                && ball.isActive() ? (remoteViewer() && displayedNetworkState != null
+                ? displayedNetworkState.calledPlayer(world, trainee.side) : match.ai(trainee.side).calledBallPlayer()) : null;
+        if (called != null && !called.isOnCourt()) called = null;
+        VolleyballPlayer marked = called != trainee && called != second ? called : null;
 
         updateScoreboard();
-        // The teams change ends after a set (and at 8 in the deciding set): the hall turns around them.
-        boolean swapped = world.benchSign() < 0f;
-        scene.setSidesSwapped(swapped);
-        cameraController.setSidesSwapped(swapped);
         scene.update(delta);
         fpsLogTimer += delta;
         if (fpsLogTimer > (System.getenv("FPS_TRACE") != null ? 1f : 5f)) {
@@ -378,6 +482,7 @@ public final class MatchScreen extends ScreenAdapter {
             ballRenderer.render(batch, environment, ball, alpha, ball.isActive() ? forecast : null, showForecastPath);
             if (aimValid && showsAim()) ballRenderer.renderAim(batch, aim.x, aim.z);
             if (drawnTrainee != null && config.landingMarker && !autoplay && !replaying) receptionMarker(batch, drawnTrainee, ball);
+            if (marked != null) ballRenderer.renderCalledPlayer(batch, marked, alpha);
         });
 
         renderMatchHud(trainee);
@@ -385,16 +490,18 @@ public final class MatchScreen extends ScreenAdapter {
         hud.render(Gdx.graphics.getHeight(), buildStatus(trainee, ball));
         shotSelector.clearTop();
         if (!autoplay && !paused) renderSelector(trainee, delta);
-        if (!paused) handleTacticsKeys(trainee);
-        renderTactics(trainee, delta);
+        if (!paused && network == null) handleTacticsKeys(trainee);
+        if (network == null) renderTactics(trainee, delta);
         String prompt = paused ? null : servePrompt();
-        TacticalCard card = paused || prompt != null ? null : tacticalCard(trainee);
+        if (network != null && network.status() != MatchLink.Status.LIVE) prompt = networkStatus();
+        TacticalCard card = paused || prompt != null ? null : tacticalCard(trainee, called);
         scoreOverlay.setPrompt(prompt);
         scoreOverlay.setTacticalCard(card);
+        scoreOverlay.setContactFeedback(paused || autoplay ? null : contactFeedback(trainee, second));
         scoreOverlay.setYourSide(autoplay ? null : trainee.side);
-        scoreOverlay.setActions(paused || card != null ? List.of() : actionHints(trainee));
+        scoreOverlay.setActions(paused || card != null && called != trainee ? List.of() : actionHints(trainee));
         scoreOverlay.setBottomClear(shotSelector.top());
-        scoreOverlay.render(drills.match(), paused ? 0f : delta);
+        if (!replaying) scoreOverlay.render(drills.match(), paused ? 0f : delta);
         helpMenu.render();
         drillMenu.render(drills.drill(), drills.difficulty(), drills.sessionMode(), drills.role(), drills.system());
         substitutionMenu.render();
@@ -454,6 +561,10 @@ public final class MatchScreen extends ScreenAdapter {
     private void requestTimeout(VolleyballPlayer p) {
         MatchController match = drills.match();
         if (match == null) return;
+        if (network != null) {
+            networkTimeout = true;
+            return;
+        }
         com.badlogic.gdx.graphics.Color color = (p.side == CourtSide.HOME ? world.home() : world.away()).shirtColor;
         if (match.timeoutRequested()) return;
         if (match.requestTimeout(p.side)) {
@@ -485,7 +596,7 @@ public final class MatchScreen extends ScreenAdapter {
         if (matchFinishedAt < 0) matchFinishedAt = world.time();
         if (!finalStatsShown && world.time() - matchFinishedAt > 3.0) {
             finalStatsShown = true;
-            statsPanel.show(drills.trainee().side);
+            statsPanel.show(controlledPlayer().side);
             statsPanel.open();
         }
     }
@@ -534,7 +645,8 @@ public final class MatchScreen extends ScreenAdapter {
     private boolean canReplay() {
         MatchController match = drills.match();
         return match != null && replay != null && replay.hasReplay() && match.phase() != MatchController.Phase.RALLY
-                && match.phase() != MatchController.Phase.PREPARE;
+                && match.phase() != MatchController.Phase.PREPARE
+                && (network == null || remoteViewer() || match.phase() == MatchController.Phase.FINISHED);
     }
 
     /** The set point's replay, when it is due (and nothing else is open). */
@@ -545,30 +657,44 @@ public final class MatchScreen extends ScreenAdapter {
         if (autoReplayIn > 0f) return;
         autoReplayIn = -1f;
         if (!canReplay()) return;
-        startReplay();
-        autoReplay = true;
-        replayTime = Math.max(0f, replay.duration() - 3.5f);
+        startReplay(true);
     }
 
     private void startReplay() {
-        autoReplay = false;
+        startReplay(false);
+    }
+
+    private void startReplay(boolean automatic) {
+        autoReplayIn = -1f;
+        autoReplay = automatic;
         replay.stop();
         replay.saveLive();
         replaying = true;
-        replayTime = 0f;
+        replayTime = automatic ? Math.max(0f, replay.duration() - 3.5f) : 0f;
+        replaySoundFrom = replayTime > 0f ? replayTime : -0.001f;
+        soundDirector.beginReplay();
+        sound.play(SoundId.REPLAY_START, 0.42f, 1f, 0f);
         replaySlow = false;
         replayAngle = -1;
         cameraBeforeReplay = cameraController.mode();
         helpMenu.close();
         pauseMenu.close();
+        showReplayFrame(true);
     }
 
     /** Plays the recorded rally: automatic angles (or the chosen one), slow motion on Space. */
     private void updateReplay(float delta) {
-        if (Gdx.input.isKeyJustPressed(Input.Keys.SPACE)) replaySlow = !replaySlow;
-        if (Gdx.input.isKeyJustPressed(Input.Keys.C)) replayAngle = (replayAngle + 1) % REPLAY_ANGLES.length;
         if (Gdx.input.isKeyJustPressed(Input.Keys.V) || Gdx.input.isKeyJustPressed(Input.Keys.ESCAPE)) {
             endReplay();
+            return;
+        }
+        if (Gdx.input.isKeyJustPressed(Input.Keys.SPACE)) replaySlow = !replaySlow;
+        if (Gdx.input.isKeyJustPressed(Input.Keys.C)) replayAngle = (replayAngle + 1) % REPLAY_ANGLES.length;
+        if (Gdx.input.isKeyJustPressed(Input.Keys.R)) {
+            replayTime = 0f;
+            replaySoundFrom = -0.001f;
+            soundDirector.beginReplay();
+            showReplayFrame(true);
             return;
         }
         replayTime += delta * (replaySlow ? 0.3f : autoReplay ? 0.5f : 1f);
@@ -577,17 +703,24 @@ public final class MatchScreen extends ScreenAdapter {
             endReplay();
             return;
         }
+        showReplayFrame(false);
+    }
+
+    private void showReplayFrame(boolean cut) {
         replay.apply(replayTime);
+        float duration = replay.duration();
         int angle = replayAngle >= 0 ? replayAngle : Math.min(2, (int) (replayTime / Math.max(1f, duration) * 3f));
         CameraMode mode = REPLAY_ANGLES[angle];
-        if (cameraController.mode() != mode) cameraController.setMode(mode, false);
         Ball ball = world.ball();
         cameraController.setSubject(ball.position, ball.velocity.x == 0f ? 1f : Math.signum(ball.velocity.x));
+        if (cut || cameraController.mode() != mode) cameraController.setMode(mode, true);
     }
 
     private void endReplay() {
         replay.restoreLive();
         replaying = false;
+        autoReplay = false;
+        soundDirector.beginReplay();
         if (cameraBeforeReplay != null) cameraController.setMode(cameraBeforeReplay, false);
     }
 
@@ -659,11 +792,44 @@ public final class MatchScreen extends ScreenAdapter {
     }
 
     /** The controlled player's assignment in the active attack. */
-    private TacticalCard tacticalCard(VolleyballPlayer p) {
+    private TacticalCard tacticalCard(VolleyballPlayer p, VolleyballPlayer called) {
         MatchController match = drills.match();
         if (match == null || match.phase() != MatchController.Phase.RALLY || autoplay || p == null) return null;
-        TeamAI.PlayAssignment assignment = match.ai(p.side).playAssignment(p);
-        return assignment == null ? null : TacticalCard.forPlayer(assignment, p);
+        TeamAI team = match.ai(p.side);
+        BallHandling.QuickSet option = world.ballHandling().quickSet(p);
+        if (option != null) {
+            return new TacticalCard(Lang.f("Quick window · #%d airborne", option.hitter().number) + " · " + Lang.t(option.type().shortLabel),
+                    Lang.t(option.contested() ? "Block is already up" : "Set on this contact · narrow margin"));
+        }
+        if (team.quickHitter() == p) {
+            return new TacticalCard(Lang.t("Quick set to you"), Lang.t("Swing now"));
+        }
+        if (team.quickWindowFor(p)) {
+            return new TacticalCard(Lang.t("Quick option · hold your swing"), Lang.t("Watch the setter's hands"));
+        }
+        if (called == p && world.ballHandling().teamTouches(p.side) == 1 && p.role != com.volleyball.game.entities.PlayerRole.LIBERO
+                && advisor.passQuality(p.side) == ShotAdvisor.PassQuality.POOR) {
+            return TacticalCard.offSystem(p, world.ballHandling().setType(p), advisor, match.rules().rotation());
+        }
+        TeamAI.PlayAssignment assignment = team.playAssignment(p);
+        if (assignment != null) return TacticalCard.forPlayer(assignment, p);
+        if (called == null) return null;
+        int touches = world.ballHandling().teamTouches(p.side);
+        String contact = switch (touches) {
+            case 1 -> "Second contact";
+            case 2 -> "Third contact";
+            default -> "First contact";
+        };
+        return new TacticalCard(called == p ? Lang.t("Your ball") + " · " + Lang.t(contact)
+                : Lang.f("#%d takes the ball", called.number) + " · " + Lang.t(contact), null);
+    }
+
+    private String contactFeedback(VolleyballPlayer trainee, VolleyballPlayer second) {
+        BallHandling handling = world.ballHandling();
+        var first = handling.contactFeedback(trainee, world.time());
+        if (first != null) return first.label;
+        var other = second == null ? null : handling.contactFeedback(second, world.time());
+        return other == null ? null : Lang.f("Player #%d", second.number) + " · " + Lang.t(other.label);
     }
 
     private final List<String[]> actionKeys = new ArrayList<>();
@@ -770,7 +936,7 @@ public final class MatchScreen extends ScreenAdapter {
         MatchSession session = drills.session();
         if (session == null || autoplay) return null;
         BallHandling handling = world.ballHandling();
-        VolleyballPlayer p = drills.trainee();
+        VolleyballPlayer p = controlledPlayer();
         boolean holding = handling.server() == p && handling.servePhase() == BallHandling.ServePhase.HOLDING;
         boolean next = handling.nextServer() == p && !world.ball().isActive() && handling.servePhase() == BallHandling.ServePhase.NONE;
         if (!holding && !next) return null;
@@ -788,15 +954,16 @@ public final class MatchScreen extends ScreenAdapter {
             case RESUME -> {
             }
             case RESTART -> {
+                if (network != null) return;
                 for (VolleyballPlayer p : world.players()) world.intent(p).clear();
                 drills.start(drills.drill());
                 roleAnnounced = false;
                 onDrillStarted();
             }
             case SUBSTITUTIONS -> openSubstitutions();
-            case TIMEOUT -> requestTimeout(drills.trainee());
+            case TIMEOUT -> requestTimeout(controlledPlayer());
             case STATISTICS -> {
-                statsPanel.show(drills.trainee().side);
+                statsPanel.show(controlledPlayer().side);
                 statsPanel.open();
             }
             case REPLAY -> {
@@ -861,7 +1028,7 @@ public final class MatchScreen extends ScreenAdapter {
         if (!config.language.equals(previous.language)) Lang.set(Lang.parse(config.language));
         cameraController.setFieldOfView(config.fieldOfView);
         cameraController.setSensitivity(config.mouseSensitivity);
-        world.setFatigue(config.fatigue);
+        if (network == null) world.setFatigue(config.fatigue);
         if (config.showMatchHints != previous.showMatchHints) matchHud.setHintsExpanded(config.showMatchHints);
         if (!config.keyBindings.equals(previous.keyBindings) || !config.keyBindingsPlayer2.equals(previous.keyBindingsPlayer2)) {
             bindings = config.keyBindings();
@@ -870,11 +1037,11 @@ public final class MatchScreen extends ScreenAdapter {
             input2 = new InputController(new GdxKeyState(secondBindings));
             helpMenu.setKeyBindings(bindings, secondBindings);
         }
-        if (!config.netCategory.equals(previous.netCategory)) {
+        if (network == null && !config.netCategory.equals(previous.netCategory)) {
             court.net().setCategory(config.netCategory());
             world.onNetChanged();
         }
-        if (!config.venue.equals(previous.venue)) {
+        if (network == null && !config.venue.equals(previous.venue)) {
             ArenaScene old = scene;
             scene = new ArenaScene(court, config.venue(), config.courtTheme(), config.lighting(), config.graphicsQuality(),
                     ArenaScene.Matchup.of(world.home(), world.away()));
@@ -913,14 +1080,15 @@ public final class MatchScreen extends ScreenAdapter {
      */
     private void handleSecondPerson(VolleyballPlayer p) {
         InputController.BallActionPress press = input2.ballActionPressed();
-        if (press != null) {
-            world.ballHandling().arm(p, press == InputController.BallActionPress.PRIMARY ? ActionKind.PRIMARY : ActionKind.SECONDARY,
-                    world.time());
-        }
+        if (press != null) requestBallAction(p, press);
         int change = input2.variantChange();
-        if (change != 0) world.ballHandling().cycleVariant(p, change);
+        BallHandling handling = world.ballHandling();
+        ContactPurpose context = handling.variantContext(p);
+        int previous = handling.selectedVariant(p, context);
+        if (change != 0) handling.cycleVariant(p, change);
         int spin = input2.spinPressed();
-        if (spin != 0) world.ballHandling().toggleServeSpin(p, spin < 0 ? ServeSpin.CURVE_LEFT : ServeSpin.CURVE_RIGHT);
+        handleSelectionSound(p, handling, context, previous, spin);
+        resolveAuto(p);
         if (input2.switchPlayerPressed()) {
             world.intent(p).clear();
             drills.switchPlayer(1);
@@ -936,14 +1104,35 @@ public final class MatchScreen extends ScreenAdapter {
     /** Camera position for panning, crowd and menu music, and the libGDX sound loading. */
     private void updateSound(float delta, boolean paused) {
         soundDirector.setListener(cameraController.camera().position, cameraController.camera().direction);
-        soundDirector.setCourtSurface(scene.venue(), scene.theme());
         soundDirector.setMatchActive(drills.drill() == Drill.MATCH);
-        soundDirector.setPaused(paused);
+        soundDirector.setPaused(paused || replaying);
+        if (replaying) {
+            replay.playSounds(replaySoundFrom, replayTime, cue -> soundDirector.playReplaySound(cue, replaySlow || autoReplay));
+            replaySoundFrom = replayTime;
+        } else if (!paused && !autoplay) {
+            signalAssignedReceiver();
+        }
         soundDirector.update(paused ? 0f : delta);
+    }
+
+    private void signalAssignedReceiver() {
+        MatchController match = drills.match();
+        Ball ball = world.ball();
+        VolleyballPlayer player = drills.trainee();
+        if (match == null || match.phase() != MatchController.Phase.RALLY || !ball.isActive()
+                || ball.velocity.y >= 0f || ball.position.y > 3.5f || world.ballHandling().teamTouches(player.side) != 0
+                || ball.position.x * player.side.sign() < -0.5f) return;
+        VolleyballPlayer receiver = world.player(match.ai(player.side).responsibleId());
+        if (receiver == null || receiver == player || !receiver.isOnCourt() || receiver.isAirborne()
+                || receiver.position.dst2(player.position) > 49f || receiver.position.dst2(ball.position) > 16f) return;
+        soundDirector.signalReceiver(receiver);
     }
 
     /** After a drill or match (re)starts: the camera for two people is the TV view. */
     private void onDrillStarted() {
+        autoReplayIn = -1f;
+        if (replay != null) replay.clear();
+        if (sound != null) sound.play(SoundId.MODE_CHANGE, 0.42f, 1f, 0f);
         if (cameraController != null && secondPerson() != null) cameraController.setMode(CameraMode.TV_BROADCAST, true);
         if (drills.match() != null && playbook != null) {
             for (CourtSide side : CourtSide.values()) drills.match().ai(side).setPlaybook(playbook);
@@ -960,10 +1149,14 @@ public final class MatchScreen extends ScreenAdapter {
 
     /** One fixed simulation step: human movement, the world, then the drill logic. */
     private void simulationStep(float dt) {
-        VolleyballPlayer trainee = drills.trainee();
+        VolleyballPlayer trainee = controlledPlayer();
         MatchSession session = drills.session();
         cameraController.controlForward(controlForward);
-        if (session != null) {
+        if (network != null) {
+            onlineStep(trainee);
+            if (remoteViewer()) return;
+            trainee = controlledPlayer();
+        } else if (session != null) {
             // In the match the demo mode (F10) hands person 1's player over to the team AI.
             drills.setSlotAutomatic(0, autoplay);
             if (drills.match().phase() == MatchController.Phase.RALLY) {
@@ -977,12 +1170,143 @@ public final class MatchScreen extends ScreenAdapter {
         } else if (autoplay) autoTrainee.update(trainee, drills.drill(), world.time());
         else input.fillIntent(world.intent(trainee), trainee, controlForward, world.time());
         // The people's players get the bigger reach (see BallHandling.ASSIST_REACH); not in a demo.
-        world.ballHandling().setAssisted(autoplay ? null : trainee, session != null ? secondPerson() : null);
+        VolleyballPlayer remote = network != null && !session.slot(1).isAutomatic() ? session.slot(1).player() : null;
+        world.ballHandling().setAssisted(autoplay ? null : trainee, network != null ? remote : secondPerson());
         world.step(dt);
         coaches.update(dt, drills.match(), world.ball(), world.benchSign());
         referee.update(dt, world.benchSign());
+        soundDirector.updateMovement(dt);
         if (drills.match() != null) replay.capture(dt);
         drills.update(dt);
+        if (network != null && network.snapshotDue()) {
+            network.publish(NetworkState.capture(network.tick(), world, drills.match(), session));
+        }
+        if (network != null && game.launchOptions().autoplay() && loggedNetworkRally != drills.match().rallies()) {
+            loggedNetworkRally = drills.match().rallies();
+            var score = drills.match().rules().score();
+            Gdx.app.log("Network", "rally=" + loggedNetworkRally + " score=" + score.points(CourtSide.HOME)
+                    + ":" + score.points(CourtSide.AWAY) + " phase=" + drills.match().phase());
+        }
+    }
+
+    private double inputClock() { return remoteViewer() ? loop.totalSteps() * loop.stepSeconds() : world.time(); }
+
+    private void collectNetworkInput() {
+        if (!network.started() || autoplay) {
+            input.clearBuffer();
+            return;
+        }
+        InputController.BallActionPress action = input.ballActionPressed();
+        if (action != null) networkPresses |= action == InputController.BallActionPress.PRIMARY ? InputCommand.PRIMARY : InputCommand.SECONDARY;
+        int variant = input.variantChange();
+        if (variant != 0) networkPresses |= variant > 0 ? InputCommand.VARIANT_NEXT : InputCommand.VARIANT_PREVIOUS;
+        if (input.switchPlayerPressed()) networkPresses |= InputCommand.SWITCH_PLAYER;
+        int spin = input.spinPressed();
+        if (spin != 0) networkSpin = spin;
+        for (int i = 0; i <= 9 && !altHeld(); i++) {
+            if (Gdx.input.isKeyJustPressed(Input.Keys.NUM_0 + i) || Gdx.input.isKeyJustPressed(Input.Keys.NUMPAD_0 + i)) networkVariant = i;
+        }
+    }
+
+    private void onlineStep(VolleyballPlayer player) {
+        long now = System.nanoTime();
+        var session = drills.session();
+        var match = drills.match();
+        if (network.isHost()) {
+            network.beginHostStep();
+            if (guestAssigned != network.guestIdentity() && network.status() == MatchLink.Status.LIVE) {
+                session.chooseRemoteRole(network.guestRole(), match.rules().rotation());
+                guestAssigned = network.guestIdentity();
+            }
+            session.setAutomatic(0, autoplay);
+            boolean absent = network.status() != MatchLink.Status.LIVE || game.launchOptions().autoplay();
+            if (absent && !session.slot(1).isAutomatic()) {
+                var old = session.slot(1).player();
+                world.intent(old).clear();
+                world.ballHandling().cancel(old);
+            }
+            session.setAutomatic(1, absent);
+        }
+        networkMove.clear();
+        int flags = 0;
+        if (localNetworkInput && !autoplay) {
+            if (match.phase() == MatchController.Phase.RALLY) {
+                input.fillIntent(networkMove, player, controlForward, inputClock());
+            } else input.clearBuffer();
+            flags = networkPresses | (aimValid ? InputCommand.AIM : 0);
+        } else input.clearBuffer();
+        InputCommand command = InputCommand.of(network.isHost() ? network.tick() : network.targetTick(now), network.isHost() ? 0 : 1,
+                networkMove, flags, aim.x, aim.z);
+        NetworkInput local = new NetworkInput(command, networkMove.facingYaw, networkMove.jumpChargeLevel,
+                networkVariant, networkSpin, networkOut, networkIn, networkTimeout);
+        networkPresses = 0;
+        networkVariant = networkOut = networkIn = -1;
+        networkSpin = 0;
+        networkTimeout = false;
+        if (remoteViewer()) {
+            network.submit(local);
+            if (local.variant() >= 0) world.ballHandling().selectVariant(player, local.variant());
+            if (command.has(InputCommand.VARIANT_NEXT)) world.ballHandling().cycleVariant(player, 1);
+            if (command.has(InputCommand.VARIANT_PREVIOUS)) world.ballHandling().cycleVariant(player, -1);
+            if (local.spin() != 0) world.ballHandling().toggleServeSpin(player, local.spin() < 0 ? ServeSpin.CURVE_LEFT : ServeSpin.CURVE_RIGHT);
+        } else {
+            networkControls.apply(0, local, List.of(local));
+            remotePresses.clear();
+            NetworkInput remote = network.consume(remotePresses::add);
+            networkControls.apply(1, remote, remotePresses);
+        }
+    }
+
+    private void presentNetwork(float delta) {
+        NetworkState[] frames = network.display(System.nanoTime());
+        if (frames == null) return;
+        NetworkState a = frames[0];
+        displayedNetworkState = a;
+        var match = drills.match();
+        a.present(world, match, drills.session());
+        a.blendTowards(frames[1], network.displayFraction(), world);
+        network.presentEvents(a.tick(), this::presentNetworkEvent);
+        if (!recordedTickSet || a.tick() != recordedTick) {
+            float elapsed = recordedTickSet ? Math.min(0.15f, (a.tick() - recordedTick) / 120f) : 1f / 40;
+            replay.capture(elapsed);
+            recordedTick = a.tick();
+            recordedTickSet = true;
+        }
+        prediction.present(network, controlledPlayer(), delta);
+        coaches.update(delta, match, world.ball(), world.benchSign());
+        referee.update(delta, world.benchSign());
+        soundDirector.updateMovement(delta);
+        if (game.launchOptions().autoplay() && loggedNetworkRally != a.rallies()) {
+            loggedNetworkRally = a.rallies();
+            Gdx.app.log("Network", "rally=" + a.rallies() + " score=" + a.homePoints() + ":" + a.awayPoints() + " phase=" + a.phase());
+        }
+    }
+
+    private void presentNetworkEvent(NetworkEvent event) {
+        try {
+            if (event.kind() == NetworkEvent.Kind.TOUCH) {
+                var touch = event.toTouch(world);
+                var hitter = world.player(touch.playerId());
+                if (hitter != null && (hitter.actionPose().swing() || hitter.actionPose().overhead())) hitter.recordActionContact(touch.contactPoint());
+                soundDirector.onBallTouch(touch);
+                drills.match().statistics().onBallTouch(touch);
+            } else if (event.kind() == NetworkEvent.Kind.COLLISION) {
+                soundDirector.onBallContact(event.toCollision());
+            } else event.presentMatch(world, drills.match());
+        } catch (IndexOutOfBoundsException invalid) {
+            // A malformed presentation event has no effect on the host or the score snapshot.
+        }
+    }
+
+    private String networkStatus() {
+        return Lang.t(switch (network.status()) {
+            case WAITING -> "Waiting for another player";
+            case READY, CONNECTING -> "Connecting to host";
+            case RECONNECTING -> "Connection lost · reconnecting";
+            case INCOMPATIBLE -> "Incompatible game version";
+            case ENDED -> "Network session ended";
+            case LIVE -> "Online";
+        }) + (network.isHost() && network.status() == MatchLink.Status.WAITING ? " · UDP " + network.localPort() : "");
     }
 
     private final com.volleyball.game.physics.TrajectoryPredictor.Prediction receptionRead =
@@ -1056,23 +1380,39 @@ public final class MatchScreen extends ScreenAdapter {
 
     private void handleBallActions(VolleyballPlayer trainee) {
         InputController.BallActionPress press = autoplay ? null : input.ballActionPressed();
-        if (press != null) {
-            world.ballHandling().arm(trainee,
-                    press == InputController.BallActionPress.PRIMARY ? ActionKind.PRIMARY : ActionKind.SECONDARY, world.time());
-        }
+        if (press != null) requestBallAction(trainee, press);
+        BallHandling handling = world.ballHandling();
+        ContactPurpose context = handling.variantContext(trainee);
+        int previous = handling.selectedVariant(trainee, context);
         int change = input.variantChange();
-        if (change != 0) world.ballHandling().cycleVariant(trainee, change);
+        if (change != 0) handling.cycleVariant(trainee, change);
         int spin = autoplay ? 0 : input.spinPressed();
-        if (spin != 0) world.ballHandling().toggleServeSpin(trainee, spin < 0 ? ServeSpin.CURVE_LEFT : ServeSpin.CURVE_RIGHT);
         // Number keys: direct choice (0 = Auto). In the ball lab they launch test balls instead.
         if (drills.drill() != Drill.FREE && !altHeld()) {
             for (int n = 0; n <= 9; n++) {
                 if (Gdx.input.isKeyJustPressed(Input.Keys.NUM_0 + n) || Gdx.input.isKeyJustPressed(Input.Keys.NUMPAD_0 + n)) {
-                    world.ballHandling().selectVariant(trainee, n);
+                    handling.selectVariant(trainee, n);
                 }
             }
         }
+        handleSelectionSound(trainee, handling, context, previous, spin);
         resolveAuto(trainee);
+    }
+
+    private void requestBallAction(VolleyballPlayer player, InputController.BallActionPress press) {
+        ActionKind kind = press == InputController.BallActionPress.PRIMARY ? ActionKind.PRIMARY : ActionKind.SECONDARY;
+        MatchController match = drills.match();
+        if (match == null || match.phase() == MatchController.Phase.RALLY) {
+            world.ballHandling().armManual(player, kind, world.time());
+        }
+    }
+
+    private void handleSelectionSound(VolleyballPlayer player, BallHandling handling, ContactPurpose context, int previous, int spin) {
+        ServeSpin previousSpin = handling.serveSpin(player);
+        if (spin != 0) handling.toggleServeSpin(player, spin < 0 ? ServeSpin.CURVE_LEFT : ServeSpin.CURVE_RIGHT);
+        if (handling.selectedVariant(player, context) != previous || handling.serveSpin(player) != previousSpin) {
+            sound.play(SoundId.ACTION_CHANGE, 0.41f, 1f, 0f);
+        }
     }
 
     /** "Auto": the set or shot the situation calls for (see ShotAdvisor), updated until the contact. */
@@ -1146,14 +1486,22 @@ public final class MatchScreen extends ScreenAdapter {
                 selectorOptions.add(new com.volleyball.game.ui.ShotSelector.Option("0", "Auto",
                         selected == 0 ? handling.setType(p).shortLabel : null, true, selected == 0, false));
                 SetType[] types = SetType.values();
+                hot = ballHere && handling.teamTouches(p.side) == 1;
                 for (int i = 0; i < types.length; i++) {
                     VolleyballPlayer hitter = hitters.get(types[i].lane);
+                    String receiver = hitter == null ? "no hitter" : "#" + hitter.number + (hot
+                            ? " · " + TacticalCard.readiness(advisor.setReadiness(p, types[i], hitter)) : " " + hitter.name);
                     selectorOptions.add(new com.volleyball.game.ui.ShotSelector.Option(String.valueOf(i + 1), types[i].shortLabel,
-                            hitter == null ? "no hitter" : "#" + hitter.number + " " + hitter.name, hitter != null, selected == i + 1,
+                            receiver, hitter != null, selected == i + 1,
                             types[i] == recommended));
                 }
                 hint = selected == 0 ? "Auto: " + handling.setType(p).label + " (picked from the pass and the block)" : handling.setType(p).label;
-                hot = ballHere && handling.teamTouches(p.side) == 1;
+                var quick = handling.quickSet(p);
+                if (hot && quick != null) hint = Lang.f("Quick window · #%d airborne", quick.hitter().number);
+                else if (hot && selected > 0 && handling.setType(p).fast() && advisor.passQuality(p.side) == ShotAdvisor.PassQuality.POOR) {
+                    hint = Lang.t("Pass off the net · a high wing set buys time");
+                }
+                else if (hot && selected > 0 && handling.setType(p).fast()) hint = Lang.t("Fast set · watch the hitter's takeoff");
             }
             default -> {
                 title = "SHOT";
@@ -1178,6 +1526,12 @@ public final class MatchScreen extends ScreenAdapter {
         BallHandling handling = world.ballHandling();
         MatchController match = drills.match();
         status.clear();
+        if (network != null && !replaying) {
+            status.add(networkStatus() + (network.status() == MatchLink.Status.LIVE ? "  ·  " + network.rtt() + " ms" : ""));
+            if (showDetails) status.add("jitter " + network.jitter() + " ms · gaps " + network.snapshotGaps()
+                    + " · snapshot " + network.snapshotAge(System.nanoTime()) + " ms"
+                    + " · late " + network.rejectedInputs() + " · corrections " + network.corrections());
+        }
         hud.setTopOffset(match != null && !replaying ? Gdx.graphics.getHeight() - matchHud.cardBottom() + 4f : 0f);
         if (match != null) {
             if (replaying) return status;
@@ -1335,6 +1689,10 @@ public final class MatchScreen extends ScreenAdapter {
         }
         helpMenu.handleInput();
         if (Gdx.input.isKeyJustPressed(Input.Keys.J) && !helpMenu.isOpen()) matchHud.toggleHints();
+        if (Gdx.input.isKeyJustPressed(Input.Keys.M) && network != null) {
+            openPauseMenu();
+            return;
+        }
         if (Gdx.input.isKeyJustPressed(Input.Keys.M)) {
             helpMenu.close();
             drillMenu.toggle();
@@ -1368,7 +1726,12 @@ public final class MatchScreen extends ScreenAdapter {
     /** The bench of person 1's team. */
     private void openSubstitutions() {
         if (drills.match() == null) return;
-        substitutionMenu.open(drills.match(), drills.trainee().side == CourtSide.HOME ? world.home() : world.away());
+        var team = controlledPlayer().side == CourtSide.HOME ? world.home() : world.away();
+        if (network == null) substitutionMenu.open(drills.match(), team);
+        else substitutionMenu.open(drills.match(), team, (out, in) -> {
+            networkOut = out.id;
+            networkIn = in.id;
+        });
     }
 
     private void openPauseMenu() {
@@ -1380,6 +1743,7 @@ public final class MatchScreen extends ScreenAdapter {
             actions.remove(PauseMenu.Action.STATISTICS);
         }
         if (!canReplay()) actions.remove(PauseMenu.Action.REPLAY);
+        if (network != null) actions.remove(PauseMenu.Action.RESTART);
         String subtitle = drills.match() != null
                 ? "Quick match  ·  " + RoleGuide.of(drills.role()).title() + "  ·  AI " + drills.difficulty().label
                 : "Training  ·  " + drills.drill().label;
@@ -1401,8 +1765,11 @@ public final class MatchScreen extends ScreenAdapter {
             game.saveConfig();
         }
         if (Gdx.input.isKeyJustPressed(Input.Keys.V)) {
-            if (canReplay()) startReplay();
-            else cameraController.resetFollowView();
+            if (canReplay()) {
+                startReplay();
+                return;
+            }
+            cameraController.resetFollowView();
         }
         MatchController match = drills.match();
         if (match != null) {
@@ -1411,11 +1778,13 @@ public final class MatchScreen extends ScreenAdapter {
                 statsPanel.open();
             }
             if (Gdx.input.isKeyJustPressed(Input.Keys.U)) requestTimeout(trainee);
-            if (match.phase() == MatchController.Phase.TIMEOUT && Gdx.input.isKeyJustPressed(Input.Keys.SPACE)) match.skipTimeout();
+            if (network == null && match.phase() == MatchController.Phase.TIMEOUT && Gdx.input.isKeyJustPressed(Input.Keys.SPACE)) match.skipTimeout();
         }
+        if (network != null) return;
         if (Gdx.input.isKeyJustPressed(Input.Keys.F10)) {
             autoplay = !autoplay;
             world.intent(trainee).clear();
+            sound.play(SoundId.MODE_CHANGE, 0.42f, 1f, 0f);
         }
         for (int i = 0; i < DRILL_KEYS_F5_TO_F9.length; i++) {
             if (Gdx.input.isKeyJustPressed(Input.Keys.F5 + i)) {
@@ -1494,6 +1863,7 @@ public final class MatchScreen extends ScreenAdapter {
 
     @Override
     public void dispose() {
+        if (network != null) network.close();
         if (scene != null) scene.dispose();
         if (playerRenderer != null) playerRenderer.dispose();
         if (ballRenderer != null) ballRenderer.dispose();
@@ -1511,7 +1881,7 @@ public final class MatchScreen extends ScreenAdapter {
         if (settingsBatch != null) settingsBatch.dispose();
         if (settingsShapes != null) settingsShapes.dispose();
         // The sound output belongs to the game; only this screen's listeners go.
-        sound.setLoop(com.volleyball.game.audio.SoundId.CROWD_AMBIENT, 0f);
+        if (soundDirector != null) soundDirector.stopAmbience();
     }
 
     /**
@@ -1541,7 +1911,7 @@ public final class MatchScreen extends ScreenAdapter {
                 if (!leavingSettings) leavingSettings = settings.touchDown(screenX, Gdx.graphics.getHeight() - screenY, button);
                 return true;
             }
-            if (pauseMenu.isOpen()) return false;
+            if (replaying || pauseMenu.isOpen()) return false;
             orbiting = button == Input.Buttons.MIDDLE;
             lastX = screenX;
             lastY = screenY;
@@ -1565,7 +1935,7 @@ public final class MatchScreen extends ScreenAdapter {
                 return true;
             }
             // The first-person mouse look already turns the view with every movement.
-            if (!orbiting || mouseLook || pauseMenu.isOpen()) return false;
+            if (replaying || !orbiting || mouseLook || pauseMenu.isOpen()) return false;
             float dy = screenY - lastY;
             cameraController.orbit(screenX - lastX, config.invertMouseY ? -dy : dy);
             lastX = screenX;
@@ -1575,7 +1945,7 @@ public final class MatchScreen extends ScreenAdapter {
 
         @Override
         public boolean scrolled(float amountX, float amountY) {
-            if (settingsOpen || pauseMenu.isOpen()) return true;
+            if (replaying || settingsOpen || pauseMenu.isOpen()) return true;
             // Third person: distance to the player; other views switch to the free orbit and zoom.
             cameraController.zoom(amountY);
             return true;

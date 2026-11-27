@@ -92,6 +92,7 @@ public final class ArenaShader extends DefaultShader {
         });
         global("u_courtShadowMatrix", (s, id) -> s.set(id, frame.courtShadowMatrix));
         global("u_shadowTexel", (s, id) -> s.set(id, frame.shadowTexel));
+        global("u_shadowProfile", (s, id) -> s.set(id, frame.rig.shadowSoftness, frame.rig.shadowFill));
         global("u_time", (s, id) -> s.set(id, frame.time));
         global("u_crowd", (s, id) -> s.set(id, frame.crowd[0], frame.crowd[1], frame.crowd[2], frame.crowd[3]));
         register(new Uniform("u_surface"), new LocalSetter() {

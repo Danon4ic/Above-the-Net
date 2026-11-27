@@ -39,6 +39,7 @@ public final class SubstitutionMenu implements Disposable {
     private Color messageColor = UiKit.TEXT_DIM;
     private int width;
     private int height;
+    private java.util.function.BiConsumer<VolleyballPlayer, VolleyballPlayer> remoteRequest;
 
     public SubstitutionMenu(GameWorld world, UiFonts fonts) {
         this.world = world;
@@ -50,11 +51,16 @@ public final class SubstitutionMenu implements Disposable {
     }
 
     public void open(MatchController match, Team team) {
+        open(match, team, null);
+    }
+
+    public void open(MatchController match, Team team, java.util.function.BiConsumer<VolleyballPlayer, VolleyballPlayer> request) {
         this.match = match;
         this.team = team;
         open = true;
         message = "";
         benchIndex = 0;
+        remoteRequest = request;
     }
 
     public void close() {
@@ -109,6 +115,12 @@ public final class SubstitutionMenu implements Disposable {
         if (Gdx.input.isKeyJustPressed(Input.Keys.ENTER) && !bench.isEmpty()) {
             VolleyballPlayer out = court.get(courtIndex);
             VolleyballPlayer in = bench.get(benchIndex);
+            if (remoteRequest != null) {
+                remoteRequest.accept(out, in);
+                message = "Substitution requested";
+                messageColor = UiKit.TEXT_DIM;
+                return;
+            }
             SubstitutionManager.Result result = match.requestSubstitution(team.side, out, in);
             if (result == SubstitutionManager.Result.OK) {
                 message = "#" + in.number + " " + in.name + " comes in for #" + out.number + " " + out.name + " before the next serve";
@@ -122,7 +134,7 @@ public final class SubstitutionMenu implements Disposable {
 
     public void render() {
         if (!open) return;
-        float s = UiFonts.uiScale(height);
+        float s = Math.min(UiFonts.uiScale(height), Math.min(width / 760f, height / 520f));
         List<VolleyballPlayer> court = lineUp();
         List<VolleyballPlayer> bench = bench();
         RotationManager rotation = match.rules().rotation();
@@ -163,7 +175,8 @@ public final class SubstitutionMenu implements Disposable {
             float y = listTop - i * rowH - rowH / 2f + row.getCapHeight() / 2f - 4f * s;
             String libero = rotation.replacedByLibero(team.side) == p.id ? "   (libero in)" : "";
             UiKit.text(batch, small, "Z" + (i + 1), x0 + pad, y, UiKit.TEXT_FAINT, 1f);
-            UiKit.text(batch, row, "#" + p.number + "  " + p.name, x0 + pad + 40f * s, y, i == courtIndex ? UiKit.TEXT : UiKit.TEXT_DIM, 1f);
+            UiKit.text(batch, row, "#" + p.number + "  " + p.name, x0 + pad + 40f * s, y,
+                    150f * s, com.badlogic.gdx.utils.Align.left, false, i == courtIndex ? UiKit.TEXT : UiKit.TEXT_DIM, 1f);
             // The role column ends with the line-up column (cut short rather than run into the bench side).
             float roleX = x0 + pad + 200f * s;
             String role = UiKit.fit(small, Lang.t(p.role.label + libero), x0 + pad - 10f * s + colW - 8f * s - roleX);
@@ -177,18 +190,22 @@ public final class SubstitutionMenu implements Disposable {
             VolleyballPlayer out = court.get(courtIndex);
             SubstitutionManager.Result check = subs.check(team.side, out.id, in.id, rotation, liberoId);
             float y = listTop - rowH / 2f;
-            UiKit.text(batch, fonts.get(UiFonts.Weight.EXTRABOLD, 22f * s), "‹  #" + in.number + " " + in.name + "  ›", bx, y + 6f * s, UiKit.TEXT, 1f);
-            UiKit.text(batch, small, in.role.label + "   ·   " + (benchIndex + 1) + " of " + bench.size(), bx, y - 26f * s, UiKit.TEXT_DIM, 1f);
+            UiKit.text(batch, fonts.get(UiFonts.Weight.EXTRABOLD, 22f * s), "‹  #" + in.number + " " + in.name + "  ›", bx, y + 6f * s,
+                    colW, com.badlogic.gdx.utils.Align.left, false, UiKit.TEXT, 1f);
+            UiKit.text(batch, small, in.role.label + "   ·   " + (benchIndex + 1) + " of " + bench.size() + staminaLabel(in),
+                    bx, y - 26f * s, colW, com.badlogic.gdx.utils.Align.left, false, UiKit.TEXT_DIM, 1f);
             UiKit.text(batch, small, traitsLine(in), bx, y - 46f * s, colW, com.badlogic.gdx.utils.Align.left, false, UiKit.JADE, 1f);
-            UiKit.text(batch, small, "for #" + out.number + " " + out.name + " (" + out.role.label + ")", bx, y - 72f * s, UiKit.TEXT_DIM, 1f);
+            UiKit.text(batch, small, "for #" + out.number + " " + out.name + " (" + out.role.label + ")" + staminaLabel(out),
+                    bx, y - 72f * s, colW, com.badlogic.gdx.utils.Align.left, false, UiKit.TEXT_DIM, 1f);
             UiKit.text(batch, small, traitsLine(out), bx, y - 92f * s, colW, com.badlogic.gdx.utils.Align.left, false, UiKit.TEXT_FAINT, 1f);
             boolean ok = check == SubstitutionManager.Result.OK;
             UiKit.text(batch, row, ok ? "Allowed - press ENTER" : check.label, bx, y - 128f * s, colW, com.badlogic.gdx.utils.Align.left, true,
                     ok ? UiKit.GREEN : UiKit.RED, 1f);
         }
-        UiKit.text(batch, small, message, x0 + pad, y0 + 56f * s, messageColor, 1f);
+        UiKit.text(batch, small, message, x0 + pad, y0 + 56f * s, panelW - 2f * pad,
+                com.badlogic.gdx.utils.Align.left, false, messageColor, 1f);
         UiKit.text(batch, small, "ENTER  substitute      B / ESC  close      The libero replaces players by itself.",
-                x0 + pad, y0 + 26f * s, UiKit.TEXT_FAINT, 1f);
+                x0 + pad, y0 + 26f * s, panelW - 2f * pad, com.badlogic.gdx.utils.Align.left, false, UiKit.TEXT_FAINT, 1f);
         batch.end();
     }
 
@@ -196,6 +213,10 @@ public final class SubstitutionMenu implements Disposable {
     private static String traitsLine(VolleyballPlayer p) {
         String t = p.traitLabel();
         return t.isEmpty() ? "" : "Traits: " + t;
+    }
+
+    private String staminaLabel(VolleyballPlayer p) {
+        return world.fatigue() ? "   ·   " + Math.round(p.stamina() * 100f) + "%" : "";
     }
 
     @Override

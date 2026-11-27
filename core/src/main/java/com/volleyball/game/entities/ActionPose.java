@@ -5,8 +5,15 @@ public enum ActionPose {
     NONE,
     /** Forearms joined in front of the hips. */
     PLATFORM,
+    /** A standing dig with one arm outside the platform's reach. */
+    ONE_ARM_DIG,
+    /** Reaching for the ball during the dive or its slide. */
+    DIVE_DIG,
     /** Hands above the forehead. */
     OVERHEAD,
+    SET_FORWARD, SET_BACK, SET_FAST, SET_FAST_BACK, SET_ONE_HAND,
+    /** A short arm draw before an attack in the same jump as the set. */
+    QUICK_READY, QUICK_SWING,
     /** Hitting arm cocked or swinging (attack, overhand serve). */
     SWING,
     /** Toss arm raised (serve). */
@@ -19,6 +26,7 @@ public enum ActionPose {
     CELEBRATE,
     /** A teammate close by after a point won: the hitting hand up to slap theirs. */
     HIGH_FIVE,
+    BENCH_SIT, BENCH_RISE,
     /** After a point lost: a short clap of encouragement in front of the chest. */
     CLAP,
     /** After a point lost: head down, hands on the hips (or on the knees), a moment of frustration. */
@@ -41,5 +49,25 @@ public enum ActionPose {
     /** Held / thrown ball: the forearm lifted slowly, palm up. */
     REF_HELD,
     /** Timeout: the hands form a T. */
-    REF_TIMEOUT
+    REF_TIMEOUT;
+
+    public boolean set() {
+        return this == SET_FORWARD || this == SET_BACK || this == SET_FAST || this == SET_FAST_BACK || this == SET_ONE_HAND;
+    }
+
+    public boolean fastSet() {
+        return this == SET_FAST || this == SET_FAST_BACK;
+    }
+
+    public boolean backSet() {
+        return this == SET_BACK || this == SET_FAST_BACK;
+    }
+
+    public boolean overhead() {
+        return this == OVERHEAD || set();
+    }
+
+    public boolean swing() {
+        return this == SWING || this == QUICK_SWING;
+    }
 }

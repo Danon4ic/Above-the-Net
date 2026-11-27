@@ -3,7 +3,9 @@ package com.volleyball.game.mechanics;
 import com.badlogic.gdx.math.Vector3;
 import com.volleyball.game.entities.Ball;
 import com.volleyball.game.entities.PlayerAttributes;
+import com.volleyball.game.entities.PlayerTrait;
 import com.volleyball.game.physics.LaunchSolver;
+import com.volleyball.game.physics.PhysicsConstants;
 import com.volleyball.game.world.CourtDimensions;
 
 import java.util.Random;
@@ -73,10 +75,16 @@ public final class AttackMechanic {
                 sigma = 2.2f * (1.6f - q) * (1.4f - accuracy);
             }
             case OFF_THE_TOP -> {
-                // Nearly flat, at the fingertips: a long target puts the line through the top of the hands.
                 float speed = powerSpeed(a) * (0.82f + 0.18f * q);
                 topspin = 8f;
-                solver.solve(c.ballPosition, c.target.x, c.target.z, speed, topspin, 0f, out);
+                if (c.aimAtFingertips) {
+                    out.velocity.set(c.target).sub(c.ballPosition);
+                    float flight = out.velocity.len() / speed;
+                    out.velocity.y += 0.5f * PhysicsConstants.GRAVITY * flight * flight;
+                    out.velocity.nor().scl(speed);
+                } else {
+                    solver.solve(c.ballPosition, c.target.x, c.target.z, speed, topspin, 0f, out);
+                }
                 sigma = 2.0f * (1.6f - q) * (1.4f - accuracy);
             }
             case FEINT -> {
@@ -94,6 +102,8 @@ public final class AttackMechanic {
                 sigma = 2.4f * (1.6f - q) * (1.4f - accuracy);
             }
         }
+        if ((c.attackType == AttackType.TOOL || c.attackType == AttackType.OFF_THE_TOP)
+                && c.player.has(PlayerTrait.BLOCK_OUT)) sigma *= 0.65f;
         ExecutionError.apply(out.velocity, sigma, 0.05f * (1.5f - q), random);
         LaunchSolver.spinFor(out.velocity, topspin, sidespin + ExecutionError.gaussian(random) * 4f * (1.2f - q), out.spin);
     }

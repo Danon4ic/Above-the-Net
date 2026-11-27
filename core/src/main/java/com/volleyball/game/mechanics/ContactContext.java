@@ -28,4 +28,6 @@ public final class ContactContext {
     public ServeSpin serveSpin = ServeSpin.TOPSPIN;
     public SetType setType;
     public AttackType attackType;
+    /** For an off-the-top attack, the intended ball-centre position at the block. */
+    public boolean aimAtFingertips;
 }

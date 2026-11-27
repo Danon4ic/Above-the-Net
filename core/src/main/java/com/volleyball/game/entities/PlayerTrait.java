@@ -30,7 +30,13 @@ public enum PlayerTrait {
     TEMPO_SETTER("Tempo setter", "Runs fast plays: quicks, shoots, slides.", true),
     HIGH_BALL_SETTER("High-ball setter", "Steady high sets that are easy to hit.", true),
     NERVOUS("Nervous", "Plays worse at set point.", false),
-    HOTHEAD("Hothead", "Goes for the lines - aces and kills, and errors.", false);
+    HOTHEAD("Hothead", "Goes for the lines - aces and kills, and errors.", false),
+    BLOCK_OUT("Block-out specialist", "Uses the block's hands to send the ball out.", true),
+    HARD_RECEIVER("Heavy-ball receiver", "Absorbs hard serves and spikes with the forearms.", true),
+    BACK_SETTER("Back-set specialist", "Places back sets and slides more precisely.", true),
+    LATE_BLOCKER("Late hands", "Keeps pressing over the net while coming down.", true),
+    QUICK_RECOVERY("Quick recovery", "Regains stamina faster while resting.", true),
+    EXPLOSIVE("Explosive", "Accelerates and jumps better but spends more stamina on bursts.", false);
 
     public final String label;
     public final String description;
@@ -72,6 +78,15 @@ public enum PlayerTrait {
                 a.attackPower += 4;
                 a.composure -= 6;
             }
+            case BLOCK_OUT -> a.attackAccuracy += 3;
+            case HARD_RECEIVER -> a.receiving += 4;
+            case BACK_SETTER -> a.setting += 3;
+            case LATE_BLOCKER -> a.blocking += 4;
+            case QUICK_RECOVERY -> { } // Recovery rate changes directly.
+            case EXPLOSIVE -> {
+                a.acceleration += 8;
+                a.jump += 8;
+            }
         }
         a.sanitize();
     }
@@ -79,24 +94,25 @@ public enum PlayerTrait {
     /** The traits a player of {@code role} may draw (the first trait comes from here). */
     public static List<PlayerTrait> forRole(PlayerRole role) {
         return switch (role) {
-            case SETTER -> List.of(TEMPO_SETTER, HIGH_BALL_SETTER, FLOAT_SPECIALIST, READER, CLUTCH);
-            case OUTSIDE_HITTER -> List.of(CANNON, CRAFTY, CROSS_HITTER, LINE_HITTER, POWER_SERVER, DIGGER, CLUTCH);
-            case OPPOSITE -> List.of(CANNON, LINE_HITTER, POWER_SERVER, HOTHEAD, CLUTCH, CRAFTY);
-            case MIDDLE_BLOCKER -> List.of(WALL, READER, FLOAT_SPECIALIST, CRAFTY, WORKHORSE);
-            case LIBERO -> List.of(DIGGER, READER, WORKHORSE, CLUTCH);
+            case SETTER -> List.of(TEMPO_SETTER, HIGH_BALL_SETTER, BACK_SETTER, FLOAT_SPECIALIST, READER, CLUTCH);
+            case OUTSIDE_HITTER -> List.of(CANNON, CRAFTY, CROSS_HITTER, LINE_HITTER, POWER_SERVER, DIGGER,
+                    CLUTCH, BLOCK_OUT, HARD_RECEIVER);
+            case OPPOSITE -> List.of(CANNON, LINE_HITTER, POWER_SERVER, HOTHEAD, CLUTCH, CRAFTY, BLOCK_OUT, EXPLOSIVE);
+            case MIDDLE_BLOCKER -> List.of(WALL, READER, FLOAT_SPECIALIST, CRAFTY, WORKHORSE, LATE_BLOCKER, EXPLOSIVE);
+            case LIBERO -> List.of(DIGGER, READER, WORKHORSE, CLUTCH, HARD_RECEIVER, QUICK_RECOVERY);
         };
     }
 
     /** Traits any player may draw as a second one. */
     public static final List<PlayerTrait> GENERAL = List.of(CLUTCH, NERVOUS, HOTHEAD, WORKHORSE, READER, POWER_SERVER,
-            FLOAT_SPECIALIST);
+            FLOAT_SPECIALIST, QUICK_RECOVERY);
 
     /** Whether the two traits contradict each other (never on the same player). */
     public boolean clashes(PlayerTrait other) {
         return this == other
                 || pair(other, CLUTCH, NERVOUS) || pair(other, LINE_HITTER, CROSS_HITTER)
                 || pair(other, POWER_SERVER, FLOAT_SPECIALIST) || pair(other, TEMPO_SETTER, HIGH_BALL_SETTER)
-                || pair(other, CANNON, CRAFTY);
+                || pair(other, CANNON, CRAFTY) || pair(other, WORKHORSE, EXPLOSIVE);
     }
 
     private boolean pair(PlayerTrait other, PlayerTrait x, PlayerTrait y) {

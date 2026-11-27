@@ -180,12 +180,14 @@ public final class MatchHud implements Disposable {
         float tx = x + pad + badge + 10f * s;
         UiKit.text(batch, nameFont, m.name, tx, by + badge - 1f * s, cardW - pad - (tx - x), Align.left, false, UiKit.TEXT, 1f);
         UiKit.text(batch, roleFont, m.role.toUpperCase(java.util.Locale.ROOT) + (m.youServe ? "  ·  YOUR SERVE" : ""), tx,
-                by + roleFont.getCapHeight() + 1f * s, m.youServe ? UiKit.JADE : UiKit.TEXT_DIM, 1f);
+                by + roleFont.getCapHeight() + 1f * s, x + cardW - pad - tx, Align.left, false,
+                m.youServe ? UiKit.JADE : UiKit.TEXT_DIM, 1f);
         if (!m.traits.isEmpty()) {
             UiKit.text(batch, roleFont, m.traits, x + pad, traitsY, cardW - 2f * pad, Align.left, false, UiKit.TEXT_DIM, 1f);
         }
         if (!Float.isNaN(m.stamina)) {
-            UiKit.text(batch, label, "STAMINA", x + pad, staminaY, UiKit.TEXT_FAINT, 1f);
+            String status = m.stamina <= 0.35f ? "EXHAUSTED" : m.stamina <= 0.60f ? "TIRED" : "STAMINA";
+            UiKit.text(batch, label, status, x + pad, staminaY, m.stamina <= 0.6f ? staminaColor(m.stamina) : UiKit.TEXT_FAINT, 1f);
             String pct = Math.round(m.stamina * 100f) + "%";
             UiKit.text(batch, label, pct, x + cardW - pad - UiKit.width(label, pct), staminaY, staminaColor(m.stamina), 1f);
         } else {
@@ -195,8 +197,9 @@ public final class MatchHud implements Disposable {
         String[] values = {m.touches + " / 3", rally, m.server};
         for (int i = 0; i < 3; i++) {
             float cx = x + pad + i * colW;
-            UiKit.text(batch, label, STAT_LABELS[i], cx, statsY, UiKit.TEXT_FAINT, 1f);
-            UiKit.text(batch, value, values[i], cx, statsY - 15f * s, i == 0 && m.touches == 3 ? UiKit.RED : UiKit.TEXT, 1f);
+            UiKit.text(batch, label, STAT_LABELS[i], cx, statsY, colW - 3f * s, Align.left, false, UiKit.TEXT_FAINT, 1f);
+            UiKit.text(batch, value, values[i], cx, statsY - 15f * s, colW - 3f * s, Align.left, false,
+                    i == 0 && m.touches == 3 ? UiKit.RED : UiKit.TEXT, 1f);
         }
         float infoX = x + pad + 3f * cell + 2f * gap + 14f * s;
         UiKit.text(batch, label, "ROTATION", infoX, netY + 1f * s, UiKit.TEXT_FAINT, 1f);
@@ -219,7 +222,8 @@ public final class MatchHud implements Disposable {
             String command = i == 0 ? m.offense : i == 1 ? m.defense : m.serve;
             if (command == null) continue;
             UiKit.text(batch, label, TACTIC_LABELS[i], x + pad, ty, UiKit.TEXT_FAINT, 1f);
-            UiKit.text(batch, roleFont, command, x + pad + 70f * s, ty, UiKit.JADE, 1f);
+            UiKit.text(batch, roleFont, command, x + pad + 70f * s, ty, cardW - 2f * pad - 70f * s,
+                    Align.left, false, UiKit.JADE, 1f);
             ty -= 18f * s;
         }
         batch.end();

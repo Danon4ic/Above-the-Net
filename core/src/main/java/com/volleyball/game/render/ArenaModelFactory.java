@@ -692,7 +692,7 @@ final class ArenaModelFactory {
     }
 
     /**
-     * LED ribbon boards (scrolling sponsor messages): around the free zone and along the fascia
+     * LED ribbon boards (event and match information): around the free zone and along the fascia
      * between the tiers (arena), or banners on the bleacher fronts (beach). The texture's U
      * coordinate runs along the board, so shifting it scrolls the text.
      */
@@ -701,42 +701,77 @@ final class ArenaModelFactory {
         TextureAttribute texture = TextureAttribute.createDiffuse(ledTexture);
         Material material = new Material("led", texture, IntAttribute.createCullFace(GL20.GL_NONE));
         MeshPartBuilder led = modelBuilder.part("led", GL20.GL_TRIANGLES, Usage.Position | Usage.Normal | Usage.TextureCoordinates, material);
+        RibbonBoards boards = new RibbonBoards(led, new GeometryBuilder(modelBuilder, "ribbonFrame", new Material()), venue);
         if (hall(venue)) {
-            halls.ledBoards(venue, led);
+            halls.ledBoards(venue, boards);
         } else if (venue == Venue.BEACH) {
             float zb = SIDE_STAND_START_Z - 0.02f;
             float xb = END_STAND_START_X - 0.02f;
             float h = 0.5f;
-            board(led, -END_STAND_START_X + 1f, 0.05f, -zb, END_STAND_START_X - 1f, h, -zb, 0f, 0f, 1f, 4f);
-            board(led, END_STAND_START_X - 1f, 0.05f, zb, -END_STAND_START_X + 1f, h, zb, 0f, 0f, -1f, 4f);
-            board(led, -xb, 0.05f, SIDE_STAND_START_Z - 2f, -xb, h, -SIDE_STAND_START_Z + 2f, 1f, 0f, 0f, 2.4f);
-            board(led, xb, 0.05f, -SIDE_STAND_START_Z + 2f, xb, h, SIDE_STAND_START_Z - 2f, -1f, 0f, 0f, 2.4f);
+            boards.add(-END_STAND_START_X + 1f, 0.05f, -zb, END_STAND_START_X - 1f, h, -zb, 0f, 0f, 1f);
+            boards.add(END_STAND_START_X - 1f, 0.05f, zb, -END_STAND_START_X + 1f, h, zb, 0f, 0f, -1f);
+            boards.add(-xb, 0.05f, SIDE_STAND_START_Z - 2f, -xb, h, -SIDE_STAND_START_Z + 2f, 1f, 0f, 0f);
+            boards.add(xb, 0.05f, -SIDE_STAND_START_Z + 2f, xb, h, SIDE_STAND_START_Z - 2f, -1f, 0f, 0f);
         } else {
             // Perimeter boards around the free zone (not in front of the scorer's table and benches).
             float zb = HALF_WIDTH + FREE_ZONE_SIDE + 0.3f;
             float xb = HALF_LENGTH + FREE_ZONE_END + 0.3f;
-            board(led, -15f, 0f, -zb, 15f, 0.9f, -zb, 0f, 0f, 1f, 4f);
-            board(led, -xb, 0f, 8f, -xb, 0.9f, -8f, 1f, 0f, 0f, 2f);
-            board(led, xb, 0f, -8f, xb, 0.9f, 8f, -1f, 0f, 0f, 2f);
+            boards.add(-15f, 0f, -zb, 15f, 0.9f, -zb, 0f, 0f, 1f);
+            boards.add(-xb, 0f, 8f, -xb, 0.9f, -8f, 1f, 0f, 0f);
+            boards.add(xb, 0f, -8f, xb, 0.9f, 8f, -1f, 0f, 0f);
             // Fascia ribbon between the tiers, all around the bowl.
             float off = rowOffset(LOWER_ROWS - 1) + ROW_DEPTH + WALKWAY + 0.02f;
             float y0 = rowTop(LOWER_ROWS - 1) + 0.3f;
             float y1 = y0 + 0.9f;
             float fz = SIDE_STAND_START_Z + off - 0.02f;
             float fx = END_STAND_START_X + off - 0.02f;
-            board(led, -fx, y0, -fz, fx, y1, -fz, 0f, 0f, 1f, 7f);
-            board(led, fx, y0, fz, -fx, y1, fz, 0f, 0f, -1f, 7f);
-            board(led, -fx, y0, fz, -fx, y1, -fz, 1f, 0f, 0f, 5f);
-            board(led, fx, y0, -fz, fx, y1, fz, -1f, 0f, 0f, 5f);
+            boards.add(-fx, y0, -fz, fx, y1, -fz, 0f, 0f, 1f);
+            boards.add(fx, y0, fz, -fx, y1, fz, 0f, 0f, -1f);
+            boards.add(-fx, y0, fz, -fx, y1, -fz, 1f, 0f, 0f);
+            boards.add(fx, y0, -fz, fx, y1, fz, -1f, 0f, 0f);
         }
         return modelBuilder.end();
     }
 
-    /** A vertical board from (x0, y0, z0) to (x1, y1, z1) facing (nx, ny, nz); the texture repeats {@code repeats} times. */
-    static void board(MeshPartBuilder part, float x0, float y0, float z0, float x1, float y1, float z1,
-                              float nx, float ny, float nz, float repeats) {
-        part.setUVRange(0f, 1f, repeats, 0f);
-        part.rect(x0, y0, z0, x1, y0, z1, x1, y1, z1, x0, y1, z0, nx, ny, nz);
+    /** Builds the screen face in its natural proportions and a shallow cabinet behind it. */
+    static final class RibbonBoards {
+        private final MeshPartBuilder screen;
+        private final GeometryBuilder frame;
+        private final boolean painted;
+        private final float thickness;
+        private final Color housing;
+
+        RibbonBoards(MeshPartBuilder screen, GeometryBuilder frame, Venue venue) {
+            this.screen = screen;
+            this.frame = frame;
+            painted = venue == Venue.SCHOOL_GYM;
+            thickness = switch (venue) {
+                case CHAMPIONSHIP, SPORTS_PALACE -> 0.14f;
+                case BEACH, ROOFTOP -> 0.07f;
+                case SCHOOL_GYM -> 0.028f;
+            };
+            housing = Color.valueOf(switch (venue) {
+                case CHAMPIONSHIP -> "171F2A";
+                case BEACH -> "476762";
+                case SCHOOL_GYM -> "273746";
+                case SPORTS_PALACE -> "33282B";
+                case ROOFTOP -> "181929";
+            });
+        }
+
+        void add(float x0, float y0, float z0, float x1, float y1, float z1, float nx, float ny, float nz) {
+            float dx = Math.abs(x1 - x0);
+            float dz = Math.abs(z1 - z0);
+            float height = y1 - y0;
+            float repeat = painted ? 1f : (dx + dz) / (height * LedBoardTexture.ASPECT);
+            screen.setUVRange(0f, 1f, repeat, 0f);
+            screen.rect(x0, y0, z0, x1, y0, z1, x1, y1, z1, x0, y1, z0, nx, ny, nz);
+
+            float behind = thickness / 2f + 0.006f;
+            float edge = 0.055f * height;
+            frame.box((x0 + x1) / 2f - nx * behind, (y0 + y1) / 2f, (z0 + z1) / 2f - nz * behind,
+                    dx > 0f ? dx + edge : thickness, height + edge, dz > 0f ? dz + edge : thickness, housing);
+        }
     }
 
     /**

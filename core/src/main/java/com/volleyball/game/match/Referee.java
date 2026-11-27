@@ -82,7 +82,7 @@ public final class Referee implements MatchListener {
     public void onPoint(MatchRules.PointSummary point, MatchScore score) {
         ActionPose fault = switch (point.outcome().reason()) {
             case BALL_IN -> ActionPose.REF_IN;
-            case BALL_OUT, ANTENNA, OUTSIDE_CROSSING_SPACE, OUT_OF_PLAY_OBJECT -> ActionPose.REF_OUT;
+            case BALL_OUT, BLOCK_TOUCH_OUT, ANTENNA, OUTSIDE_CROSSING_SPACE, OUT_OF_PLAY_OBJECT -> ActionPose.REF_OUT;
             case PLAYER_NET_TOUCH, UNDER_NET -> ActionPose.REF_NET;
             case FOUR_HITS -> ActionPose.REF_FOUR_HITS;
             case DOUBLE_CONTACT -> ActionPose.REF_DOUBLE;

@@ -86,6 +86,18 @@ public final class MatchScore {
         return format;
     }
 
+    /** Updates a presentation-only score from a complete host snapshot. */
+    public void present(int home, int away, int homeSets, int awaySets, int number, boolean over, List<SetResult> history) {
+        points[0] = home;
+        points[1] = away;
+        sets[0] = homeSets;
+        sets[1] = awaySets;
+        setNumber = number;
+        matchOver = over;
+        finishedSets.clear();
+        finishedSets.addAll(history);
+    }
+
     /** One point away from winning the set (set point / match point indicator). */
     public boolean isSetPoint(CourtSide side) {
         if (matchOver) return false;

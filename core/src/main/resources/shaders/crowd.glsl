@@ -24,16 +24,16 @@ vec3 animateCrowd(vec3 world, vec2 data) {
         float d = abs(fract(around - u_crowd.z + 0.5) - 0.5);
         wave = (1.0 - smoothstep(0.0, 0.05, d)) * u_crowd.w;
     }
-    float stand = clamp(max(u_crowd.y * step(0.3, fan), wave), 0.0, 1.0);
-    float arms = clamp(max(u_crowd.y * step(0.22, fan), wave), 0.0, 1.0);
+    float stand = clamp(max(u_crowd.y * smoothstep(0.29, 0.59, fan), wave), 0.0, 1.0);
+    float arms = clamp(max(u_crowd.y * smoothstep(0.19, 0.56, fan), wave), 0.0, 1.0);
     // Breathing and bobbing, livelier when the rally is tense.
     float bob = sin(u_time * (1.4 + fan * 2.2) + phase * 6.2831853) * (0.008 + 0.045 * u_crowd.x * fan);
     vec3 p = world;
-    if (part > 0.5) p.y += stand * 0.32 + bob;
+    if (part > 0.5) p.y += stand * (0.21 + 0.10 * fan) + bob;
     if (part > 1.5 && part < 3.5) {
         // Arms go up over the head; when cheering they pump.
         float pump = 0.5 + 0.5 * sin(u_time * (5.0 + fan * 4.0) + phase * 9.0 + part);
-        p.y += arms * (0.45 + 0.1 * pump);
+        p.y += arms * (0.23 + 0.07 * pump);
         // Clapping: hands move towards the chest a little, in rhythm.
         float clap = u_crowd.x * (1.0 - arms) * step(0.5, fan);
         p.y += clap * 0.12 * (0.5 + 0.5 * sin(u_time * 9.0 + phase * 3.0));

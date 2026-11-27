@@ -20,6 +20,7 @@ public record RoleGuide(PlayerRole role, String title, String motto, List<Item> 
             case SETTER -> new RoleGuide(role, "Setter", "The playmaker. Every second ball is yours.", List.of(
                     new Item("Reception", "You never receive the serve. When the opponent serves, run to the setting spot: right of centre, a metre off the net."),
                     new Item("Second ball", "Set your hitters with the right mouse button (overhead). Number keys pick the set from the bar at the bottom - it shows which hitter gets each one; 0 = Auto chooses from the pass and the block."),
+                    new Item("First tempo", "Pick a fast set and get under a clean pass. Feed the hitter during their jump with LMB. If the block is already up, use another lane."),
                     new Item("Attack", "In the front row a good pass lets you dump the second ball over: jump and play it with the right button - a soft lob just behind their block."),
                     new Item("Block", "Front row: block on the right side, against their outside hitter."),
                     new Item("Defense", "Back row: defend right back (zone 1), then hurry back to the net for the next set."),

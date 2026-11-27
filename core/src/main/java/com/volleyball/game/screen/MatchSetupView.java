@@ -60,7 +60,7 @@ final class MatchSetupView {
     static final String[] FORMAT_NAMES = {
             "Best of five - official", "Best of three - 25 points", "Best of three - 15 points", "One set to 25",
             "Simplified rules - best of three"};
-    private static final SessionMode[] PLAYER_MODES = {SessionMode.SINGLE, SessionMode.LOCAL_VERSUS, SessionMode.LOCAL_COOP};
+    private static final SessionMode[] PLAYER_MODES = SessionMode.values();
 
     static final int ROLE = 0;
     static final int LEVEL = 1;

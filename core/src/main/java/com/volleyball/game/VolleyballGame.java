@@ -24,6 +24,10 @@ import com.volleyball.game.screen.MatchSetup;
 import com.volleyball.game.training.Drill;
 import com.volleyball.game.ui.UiFonts;
 import com.volleyball.game.screen.PoseGalleryScreen;
+import com.volleyball.game.net.MatchLink;
+import com.volleyball.game.net.NetworkSetup;
+import com.volleyball.game.net.UdpTransport;
+import com.volleyball.game.screen.OnlineConnectScreen;
 
 /** Application entry point shared by all platform launchers. Owns settings and screen switching. */
 public class VolleyballGame extends Game {
@@ -63,7 +67,9 @@ public class VolleyballGame extends Game {
         fonts = new UiFonts();
         UiFonts.setUserScale(config.uiScale);
         sound = GdxSoundSink.create(config);
-        if (launchOptions.playbook()) setScreen(new com.volleyball.game.screen.PlaybookScreen(this));
+        if (launchOptions.joinAddress() != null) setScreen(new OnlineConnectScreen(this, launchOptions.joinAddress(), setupFromLaunchOptions().role()));
+        else if (launchOptions.hostPort() != null) setScreen(createOnlineHost(setupFromLaunchOptions(), launchOptions.hostPort()));
+        else if (launchOptions.playbook()) setScreen(new com.volleyball.game.screen.PlaybookScreen(this));
         else if (launchOptions.poseGallery()) setScreen(new PoseGalleryScreen(this));
         else if (launchOptions.drill() != null || launchOptions.autoplay()) setScreen(new MatchScreen(this, setupFromLaunchOptions()));
         else setScreen(new MainMenuScreen(this));
@@ -71,7 +77,7 @@ public class VolleyballGame extends Game {
 
     /** A game started from the command line (e.g. {@code --drill=match --difficulty=pro --role=setter}). */
     private MatchSetup setupFromLaunchOptions() {
-        Drill drill = Drill.SERVE;
+        Drill drill = launchOptions.hostPort() == null ? Drill.SERVE : Drill.MATCH;
         if (launchOptions.drill() != null) {
             for (Drill d : Drill.values()) if (d.name().equals(launchOptions.drill())) drill = d;
         }
@@ -81,6 +87,7 @@ public class VolleyballGame extends Game {
             case "coop", "co-op", "team" -> SessionMode.LOCAL_COOP;
             default -> SessionMode.SINGLE;
         };
+        if (launchOptions.hostPort() != null) players = players == SessionMode.LOCAL_COOP ? SessionMode.ONLINE_COOP : SessionMode.ONLINE_VERSUS;
         PlayerRole role = PlayerRole.OUTSIDE_HITTER;
         if (launchOptions.role() != null) {
             for (PlayerRole r : PlayerRole.values()) {
@@ -90,8 +97,11 @@ public class VolleyballGame extends Game {
                 }
             }
         }
+        int points = launchOptions.matchPoints();
+        MatchFormat format = points == 0 ? MatchFormat.official()
+                : new MatchFormat(1, points, points, 2, com.volleyball.game.rules.RuleMode.OFFICIAL, 8f);
         return new MatchSetup(drill, launchOptions.autoplay(), difficulty == null ? Difficulty.INTERMEDIATE : difficulty,
-                players, role, MatchFormat.official(), OffenseSystem.FIVE_ONE, launchOptions.home(), launchOptions.away());
+                players, role, format, OffenseSystem.FIVE_ONE, launchOptions.home(), launchOptions.away());
     }
 
     public UiFonts fonts() {
@@ -105,7 +115,30 @@ public class VolleyballGame extends Game {
 
     /** Starts a match or a drill (from the main menu). */
     public void startGame(MatchSetup setup) {
-        pendingScreen = new MatchScreen(this, setup);
+        pendingScreen = setup.players().networked ? createOnlineHost(setup, UdpTransport.DEFAULT_PORT) : new MatchScreen(this, setup);
+    }
+
+    private Screen createOnlineHost(MatchSetup setup, int port) {
+        long seed = launchOptions.seed() == null ? System.nanoTime() : launchOptions.seed();
+        var seeds = new java.util.Random(seed);
+        var teams = setup.teams(new java.util.Random(seeds.nextLong()));
+        var fixed = new MatchSetup(Drill.MATCH, setup.autoplay(), setup.difficulty(), setup.players(), setup.role(),
+                setup.format(), setup.system(), teams[0].id(), teams[1].id(), setup.firstServe(), setup.awayKit());
+        var descriptor = new NetworkSetup(new java.security.SecureRandom().nextLong(), seed, fixed,
+                config.netCategory(), config.venue(), config.fatigue, true);
+        try {
+            return new MatchScreen(this, fixed, MatchLink.host(UdpTransport.host(port), descriptor));
+        } catch (java.io.UncheckedIOException | IllegalArgumentException ex) {
+            return OnlineConnectScreen.error(this, "Could not open the host port");
+        }
+    }
+
+    public void joinOnline(String endpoint, PlayerRole role) {
+        pendingScreen = new OnlineConnectScreen(this, endpoint, role);
+    }
+
+    public void enterOnline(MatchLink link) {
+        pendingScreen = new MatchScreen(this, link.setup().match(), link);
     }
 
     /** Opens the playbook editor (at the start of the next frame). */

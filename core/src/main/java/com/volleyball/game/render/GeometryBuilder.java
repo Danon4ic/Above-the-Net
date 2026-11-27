@@ -10,6 +10,9 @@ import com.badlogic.gdx.graphics.g3d.utils.shapebuilders.BoxShapeBuilder;
 import com.badlogic.gdx.graphics.g3d.utils.shapebuilders.CylinderShapeBuilder;
 import com.badlogic.gdx.graphics.g3d.utils.shapebuilders.SphereShapeBuilder;
 import com.badlogic.gdx.math.Matrix4;
+import com.badlogic.gdx.math.Vector3;
+
+import java.util.List;
 
 /**
  * Accumulates many small vertex-coloured primitives into a few mesh parts of one material.
@@ -27,21 +30,28 @@ final class GeometryBuilder {
     private final ModelBuilder modelBuilder;
     private final String partPrefix;
     private final Material material;
+    private final List<FloorContact> floorContacts;
     private final Matrix4 transform = new Matrix4();
     private MeshPartBuilder part;
     private int partVertices;
     private int partCount;
 
     GeometryBuilder(ModelBuilder modelBuilder, String partPrefix, Material material) {
+        this(modelBuilder, partPrefix, material, null);
+    }
+
+    GeometryBuilder(ModelBuilder modelBuilder, String partPrefix, Material material, List<FloorContact> floorContacts) {
         this.modelBuilder = modelBuilder;
         this.partPrefix = partPrefix;
         this.material = material;
+        this.floorContacts = floorContacts;
     }
 
     /** Axis-aligned box given by its centre and full sizes. */
     GeometryBuilder box(float cx, float cy, float cz, float width, float height, float depth, Color color) {
         ensureCapacity(24).setColor(color);
         BoxShapeBuilder.build(part, cx, cy, cz, width, height, depth);
+        if (floorContacts != null) floorContacts.add(FloorContact.box(cx, cy, cz, width, height, depth));
         return this;
     }
 
@@ -74,7 +84,36 @@ final class GeometryBuilder {
         part.setVertexTransform(transform.setToTranslation(x, y, z));
         SphereShapeBuilder.build(part, diameter, diameter, diameter, 12, 10);
         part.setVertexTransform(null);
+        if (floorContacts != null) floorContacts.add(FloorContact.sphere(x, y, z, diameter));
         return this;
+    }
+
+    /** Flat-shaded triangles authored in Blender, with their own conservative floor volume. */
+    void surface(float[] vertices, Color color) {
+        MeshPartBuilder.VertexInfo a = new MeshPartBuilder.VertexInfo().setCol(color);
+        MeshPartBuilder.VertexInfo b = new MeshPartBuilder.VertexInfo().setCol(color);
+        MeshPartBuilder.VertexInfo c = new MeshPartBuilder.VertexInfo().setCol(color);
+        Vector3 normal = new Vector3();
+        Vector3 edge = new Vector3();
+        Vector3 min = new Vector3(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY);
+        Vector3 max = new Vector3(Float.NEGATIVE_INFINITY, Float.NEGATIVE_INFINITY, Float.NEGATIVE_INFINITY);
+        for (int i = 0; i < vertices.length; i += 9) {
+            a.setPos(vertices[i], vertices[i + 1], vertices[i + 2]);
+            b.setPos(vertices[i + 3], vertices[i + 4], vertices[i + 5]);
+            c.setPos(vertices[i + 6], vertices[i + 7], vertices[i + 8]);
+            normal.set(b.position).sub(a.position).crs(edge.set(c.position).sub(a.position));
+            if (normal.len2() < 1e-16f) continue;
+            normal.nor();
+            ensureCapacity(3).triangle(a.setNor(normal), b.setNor(normal), c.setNor(normal));
+            for (int p = i; p < i + 9; p += 3) {
+                min.set(Math.min(min.x, vertices[p]), Math.min(min.y, vertices[p + 1]), Math.min(min.z, vertices[p + 2]));
+                max.set(Math.max(max.x, vertices[p]), Math.max(max.y, vertices[p + 1]), Math.max(max.z, vertices[p + 2]));
+            }
+        }
+        if (floorContacts != null && min.x < Float.POSITIVE_INFINITY) {
+            floorContacts.add(FloorContact.box((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f, (min.z + max.z) * 0.5f,
+                    max.x - min.x, max.y - min.y, max.z - min.z));
+        }
     }
 
     private MeshPartBuilder ensureCapacity(int vertices) {

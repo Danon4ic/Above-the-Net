@@ -1,6 +1,7 @@
 package com.volleyball.game.render;
 
 import com.badlogic.gdx.graphics.Color;
+import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Vector3;
 import com.volleyball.game.world.LightingPreset;
 import com.volleyball.game.world.Venue;
@@ -19,7 +20,7 @@ import com.volleyball.game.world.Venue;
 public final class LightRig {
     public static final int MAX_LIGHTS = 8;
     /** Direction towards the beach sun (afternoon, over the sea side). */
-    public static final Vector3 SUN_DIRECTION = new Vector3(-0.45f, 0.62f, 0.64f).nor();
+    public static final Vector3 SUN_DIRECTION = LookDevelopment.light(Venue.BEACH).direction().cpy();
 
     final float[] pos = new float[MAX_LIGHTS * 4];
     final float[] dir = new float[MAX_LIGHTS * 4];
@@ -38,6 +39,8 @@ public final class LightRig {
     float shadowDistance;
     final Color background = new Color();
     float exposure = 1f;
+    float shadowSoftness = 1f;
+    float shadowFill;
 
     public static LightRig of(Venue venue, LightingPreset preset) {
         LightRig rig = new LightRig();
@@ -48,6 +51,11 @@ public final class LightRig {
             case ROOFTOP -> rig.rooftop(preset);
             default -> rig.championship(preset);
         }
+        LookDevelopment.ArenaLight light = LookDevelopment.light(venue);
+        if (venue != Venue.BEACH) rig.shadowDistance *= rig.shadowDirection.y / light.direction().y;
+        rig.shadowDirection.set(light.direction());
+        rig.shadowSoftness = MathUtils.clamp(1f + 9f * light.angularDiameter(), 1f, 2.1f);
+        rig.shadowFill = light.shadowFill();
         return rig;
     }
 

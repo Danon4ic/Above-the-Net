@@ -7,6 +7,7 @@ package com.volleyball.game.rules;
 public enum Fault {
     BALL_IN("Ball in", false),
     BALL_OUT("Ball out", false),
+    BLOCK_TOUCH_OUT("Out off the block", false),
     ANTENNA("Ball touched the antenna", false),
     OUTSIDE_CROSSING_SPACE("Ball crossed outside the antennas", false),
     UNDER_NET("Ball passed under the net", false),

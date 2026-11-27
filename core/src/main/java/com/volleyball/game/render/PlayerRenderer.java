@@ -79,12 +79,18 @@ public final class PlayerRenderer implements Disposable {
     /** Blob shadows under the players (the arena shader casts real soft shadows instead). */
     private boolean blobShadows = true;
 
+    private record FloorPart(Node joint, List<FloorContact> shapes) {
+    }
+
     /** A posed instance and its joints. */
     private static final class Figure {
         final ModelInstance instance;
+        final FloorPart[] floorParts;
+        float floorRecoveryUntil;
         final Node pelvis, torso, head;
         final Node[] upperArm = new Node[2];
         final Node[] forearm = new Node[2];
+        final Node[] refereeFingers;
         final Node[] thigh = new Node[2];
         final Node[] shin = new Node[2];
         final Node[] foot = new Node[2];
@@ -129,6 +135,9 @@ public final class PlayerRenderer implements Disposable {
         boolean handsKnown;
         /** The ball action was armed (waiting for the ball) last frame: the next unarmed frame is the contact. */
         boolean wasHeld;
+        float receiveForce = 0.55f;
+        int receiveHand;
+        ActionPose lastAction = ActionPose.NONE;
         /** The fall in progress (decided as the dive starts) and whether the player is down. */
         FallKind fall = FallKind.SPRAWL;
         boolean down;
@@ -179,8 +188,11 @@ public final class PlayerRenderer implements Disposable {
             initialised = true;
         }
 
-        Figure(ModelInstance instance) {
-            this.instance = instance;
+        Figure(PlayerModelFactory.Rig rig) {
+            instance = new ModelInstance(rig.model());
+            floorParts = rig.floorContacts().entrySet().stream()
+                    .map(entry -> new FloorPart(instance.getNode(entry.getKey()), entry.getValue()))
+                    .toArray(FloorPart[]::new);
             for (int i = 0; i < springs.length; i++) springs[i] = new Spring();
             pelvis = instance.getNode(PlayerModelFactory.PELVIS);
             torso = instance.getNode(PlayerModelFactory.TORSO);
@@ -189,6 +201,12 @@ public final class PlayerRenderer implements Disposable {
             upperArm[1] = instance.getNode(PlayerModelFactory.UPPER_ARM_RIGHT);
             forearm[0] = instance.getNode(PlayerModelFactory.FOREARM_LEFT);
             forearm[1] = instance.getNode(PlayerModelFactory.FOREARM_RIGHT);
+            refereeFingers = instance.getNode(PlayerModelFactory.REFEREE_FINGER + 0) == null ? null : new Node[4];
+            if (refereeFingers != null) {
+                for (int i = 0; i < refereeFingers.length; i++) {
+                    refereeFingers[i] = instance.getNode(PlayerModelFactory.REFEREE_FINGER + i);
+                }
+            }
             thigh[0] = instance.getNode(PlayerModelFactory.THIGH_LEFT);
             thigh[1] = instance.getNode(PlayerModelFactory.THIGH_RIGHT);
             shin[0] = instance.getNode(PlayerModelFactory.SHIN_LEFT);
@@ -231,27 +249,27 @@ public final class PlayerRenderer implements Disposable {
     public PlayerRenderer(List<Team> teams) {
         for (Team team : teams) {
             for (VolleyballPlayer player : team.squad()) {
-                Model model = player.role == PlayerRole.LIBERO
-                        ? factory.buildLibero(team.liberoShirtColor, team.shirtColor, team.shortsColor, player.number)
-                        : factory.build(team.shirtColor, team.shortsColor, player.number);
-                models.add(model);
-                figures.put(player.id, new Figure(new ModelInstance(model)));
+                PlayerModelFactory.Rig rig = player.role == PlayerRole.LIBERO
+                        ? factory.buildLibero(team.liberoShirtColor, team.shirtColor, team.shortsColor, player.number, team.shortName, player)
+                        : factory.build(team.shirtColor, team.shortsColor, player.number, team.shortName, player);
+                addFigure(player.id, rig);
             }
         }
     }
 
     /** Adds the referee: a white shirt and dark trousers. */
     public void addReferee(VolleyballPlayer referee) {
-        Model model = factory.buildCoach(new Color(0.93f, 0.93f, 0.95f, 1f), COACH_TROUSERS);
-        models.add(model);
-        figures.put(referee.id, new Figure(new ModelInstance(model)));
+        addFigure(referee.id, factory.buildReferee(new Color(0.93f, 0.93f, 0.95f, 1f), COACH_TROUSERS));
     }
 
     /** Adds a team's coach figure: a track jacket in the team colour and dark trousers. */
     public void addCoach(VolleyballPlayer coach, Team team) {
-        Model model = factory.buildCoach(team.shirtColor, COACH_TROUSERS);
-        models.add(model);
-        figures.put(coach.id, new Figure(new ModelInstance(model)));
+        addFigure(coach.id, factory.buildCoach(team.shirtColor, COACH_TROUSERS));
+    }
+
+    private void addFigure(int playerId, PlayerModelFactory.Rig rig) {
+        models.add(rig.model());
+        figures.put(playerId, new Figure(rig));
     }
 
     /**
@@ -438,6 +456,7 @@ public final class PlayerRenderer implements Disposable {
 
     private void pose(Figure f, VolleyballPlayer player, float yaw, float scale, float alpha, Vector3 lookAt) {
         float dt = Math.min(0.05f, Gdx.graphics == null ? 1f / 60f : Gdx.graphics.getDeltaTime());
+        f.torso.translation.y = PlayerModelFactory.TORSO_HEIGHT;
         f.clock += dt;
         float speed = player.groundSpeed();
         float speedFactor = Math.min(1f, speed / 4f);
@@ -456,6 +475,12 @@ public final class PlayerRenderer implements Disposable {
         float strideLength = player.strideLength();
         float phase = (cycles % 1f) * MathUtils.PI2;
         ActionPose action = player.actionPose();
+        if (action == ActionPose.ONE_ARM_DIG && (player.isActionPoseHeld() || f.lastAction != action)) {
+            float ballSide = lookAt == null ? 0f
+                    : (lookAt.x - position.x) * sin + (lookAt.z - position.z) * cos;
+            f.receiveHand = Math.abs(ballSide) < 0.08f ? (player.isLeftHanded() ? 0 : 1) : (ballSide < 0f ? 0 : 1);
+        }
+        f.lastAction = action;
         BodyState body = player.bodyState();
         if (!player.isOnCourt()) {
             clearFootPlants(f);
@@ -463,14 +488,23 @@ public final class PlayerRenderer implements Disposable {
             return;
         }
         if (body != BodyState.UPRIGHT) {
+            f.floorRecoveryUntil = f.clock + 0.12f;
             clearFootPlants(f);
             f.state = body == BodyState.GETTING_UP ? PlayerAnimState.GET_UP : PlayerAnimState.DIVE;
             poseFall(f, player, action, yaw, scale, dt);
             return;
         }
         float progress = player.actionPoseProgress();
+        if (action == ActionPose.BENCH_SIT || action == ActionPose.BENCH_RISE) {
+            clearFootPlants(f);
+            poseSeated(f, player, yaw, lookAt, action == ActionPose.BENCH_SIT ? progress : 1f - progress);
+            return;
+        }
         boolean held = player.isActionPoseHeld();
         boolean airborne = player.isAirborne();
+        float blockClosing = !airborne && lookAt != null && lookAt.x * player.side.sign() < 0f
+                && Math.abs(player.position.x) < 1.2f && Math.abs(sideSpeed) > Math.abs(forwardSpeed)
+                ? smooth((Math.abs(sideSpeed) - 1.85f) / 1.25f) : 0f;
         // Ball relative to the player: in front and above the shoulders (attack read), and its height.
         boolean ballHigh = false;
         float ballPitch = 0f;
@@ -487,6 +521,11 @@ public final class PlayerRenderer implements Disposable {
         }
         float sinceLanding = f.clock - f.landedAt;
         PlayerAnimState state = PlayerAnimState.of(player, forwardSpeed, sideSpeed, sinceLanding, approaching(player, lookAt));
+        boolean jumpServe = player.swingStyle().jumpServe();
+        if (jumpServe && action == ActionPose.TOSS && !airborne) {
+            if (charging) state = PlayerAnimState.JUMP_PREP;
+            else if (forwardSpeed > 0.7f) state = PlayerAnimState.APPROACH;
+        }
         f.state = state;
         JumpMotion jumpMotion = jumpMotion(player, action, state, ballHigh, forwardSpeed, sinceLanding);
 
@@ -517,6 +556,11 @@ public final class PlayerRenderer implements Disposable {
             leftArm.set(1.75f, 0.3f, 1.55f);
             rightArm.set(1.75f, 0.3f, 1.55f);
             stance = 0.8f;
+        } else if (blockClosing > 0f) {
+            float across = Math.signum(sideSpeed) * MathUtils.sin(phase);
+            leftArm.set(MathUtils.lerp(leftArm.raise, 0.9f - 0.68f * across, blockClosing), 0.26f, 0.88f);
+            rightArm.set(MathUtils.lerp(rightArm.raise, 0.9f + 0.68f * across, blockClosing), 0.26f, 0.88f);
+            twist -= 0.20f * across * blockClosing;
         }
         if (!airborne && action == ActionPose.NONE) {
             // Inertia: the trunk leans into an acceleration and back against braking, and banks
@@ -527,34 +571,75 @@ public final class PlayerRenderer implements Disposable {
 
         // ---- ball actions override
         switch (action) {
-            case PLATFORM -> {
-                // Forearms joined, arms straight; on the contact the legs and shoulders push through the ball.
-                float push = held ? 0f : bump(progress, 0.05f, 0.35f, 0.8f);
-                leftArm.set(0.8f + 0.35f * push, -0.33f, 0f);
-                rightArm.set(0.8f + 0.35f * push, -0.33f, 0f);
-                drop = Math.max(drop * (1f - 0.6f * push), (0.22f - 0.12f * push) * (airborne ? 0f : 1f));
-                lean = -0.42f + 0.22f * push;
-                stance = 1.4f;
+            case PLATFORM, ONE_ARM_DIG -> {
+                if (held && ballLive) f.receiveForce = smooth((ball.velocity.len() - 4f) / 15f);
+                float cushion = held ? 0f : (1f - smooth(progress / 0.58f)) * f.receiveForce;
+                float release = held ? 0f : bump(progress, 0.21f, 0.58f, 1f) * (1f - 0.64f * f.receiveForce);
+                float height = lookAt == null ? 0.43f : (lookAt.y - position.y) / player.height;
+                float low = 1f - smooth((height - 0.22f) / 0.50f);
+                lean = -0.24f - 0.20f * low - 0.10f * cushion + 0.12f * release;
+                drop = Math.max(drop, 0.09f + 0.16f * low + 0.10f * cushion - 0.10f * release);
+                stance = 1.3f + 0.3f * low;
+                float lift = 0.17f * (1f - low) - 0.10f * cushion + 0.14f * release;
+                if (action == ActionPose.PLATFORM) {
+                    // Aim both wrists at the same narrow channel, with the elbows extended.
+                    armIK.solve(0.52f, -0.33f + lift, 0.21f);
+                    leftArm.set(armIK.raise, armIK.spread, armIK.elbow * 0.55f);
+                    rightArm.set(leftArm.raise, leftArm.spread, leftArm.elbow);
+                } else {
+                    ArmPose reaching = f.receiveHand == 0 ? leftArm : rightArm;
+                    ArmPose balance = f.receiveHand == 0 ? rightArm : leftArm;
+                    reaching.set(0.89f + lift, 0.55f, 0.12f + 0.2f * cushion);
+                    balance.set(0.23f, 0.44f, 0.64f);
+                    roll = (f.receiveHand == 0 ? -1f : 1f) * (0.14f + 0.07f * cushion);
+                }
             }
-            case OVERHEAD -> {
+            case OVERHEAD, SET_FORWARD, SET_BACK, SET_FAST, SET_FAST_BACK, SET_ONE_HAND -> {
                 // Hands form a window above the forehead; on the contact arms and legs extend together.
-                float extend = held ? 0f : smooth(progress / 0.45f);
-                leftArm.set(MathUtils.lerp(2.35f, 2.95f, extend), MathUtils.lerp(0.42f, 0.18f, extend), MathUtils.lerp(1.45f, 0.1f, extend));
-                rightArm.set(MathUtils.lerp(2.35f, 2.95f, extend), MathUtils.lerp(0.42f, 0.18f, extend), MathUtils.lerp(1.45f, 0.1f, extend));
-                drop = airborne ? 0f : MathUtils.lerp(0.13f, 0f, extend);
-                lean = MathUtils.lerp(-0.02f, 0.06f, extend);
-                stance = 0.9f;
-                split = 0.12f;
+                boolean fast = action.fastSet();
+                boolean back = action.backSet();
+                float extend = held ? (action.set() ? 0.23f * closingWeight(player, action, fast ? 0.1f : REACH_TIME) : 0f)
+                        : 0.59f + 0.41f * smooth(progress / (fast ? 0.24f : 0.38f));
+                float settle = held ? 0f : smooth((progress - (fast ? 0.38f : 0.55f)) / (fast ? 0.62f : 0.45f));
+                float raise = MathUtils.lerp(back ? 2.53f : fast ? 2.41f : 2.31f,
+                        back ? 3.32f : fast ? 2.64f : 2.98f, extend);
+                leftArm.set(MathUtils.lerp(raise, airborne ? 1.62f : 0.52f, settle),
+                        MathUtils.lerp(MathUtils.lerp(0.40f, 0.18f, extend), 0.36f, settle),
+                        MathUtils.lerp(MathUtils.lerp(1.38f, 0.18f, extend), 0.68f, settle));
+                rightArm.set(leftArm.raise, leftArm.spread, leftArm.elbow);
+                if (action == ActionPose.SET_ONE_HAND) {
+                    rightArm.set(MathUtils.lerp(2.92f, 1.58f, settle), 0.29f, 0.48f);
+                    leftArm.set(MathUtils.lerp(1.72f, 1.38f, settle), 0.50f, 0.65f);
+                }
+                drop = airborne ? 0f : MathUtils.lerp(fast ? 0.095f : 0.16f, 0.015f, extend);
+                lean = (back ? MathUtils.lerp(0.01f, 0.21f, extend) : MathUtils.lerp(-0.095f, fast ? -0.11f : 0.045f, extend))
+                        * (1f - settle);
+                stance = back ? 0.95f : 0.8f;
+                if (back) headDrop = -0.26f * extend * (1f - settle);
+                split = airborne ? 0f : back ? 0.14f : 0.08f;
             }
-            case SWING -> {
+            case QUICK_READY -> {
+                if (airborne) {
+                    compactWindUp(player.swingStyle());
+                    twist = -0.28f;
+                    lean = 0.055f;
+                } else {
+                    float rise = 0.36f * player.jumpCharge();
+                    leftArm.raise += rise;
+                    rightArm.raise += rise;
+                }
+            }
+            case SWING, QUICK_SWING -> {
                 // Attack or serve: the arm action depends on the shot (see SwingStyle). Armed, the arm
                 // is cocked and whips through as the ball arrives, so the hand meets the ball at the
                 // contact; after it the swing follows through.
                 SwingStyle style = player.swingStyle();
                 if (held) {
-                    windUp(style);
-                    twist = style == SwingStyle.TIP ? -0.2f : -0.55f;
-                    lean = style == SwingStyle.TIP ? 0.05f : 0.2f;
+                    boolean quick = action == ActionPose.QUICK_SWING;
+                    if (quick) compactWindUp(style);
+                    else windUp(style);
+                    twist = style == SwingStyle.TIP ? -0.2f : quick ? -0.30f : -0.55f;
+                    lean = style == SwingStyle.TIP || quick ? 0.055f : 0.2f;
                     float whip = whipProgress(f, player);
                     if (whip > 0f) {
                         float fromTwist = twist;
@@ -571,9 +656,45 @@ public final class PlayerRenderer implements Disposable {
                     twist = trunkTwist;
                     lean = trunkLean;
                 }
-                if (!airborne) split = 0.2f;
+                if (!airborne) {
+                    split = style == SwingStyle.TOPSPIN_SERVE ? 0.27f : style == SwingStyle.UNDERHAND_SERVE ? 0.23f : 0.15f;
+                    if (style.serve()) drop += style == SwingStyle.UNDERHAND_SERVE
+                            ? 0.11f * (held ? 1f : 1f - smooth(progress / 0.7f)) : 0.038f * (held ? 1f : 0f);
+                }
             }
             case TOSS -> {
+                if (jumpServe) {
+                    boolean topspin = player.swingStyle() == SwingStyle.JUMP_TOPSPIN_SERVE;
+                    if (airborne) {
+                        airborneArms(player, true);
+                        float whip = whipProgress(f, player);
+                        if (whip > 0f) {
+                            holdArms();
+                            swing(player.swingStyle(), contactAt(player.swingStyle()));
+                            blendFromHeld(whip);
+                            twist = MathUtils.lerp(twist, trunkTwist, whip);
+                            lean = MathUtils.lerp(lean, trunkLean, whip);
+                        }
+                    } else {
+                        // On the run the toss arm returns to the stride. The last step loads the jump.
+                        float lift = bump(progress, 0f, 0.17f, topspin ? 0.63f : 0.46f)
+                                * (1f - smooth(forwardSpeed / 4f)) * (1f - player.jumpCharge());
+                        if (topspin) {
+                            rightArm.set(MathUtils.lerp(rightArm.raise, 2.95f, lift), 0.18f, 0.22f);
+                            lean += 0.12f * lift;
+                            if (state == PlayerAnimState.APPROACH) lean -= 0.10f * speedFactor;
+                        } else {
+                            leftArm.set(MathUtils.lerp(leftArm.raise, 2.35f, lift), 0.16f, 0.38f);
+                            if (state == PlayerAnimState.APPROACH) lean += 0.07f * speedFactor;
+                        }
+                        if (charging) {
+                            float load = player.jumpCharge();
+                            twist -= (topspin ? 0.26f : 0.08f) * load;
+                            split = (topspin ? 0.21f : 0.12f) * load;
+                        }
+                    }
+                    break;
+                }
                 if (player.swingStyle() == SwingStyle.UNDERHAND_SERVE) {
                     // Underhand: the ball hand lifts it a little; the hitting arm swings back.
                     float t = smooth(progress / 0.35f);
@@ -585,11 +706,13 @@ public final class PlayerRenderer implements Disposable {
                 }
                 // The toss hand lifts the ball straight up; the hitting arm draws back.
                 float t = smooth(progress / 0.45f);
+                boolean power = player.swingStyle() == SwingStyle.TOPSPIN_SERVE;
                 leftArm.set(MathUtils.lerp(1.0f, 3.0f, t), MathUtils.lerp(-0.35f, 0.05f, t), MathUtils.lerp(0.9f, 0f, t));
                 rightArm.set(MathUtils.lerp(1.0f, 3.0f, t), MathUtils.lerp(-0.35f, 0.6f, t), MathUtils.lerp(0.9f, 2.0f, t));
-                twist = -0.45f * t;
-                lean = 0.15f * t;
-                split = 0.22f;
+                twist = -(power ? 0.52f : 0.25f) * t;
+                lean = (power ? 0.19f : 0.06f) * t;
+                drop = (power ? 0.115f : 0.055f) * (1f - t);
+                split = power ? 0.27f : 0.15f;
                 // The ball coming down to the hand: the swing starts so that the hand meets it.
                 float whip = whipProgress(f, player);
                 if (whip > 0f) {
@@ -651,9 +774,14 @@ public final class PlayerRenderer implements Disposable {
                 leftArm.set(0.05f, 0.08f, 0.1f);
                 lean = -0.1f * up;
             }
-            case REF_FOUR_HITS, REF_DOUBLE -> {
+            case REF_FOUR_HITS -> {
                 float up = smooth(progress / 0.25f);
-                rightArm.set(2.7f * up, 0.3f, 0.2f);
+                rightArm.set(2.65f * up, 0.25f, 0.16f);
+                leftArm.set(0.05f, 0.08f, 0.1f);
+            }
+            case REF_DOUBLE -> {
+                float up = smooth(progress / 0.25f);
+                rightArm.set(1.15f * up, 0.18f, 1.16f * up);
                 leftArm.set(0.05f, 0.08f, 0.1f);
             }
             case REF_HELD -> {
@@ -710,7 +838,9 @@ public final class PlayerRenderer implements Disposable {
             default -> {
             }
         }
-        boolean mirroredAttack = jumpMotion == JumpMotion.BACK_ATTACK && player.isLeftHanded();
+        boolean mirroredAttack = (jumpMotion == JumpMotion.BACK_ATTACK || jumpMotion == JumpMotion.WING_ATTACK
+                || jumpMotion == JumpMotion.QUICK_ATTACK || jumpServe)
+                && player.isLeftHanded();
         if (jumpMotion != null) {
             float motionTime = switch (jumpMotion) {
                 case PLANT -> player.jumpCharge();
@@ -738,7 +868,8 @@ public final class PlayerRenderer implements Disposable {
 
         // ---- smooth towards the targets: quick for strikes, softer for everything else
         // A left-hander's hitting actions are the mirror image (the toss and hold too).
-        boolean handed = action == ActionPose.SWING || action == ActionPose.TOSS || action == ActionPose.HOLD_BALL
+        boolean handed = action.swing() || action == ActionPose.QUICK_READY || action == ActionPose.SET_ONE_HAND
+                || action == ActionPose.TOSS || action == ActionPose.HOLD_BALL || jumpServe
                 || (airborne && action == ActionPose.NONE && !player.isBlocking() && ballHigh);
         if (player.isLeftHanded() && handed) {
             mirrorArms();
@@ -746,7 +877,8 @@ public final class PlayerRenderer implements Disposable {
             split = -split;
             roll = -roll;
         }
-        boolean striking = !held && (action == ActionPose.SWING || action == ActionPose.PLATFORM || action == ActionPose.OVERHEAD);
+        boolean striking = !held && (action.swing() || action == ActionPose.PLATFORM
+                || action == ActionPose.ONE_ARM_DIG || action.overhead());
         float halfLife = striking ? STRIKE_HALF_LIFE : airborne ? AIR_HALF_LIFE : POSE_HALF_LIFE;
         f.blend(leftArm, rightArm, lean, twist, roll, drop, halfLife, dt);
 
@@ -769,12 +901,24 @@ public final class PlayerRenderer implements Disposable {
                 solveLeg(f, i, legX, legY, i == 0 ? -0.05f : 0.05f, legPitch);
             } else {
                 groundLeg(f, i, cycles, strideLength, hipHeight, stance, split, speed, moveX, moveZ,
-                        pelvisYaw, scale, movingOnFloor, jumpMotion, sinceLanding);
+                        pelvisYaw, scale, movingOnFloor, jumpMotion, sinceLanding, blockClosing);
             }
         }
 
         applyArm(f, 0, f.left);
         applyArm(f, 1, f.right);
+        if (f.refereeFingers != null) {
+            int extended = switch (action) {
+                case REF_DOUBLE -> 2;
+                case REF_FOUR_HITS, REF_OUT, REF_HELD, REF_TIMEOUT, REF_NET, REF_IN, REF_POINT_RIGHT, REF_SERVE_RIGHT -> 4;
+                default -> 0;
+            };
+            float open = smooth(progress / 0.22f) * smooth((1f - progress) / 0.16f);
+            for (int i = 0; i < f.refereeFingers.length; i++) {
+                f.refereeFingers[i].rotation.setFromAxisRad(0f, 0f, 1f, i < extended ? 1.25f * (1f - open) : 1.25f)
+                        .mul(tmpQuat.setFromAxisRad(1f, 0f, 0f, i < extended ? (i - 1.5f) * 0.17f * open : 0f));
+            }
+        }
         f.torso.rotation.setFromAxisRad(0f, 1f, 0f, f.twist).mul(tmpQuat.setFromAxisRad(0f, 0f, 1f, f.lean))
                 .mul(tmpQuat.setFromAxisRad(1f, 0f, 0f, f.roll));
         // The head keeps looking forward over a leaning trunk, turns towards the ball and looks up at it;
@@ -785,7 +929,9 @@ public final class PlayerRenderer implements Disposable {
                 .mul(tmpQuat.setFromAxisRad(0f, 0f, 1f, nod))
                 .mul(tmpQuat.setFromAxisRad(1f, 0f, 0f, -f.roll * 0.7f));
         f.instance.calculateTransforms();
-        reachForBall(f, player, action, held);
+        boolean closeToFloor = position.y < 0.24f && (jumpServe || action.set() || action == ActionPose.QUICK_READY
+                || action.swing() || action == ActionPose.BLOCK);
+        reachForBall(f, player, action, held, closeToFloor || !airborne && f.clock < f.floorRecoveryUntil);
     }
 
     private static void clearFootPlants(Figure f) {
@@ -794,7 +940,7 @@ public final class PlayerRenderer implements Disposable {
 
     private void groundLeg(Figure f, int foot, float cycles, float stride, float hip, float stance, float split,
                            float speed, float moveX, float moveZ, float yaw, float scale, boolean movingOnFloor,
-                           JumpMotion motion, float landingTime) {
+                           JumpMotion motion, float landingTime, float blockClosing) {
         float cycle = GaitCycle.footCycle(cycles, foot);
         int step = MathUtils.floor(cycle);
         float progress = cycle - step;
@@ -852,15 +998,25 @@ public final class PlayerRenderer implements Disposable {
         // A shuffle gathers the trailing foot under its own hip; it does not cross the leading leg.
         float shuffle = smooth((Math.abs(moveZ) - 0.6f) / 0.35f);
         footZ = MathUtils.lerp(footZ, out * Math.max(out * footZ, -0.035f), shuffle);
+        if (motion == null && out * moveZ < 0f) {
+            float cross = blockClosing * bump(progress, contact, (contact + 1f) * 0.5f, 1f);
+            footZ += Math.signum(moveZ) * 0.29f * cross;
+            footX += 0.17f * cross;
+            footY += 0.06f * cross;
+        }
         solveLeg(f, foot, footX, footY, footZ, footPitch);
     }
 
     private static JumpMotion jumpMotion(VolleyballPlayer player, ActionPose action, PlayerAnimState state,
                                          boolean ballHigh, float forwardSpeed, float sinceLanding) {
         if (player.isAirborne()) {
-            if (player.isBlocking()) return null;
-            if (action == ActionPose.OVERHEAD) return JumpMotion.JUMP_SET;
-            boolean attacking = action == ActionPose.SWING && switch (player.swingStyle()) {
+            if (player.isBlocking() || action == ActionPose.BLOCK) return JumpMotion.BLOCK_JUMP;
+            if (player.swingStyle().jumpServe()) {
+                return player.swingStyle() == SwingStyle.JUMP_FLOAT_SERVE ? JumpMotion.JUMP_FLOAT_SERVE : JumpMotion.JUMP_TOPSPIN_SERVE;
+            }
+            if (action.overhead()) return action.fastSet() ? JumpMotion.QUICK_SET : JumpMotion.JUMP_SET;
+            if (action == ActionPose.QUICK_READY || action == ActionPose.QUICK_SWING) return JumpMotion.QUICK_ATTACK;
+            boolean attacking = action.swing() && switch (player.swingStyle()) {
                 case POWER, CUT, ROLL, TIP, TOOL -> true;
                 default -> false;
             };
@@ -868,11 +1024,13 @@ public final class PlayerRenderer implements Disposable {
                     && (attacking || action == ActionPose.NONE && ballHigh && forwardSpeed > 1.4f)) {
                 return JumpMotion.BACK_ATTACK;
             }
+            if (attacking || action == ActionPose.NONE && ballHigh && forwardSpeed > 1.4f) return JumpMotion.WING_ATTACK;
         } else {
             if (state == PlayerAnimState.JUMP_PREP) return JumpMotion.PLANT;
             if (sinceLanding < PlayerAnimState.LANDING_TIME
-                    && (action == ActionPose.NONE || action == ActionPose.OVERHEAD
-                        || action == ActionPose.SWING || action == ActionPose.BLOCK)) {
+                    && (action == ActionPose.NONE || action.overhead() || action == ActionPose.QUICK_READY
+                        || action.swing() || action == ActionPose.BLOCK
+                        || action == ActionPose.TOSS && player.swingStyle().jumpServe())) {
                 return JumpMotion.LANDING;
             }
         }
@@ -896,6 +1054,7 @@ public final class PlayerRenderer implements Disposable {
     private final Vector3 reachAxis = new Vector3();
     private final Vector3 relative = new Vector3();
     private final Vector3 midHands = new Vector3();
+    private final Vector3 reachBall = new Vector3();
 
     /**
      * Developer switches ({@code -Danim.contactLog=true}, {@code -Danim.noReach=true}): measure how
@@ -916,8 +1075,8 @@ public final class PlayerRenderer implements Disposable {
         boolean contact = f.wasHeld && !held && ballLive && f.handsKnown;
         f.wasHeld = held;
         if (!CONTACT_LOG || !contact) return;
-        if (action != ActionPose.PLATFORM && action != ActionPose.OVERHEAD && action != ActionPose.SWING) return;
-        float gap = action == ActionPose.SWING
+        if (action != ActionPose.PLATFORM && !action.overhead() && !action.swing()) return;
+        float gap = action.swing() || action == ActionPose.SET_ONE_HAND
                 ? f.hand[player.isLeftHanded() ? 0 : 1].dst(f.lastBall)
                 : midHands.set(f.hand[0]).add(f.hand[1]).scl(0.5f).dst(f.lastBall);
         contactGaps.computeIfAbsent(action, a -> new com.badlogic.gdx.utils.FloatArray()).add(gap);
@@ -959,19 +1118,18 @@ public final class PlayerRenderer implements Disposable {
         ContactType type;
         ServeType serve = null;
         switch (action) {
-            case PLATFORM -> type = player.isUpright() ? ContactType.FOREARM_PASS : ContactType.DIVE;
-            case OVERHEAD -> type = ContactType.OVERHEAD_PASS;
+            case PLATFORM -> type = ContactType.FOREARM_PASS;
+            case ONE_ARM_DIG -> type = ContactType.ONE_ARM;
+            case DIVE_DIG -> type = ContactType.DIVE;
+            case OVERHEAD, SET_FORWARD, SET_BACK, SET_FAST, SET_FAST_BACK -> type = ContactType.OVERHEAD_PASS;
+            case SET_ONE_HAND -> type = ContactType.ONE_HAND_SET;
             case TOSS -> {
                 type = ContactType.SERVE;
-                serve = player.swingStyle() == SwingStyle.UNDERHAND_SERVE ? ServeType.UNDERHAND : ServeType.FLOAT;
+                serve = swingServe(player.swingStyle());
             }
-            case SWING -> {
-                if (player.isAirborne()) {
-                    type = ContactType.ATTACK;
-                } else {
-                    type = ContactType.SERVE;
-                    serve = player.swingStyle() == SwingStyle.UNDERHAND_SERVE ? ServeType.UNDERHAND : ServeType.FLOAT;
-                }
+            case SWING, QUICK_SWING -> {
+                serve = swingServe(player.swingStyle());
+                type = serve == null ? ContactType.ATTACK : ContactType.SERVE;
             }
             default -> {
                 return false;
@@ -993,6 +1151,17 @@ public final class PlayerRenderer implements Disposable {
         return true;
     }
 
+    private static ServeType swingServe(SwingStyle style) {
+        return switch (style) {
+            case UNDERHAND_SERVE -> ServeType.UNDERHAND;
+            case FLOAT_SERVE -> ServeType.FLOAT;
+            case TOPSPIN_SERVE -> ServeType.POWER;
+            case JUMP_FLOAT_SERVE -> ServeType.JUMP_FLOAT;
+            case JUMP_TOPSPIN_SERVE -> ServeType.JUMP_TOPSPIN;
+            default -> null;
+        };
+    }
+
     /**
      * How much of the way from the action's own pose to the ball the hands should be (0..1): it
      * grows over the last {@code lead} seconds before the ball passes the contact point, and only
@@ -1006,7 +1175,10 @@ public final class PlayerRenderer implements Disposable {
 
     /** How far through the swing towards the contact the hitting arm should be (0 cocked, 1 at the ball). */
     private float whipProgress(Figure f, VolleyballPlayer player) {
-        return closingWeight(player, player.isAirborne() ? ActionPose.SWING : player.actionPose(), WHIP_TIME);
+        if (ballLive && player.actionPose() == ActionPose.TOSS && player.swingStyle().jumpServe()
+                && (!player.isAirborne() || ball.velocity.y > 1.5f)) return 0f;
+        ActionPose action = player.actionPose();
+        return closingWeight(player, action, action == ActionPose.QUICK_SWING ? 0.082f : WHIP_TIME);
     }
 
     /** Arm length, shoulder to palm. */
@@ -1016,6 +1188,7 @@ public final class PlayerRenderer implements Disposable {
     static final float MAX_TRUNK_REACH = 0.4f;
     /** How far (m) a shoulder rises with the arm reaching overhead. */
     static final float SHOULDER_LIFT = 0.06f;
+    private static final float STRIKE_SHOULDER_LIFT = 0.125f;
 
     /**
      * A ball beyond the arm's reach: the whole body goes for it - the trunk tips from the waist
@@ -1024,13 +1197,13 @@ public final class PlayerRenderer implements Disposable {
      * up to {@link #MAX_TRUNK_REACH}. Rotating the shoulder by the angle between where it is and
      * where it must be, about the axis between the two directions (law of cosines).
      */
-    private void leanTowards(Figure f, boolean both, int hitting, float w) {
+    private void leanTowards(Figure f, boolean both, int hitting, float w, float shoulderLift) {
         if (both) {
             relative.set(targets[0]).add(targets[1]).scl(0.5f).mul(torsoWorld);
-            shoulderPoint.set(0f, PlayerModelFactory.SHOULDER_HEIGHT, 0f);
+            shoulderPoint.set(0f, PlayerModelFactory.SHOULDER_HEIGHT + shoulderLift, 0f);
         } else {
             relative.set(targets[hitting]).mul(torsoWorld);
-            shoulderPoint.set(0f, PlayerModelFactory.SHOULDER_HEIGHT + SHOULDER_LIFT,
+            shoulderPoint.set(0f, PlayerModelFactory.SHOULDER_HEIGHT + shoulderLift,
                     (hitting == 0 ? -1f : 1f) * PlayerModelFactory.SHOULDER_WIDTH);
         }
         float reach = ARM_REACH * 0.97f;
@@ -1055,7 +1228,7 @@ public final class PlayerRenderer implements Disposable {
         return switch (style) {
             case TIP -> 0.4f;
             case ROLL -> 0.45f;
-            case FLOAT_SERVE -> 0.25f;
+            case FLOAT_SERVE, JUMP_FLOAT_SERVE -> 0.25f;
             case UNDERHAND_SERVE -> 0.5f;
             default -> 0.3f;
         };
@@ -1082,7 +1255,7 @@ public final class PlayerRenderer implements Disposable {
      * reach grows with the ball's approach, so it blends in without a jump, and the springs take
      * the reached pose over, so the action continues smoothly from it after the contact.
      */
-    private void reachForBall(Figure f, VolleyballPlayer player, ActionPose action, boolean held) {
+    private void reachForBall(Figure f, VolleyballPlayer player, ActionPose action, boolean held, boolean protectFloor) {
         measureContact(f, player, action, held);
         float w = 0f;
         boolean both = false;
@@ -1090,17 +1263,29 @@ public final class PlayerRenderer implements Disposable {
         float fx = player.facingX();
         float fz = player.facingZ();
         switch (action) {
-            case PLATFORM, OVERHEAD -> {
+            case PLATFORM, OVERHEAD, SET_FORWARD, SET_BACK, SET_FAST, SET_FAST_BACK, SET_ONE_HAND, ONE_ARM_DIG, DIVE_DIG -> {
                 if (held) {
-                    w = closingWeight(player, action, REACH_TIME);
-                    both = player.isUpright() || f.fall != FallKind.SPRAWL;
+                    w = closingWeight(player, action, action.fastSet() ? 0.12f : REACH_TIME);
+                    both = action == ActionPose.PLATFORM || action.overhead() && action != ActionPose.SET_ONE_HAND;
+                    if (action == ActionPose.ONE_ARM_DIG) hitting = f.receiveHand;
+                    if (action == ActionPose.DIVE_DIG) hitting = f.mirrorFall ? 0 : 1;
                 }
             }
-            case SWING, TOSS -> {
+            case SWING, QUICK_SWING, TOSS -> {
                 if (held || action == ActionPose.TOSS) w = whipProgress(f, player);
             }
             default -> {
             }
+        }
+        reachBall.set(drawnBall);
+        if (!held && !NO_REACH && (action.overhead() || action.swing()) && player.actionContact(reachBall)) {
+            float release = action.fastSet() || action == ActionPose.QUICK_SWING ? 0.20f : 0.17f;
+            w = 1f - smooth((player.actionPoseProgress() - 0.045f) / (release - 0.045f));
+            both = action.overhead() && action != ActionPose.SET_ONE_HAND;
+        }
+        if (action == ActionPose.HIGH_FIVE && player.actionContact(reachBall)) {
+            w = bump(player.actionPoseProgress(), 0.18f, 0.52f, 0.79f);
+            hitting = 1;
         }
         // Shoulders back in place (a reach may have lifted them last frame).
         boolean dirty = false;
@@ -1111,6 +1296,11 @@ public final class PlayerRenderer implements Disposable {
             }
         }
         if (w > 0.01f) {
+            boolean highReach = player.isUpright() && (action.swing() || action == ActionPose.TOSS || action == ActionPose.SET_ONE_HAND)
+                    && player.swingStyle() != SwingStyle.UNDERHAND_SERVE
+                    && reachBall.y - player.position.y > player.standingReach() - 0.13f;
+            float shoulderLift = action.swing() || action == ActionPose.TOSS || action == ActionPose.SET_ONE_HAND
+                    ? STRIKE_SHOULDER_LIFT : SHOULDER_LIFT;
             // The targets, world space: the platform, both setting hands, or the hitting hand.
             for (int i = 0; i < 2; i++) {
                 float side = i == 0 ? -1f : 1f;
@@ -1119,25 +1309,44 @@ public final class PlayerRenderer implements Disposable {
                 float rz = fx * side;
                 switch (action) {
                     // The ball meets the joined forearms; the hands are a little beyond it, below its centre.
-                    case PLATFORM -> {
-                        if (both) targets[i].set(drawnBall).add(fx * 0.12f + rx * 0.04f, -0.12f, fz * 0.12f + rz * 0.04f);
-                        else targets[i].set(drawnBall).add(0f, -0.115f, 0f);
-                    }
+                    case PLATFORM -> targets[i].set(reachBall).add(fx * 0.12f + rx * 0.038f, -0.115f, fz * 0.12f + rz * 0.038f);
+                    case ONE_ARM_DIG -> targets[i].set(reachBall).add(fx * 0.05f, -0.105f, fz * 0.05f);
+                    case DIVE_DIG -> targets[i].set(reachBall.x, Math.max(0.055f, reachBall.y - Ball.RADIUS), reachBall.z);
                     // Both hands round the ball, the fingers on its back half.
-                    case OVERHEAD -> targets[i].set(drawnBall).add(-fx * 0.05f + rx * 0.09f, -0.03f, -fz * 0.05f + rz * 0.09f);
-                    // The palm on the back and top of the ball.
-                    default -> targets[i].set(drawnBall).add(-fx * 0.07f, 0.04f, -fz * 0.07f);
+                    case SET_BACK, SET_FAST_BACK ->
+                            targets[i].set(reachBall).add(fx * 0.032f + rx * 0.084f, -0.042f, fz * 0.032f + rz * 0.084f);
+                    case OVERHEAD, SET_FORWARD, SET_FAST ->
+                            targets[i].set(reachBall).add(-fx * 0.05f + rx * 0.09f, -0.03f, -fz * 0.05f + rz * 0.09f);
+                    case SET_ONE_HAND -> targets[i].set(reachBall).add(-fx * 0.04f, -0.025f, -fz * 0.04f);
+                    case HIGH_FIVE -> targets[i].set(reachBall).add(-fx * 0.035f, 0f, -fz * 0.035f);
+                    // Approach the back of the ball. The follow-through carries the hand over it.
+                    default -> targets[i].set(reachBall).add(-fx * 0.084f, -0.033f, -fz * 0.084f);
                 }
             }
             torsoWorld.set(f.instance.transform).mul(f.torso.globalTransform).inv();
-            if (player.isUpright() || f.fall != FallKind.SPRAWL) leanTowards(f, both, hitting, w);
+            if (highReach) {
+                // Take the reachable quadrant of the ball, rather than always aiming behind its centre.
+                float side = hitting == 0 ? -1f : 1f;
+                handMatrix.set(f.instance.transform).mul(f.torso.globalTransform);
+                shoulderPoint.set(0f, PlayerModelFactory.SHOULDER_HEIGHT + shoulderLift, side * PlayerModelFactory.SHOULDER_WIDTH);
+                reachAxis.set(shoulderPoint).mul(handMatrix).sub(reachBall).nor();
+                targets[hitting].set(reachBall).mulAdd(reachAxis, Ball.RADIUS + 0.022f);
+                float shortfall = relative.set(targets[hitting]).mul(torsoWorld).dst(shoulderPoint) - ARM_REACH;
+                float stretch = MathUtils.clamp(shortfall * 0.65f, 0f, 0.048f) * w;
+                if (stretch > 0f) {
+                    f.torso.translation.y += stretch;
+                    f.instance.calculateTransforms();
+                    torsoWorld.set(f.instance.transform).mul(f.torso.globalTransform).inv();
+                }
+            }
+            if (player.isUpright()) leanTowards(f, both, hitting, w, shoulderLift);
             torsoWorld.set(f.instance.transform).mul(f.torso.globalTransform).inv();
             for (int i = 0; i < 2; i++) {
                 if (!both && i != hitting) continue;
                 float side = i == 0 ? -1f : 1f;
                 relative.set(targets[i]).mul(torsoWorld);
                 // An arm reaching above the head lifts its shoulder a little (the shoulder blade turns up).
-                float lift = SHOULDER_LIFT * w * smooth((relative.y - PlayerModelFactory.SHOULDER_HEIGHT - 0.1f) / 0.3f);
+                float lift = shoulderLift * w * smooth((relative.y - PlayerModelFactory.SHOULDER_HEIGHT - 0.1f) / 0.3f);
                 f.upperArm[i].translation.y = PlayerModelFactory.SHOULDER_HEIGHT + lift;
                 relative.sub(0f, PlayerModelFactory.SHOULDER_HEIGHT + lift, side * PlayerModelFactory.SHOULDER_WIDTH);
                 // The solver's outward direction is -z (the left arm's); the right arm is mirrored.
@@ -1154,6 +1363,7 @@ public final class PlayerRenderer implements Disposable {
             dirty = true;
         }
         if (dirty) f.instance.calculateTransforms();
+        if (protectFloor) keepAboveFloor(f);
         for (int i = 0; i < 2; i++) {
             handMatrix.set(f.instance.transform).mul(f.forearm[i].globalTransform);
             f.hand[i].set(PlayerModelFactory.HAND_X, PlayerModelFactory.HAND_Y, 0f).mul(handMatrix);
@@ -1336,9 +1546,10 @@ public final class PlayerRenderer implements Disposable {
     private void airborneLeg(VolleyballPlayer player, ActionPose action, int i) {
         float full = PlayerModelFactory.THIGH_LENGTH + PlayerModelFactory.SHIN_LENGTH;
         if (player.isBlocking() || action == ActionPose.BLOCK) {
-            legX = 0f;
-            legY = -full * 0.97f;
-            legPitch = -0.4f;
+            float landing = smooth((-player.velocity.y - 0.3f) / 2.6f);
+            legX = landing * (i == 0 ? 0.055f : -0.012f);
+            legY = -full * MathUtils.lerp(0.97f, 0.92f, landing);
+            legPitch = MathUtils.lerp(-0.4f, -0.1f, landing);
             return;
         }
         float rise = MathUtils.clamp(player.velocity.y / 3.5f, -1f, 1f);
@@ -1367,27 +1578,45 @@ public final class PlayerRenderer implements Disposable {
 
     /** On the bench: sitting on a chair (seat 0.47 m), forearms on the thighs, watching the ball. */
     private void poseSeated(Figure f, VolleyballPlayer player, float yaw, Vector3 lookAt) {
-        float seat = 0.47f;
-        float hip = seat + 0.03f;
+        poseSeated(f, player, yaw, lookAt, 1f);
+    }
+
+    private void poseSeated(Figure f, VolleyballPlayer player, float yaw, Vector3 lookAt, float sit) {
+        float seated = smooth(sit);
+        float shift = bump(sit, 0f, 0.47f, 1f);
+        float hip = MathUtils.lerp(PlayerModelFactory.PELVIS_HEIGHT - PlayerModelFactory.HIP_DROP, 0.50f, seated);
+        float lean = -0.12f * seated - 0.39f * shift;
         f.pelvis.translation.set(0f, hip + PlayerModelFactory.HIP_DROP, 0f);
         f.pelvis.rotation.idt();
         float footY = -(hip - PlayerModelFactory.ANKLE_HEIGHT);
-        solveLeg(f, 0, 0.4f, footY, -0.07f, 0f);
-        solveLeg(f, 1, 0.4f, footY, 0.07f, 0f);
-        leftArm.set(0.75f, -0.05f, 0.75f);
-        rightArm.set(0.75f, -0.05f, 0.75f);
-        f.syncTo(leftArm, rightArm, -0.12f, 0f);
+        solveLeg(f, 0, 0.40f * seated + 0.12f * shift, footY, -0.07f, 0f);
+        solveLeg(f, 1, 0.40f * seated + 0.12f * shift, footY, 0.07f, 0f);
+        leftArm.set(0.12f + 0.63f * seated + 0.48f * shift, 0.10f - 0.15f * seated, 0.30f + 0.45f * seated);
+        rightArm.set(leftArm.raise, leftArm.spread, leftArm.elbow);
+        float lookDown = 0f;
+        if (player.actionPose() == ActionPose.CLAP) {
+            float t = player.actionPoseProgress();
+            float up = bump(t, 0f, 0.38f, 1f);
+            float clap = 0.5f + 0.5f * MathUtils.cos((t - 0.28f) * 4f * MathUtils.PI);
+            leftArm.set(0.75f + 0.58f * up, -0.05f - up * (0.46f + 0.29f * clap), 0.75f + 0.39f * up);
+            rightArm.set(leftArm.raise, leftArm.spread, leftArm.elbow);
+        } else if (player.actionPose() == ActionPose.DISAPPOINTED) {
+            lookDown = 0.42f * bump(player.actionPoseProgress(), 0f, 0.38f, 1f);
+            lean -= 0.20f * lookDown;
+        }
+        f.syncTo(leftArm, rightArm, lean, 0f);
         f.drop = 0f;
         applyArm(f, 0, leftArm);
         applyArm(f, 1, rightArm);
-        f.torso.rotation.setFromAxisRad(0f, 0f, 1f, -0.12f);
+        f.torso.rotation.setFromAxisRad(0f, 0f, 1f, lean);
         float headYaw = 0f;
         if (lookAt != null) {
             float toBall = MathUtils.atan2(-(lookAt.z - player.position.z), lookAt.x - player.position.x);
             headYaw = MathUtils.clamp(wrap(toBall - yaw), -HEAD_TURN_LIMIT, HEAD_TURN_LIMIT);
         }
-        f.head.rotation.setFromAxisRad(0f, 1f, 0f, headYaw);
+        f.head.rotation.setFromAxisRad(0f, 1f, 0f, headYaw).mul(tmpQuat.setFromAxisRad(0f, 0f, 1f, -lookDown));
         f.instance.calculateTransforms();
+        if (sit < 1f) keepAboveFloor(f);
     }
 
     /**
@@ -1437,6 +1666,10 @@ public final class PlayerRenderer implements Disposable {
                 rightArm.set(2.6f, 0.75f, 1.75f);
                 leftArm.set(2.5f, 0.05f, 0.1f);
             }
+            case JUMP_FLOAT_SERVE -> {
+                rightArm.set(2.85f, 0.56f, 1.4f);
+                leftArm.set(2.7f, 0.13f, 0.25f);
+            }
             case UNDERHAND_SERVE -> {
                 rightArm.set(-0.6f, 0.2f, 0.1f);
                 leftArm.set(0.9f, -0.35f, 0.5f);
@@ -1450,6 +1683,13 @@ public final class PlayerRenderer implements Disposable {
                 leftArm.set(2.35f, 0.1f, 0.1f);
             }
         }
+    }
+
+    private void compactWindUp(SwingStyle style) {
+        windUp(style);
+        if (style == SwingStyle.TIP || style == SwingStyle.ROLL) return;
+        leftArm.set(2.55f, 0.22f, 0.45f);
+        rightArm.set(2.80f, 0.43f, 1.42f);
     }
 
     /**
@@ -1505,13 +1745,15 @@ public final class PlayerRenderer implements Disposable {
                 twist = MathUtils.lerp(MathUtils.lerp(-0.55f, 0.25f, whip), 0.1f, follow);
                 lean = MathUtils.lerp(MathUtils.lerp(0.2f, -0.3f, whip), -0.2f, follow);
             }
-            case FLOAT_SERVE -> {
+            case FLOAT_SERVE, JUMP_FLOAT_SERVE -> {
                 // A punch: the arm drives straight through the ball and stops there.
                 float punch = smooth(progress / 0.25f);
-                float drop = smooth((progress - 0.7f) / 0.3f);
+                boolean jump = style == SwingStyle.JUMP_FLOAT_SERVE;
+                float drop = smooth((progress - (jump ? 0.51f : 0.7f)) / (jump ? 0.49f : 0.3f));
                 rightArm.set(MathUtils.lerp(MathUtils.lerp(2.6f, 2.55f, punch), 1.6f, drop), MathUtils.lerp(0.75f, 0.2f, punch),
                         MathUtils.lerp(MathUtils.lerp(1.75f, 0.0f, punch), 0.3f, drop));
-                leftArm.set(MathUtils.lerp(2.5f, 1.0f, punch), 0.15f, MathUtils.lerp(0.1f, 0.9f, punch));
+                leftArm.set(MathUtils.lerp(2.5f, jump ? 1.5f : 1.0f, punch), jump ? (0.15f + 0.34f * drop) : 0.15f,
+                        MathUtils.lerp(0.1f, 0.9f, punch));
                 twist = MathUtils.lerp(-0.35f, 0.15f, punch);
                 lean = MathUtils.lerp(0.1f, -0.1f, punch);
             }
@@ -1525,9 +1767,10 @@ public final class PlayerRenderer implements Disposable {
             }
             default -> {
                 // Power spike and topspin serve: whip, then the arm runs through across the body.
-                boolean serve = style == SwingStyle.TOPSPIN_SERVE;
-                rightArm.set(MathUtils.lerp(MathUtils.lerp(3.0f, 2.4f, whip), 0.35f, follow),
-                        MathUtils.lerp(MathUtils.lerp(0.6f, 0.2f, whip), -0.45f, follow),
+                boolean jump = style == SwingStyle.JUMP_TOPSPIN_SERVE;
+                boolean serve = jump || style == SwingStyle.TOPSPIN_SERVE;
+                rightArm.set(MathUtils.lerp(MathUtils.lerp(3.0f, 2.4f, whip), jump ? 0.15f : 0.35f, follow),
+                        MathUtils.lerp(MathUtils.lerp(0.6f, 0.2f, whip), jump ? -0.72f : -0.45f, follow),
                         MathUtils.lerp(MathUtils.lerp(2.05f, 0.02f, whip), 0.35f, follow));
                 leftArm.set(MathUtils.lerp(MathUtils.lerp(2.35f, 0.9f, whip), 0.5f, follow), 0.2f, MathUtils.lerp(0.1f, 1.3f, whip));
                 twist = MathUtils.lerp(MathUtils.lerp(-0.55f, serve ? 0.6f : 0.45f, whip), 0.25f, follow);
@@ -1612,6 +1855,8 @@ public final class PlayerRenderer implements Disposable {
                 rightArm.set(up, 0.14f, 0.05f);
             }
         }
+        float release = smooth((-player.velocity.y - 1.2f) / 2.25f);
+        blendArms(1.48f, 0.43f, 0.64f, release);
         trunkLean = lean;
         trunkTwist = twist;
     }
@@ -1637,7 +1882,10 @@ public final class PlayerRenderer implements Disposable {
             boolean reaches = (i == 0) == f.mirrorFall;
             int arm = reaches ? DiveMotion.REACH_ARM : DiveMotion.SUPPORT_ARM;
             int leg = reaches ? DiveMotion.TRAIL_LEG : DiveMotion.SUPPORT_LEG;
-            (i == 0 ? leftArm : rightArm).set(divePose[arm], divePose[arm + 1], divePose[arm + 2]);
+            float give = reaches && action == ActionPose.DIVE_DIG && !player.isActionPoseHeld()
+                    ? bump(player.actionPoseProgress(), 0f, 0.28f, 0.85f) : 0f;
+            (i == 0 ? leftArm : rightArm).set(divePose[arm] - 0.18f * give, divePose[arm + 1],
+                    divePose[arm + 2] + 0.32f * give);
             float spread = f.fall == FallKind.SIDE_ROLL && reaches ? 0.1f : 0.025f;
             solveLeg(f, i, divePose[leg], -divePose[leg + 1], i == 0 ? -spread : spread, divePose[leg + 2]);
         }
@@ -1652,9 +1900,9 @@ public final class PlayerRenderer implements Disposable {
         if (f.fall == FallKind.SIDE_ROLL && player.bodyState() == BodyState.GETTING_UP) {
             plantRollRecovery(f, player.bodyStateTime(), yaw, scale);
         }
-        keepAboveFloor(f);
-        reachForBall(f, player, action, player.isActionPoseHeld());
-        keepAboveFloor(f);
+        boolean held = player.isActionPoseHeld();
+        if (held) keepAboveFloor(f);
+        reachForBall(f, player, action, held, true);
     }
 
     /** A braced palm and a planted front foot stay over the same patches of floor as the pelvis moves. */
@@ -1700,43 +1948,21 @@ public final class PlayerRenderer implements Disposable {
                 position.z + scale * (z * cos - x * sin));
     }
 
-    // Points on the body (node frame) that can touch the floor: hands, knees, toes, heels, the
-    // head, the chest and back, the shoulders and the hips.
-    private final Vector3 probe = new Vector3();
     private float floorDeepest;
     private int floorCorrections;
 
-    /**
-     * Keeps a player who is down on top of the floor: the lowest point of the body (the keyframes
-     * and the tilt are approximations) is found and the figure lifted so it rests on the floor
-     * instead of sinking into it.
-     */
+    /** Protects the complete posed geometry, including the low edges of rotated soles and pads. */
     private void keepAboveFloor(Figure f) {
-        float lowest = Float.MAX_VALUE;
-        for (int i = 0; i < 2; i++) {
-            lowest = Math.min(lowest, pointY(f, f.forearm[i], PlayerModelFactory.HAND_X, PlayerModelFactory.HAND_Y - 0.05f, 0f));
-            lowest = Math.min(lowest, pointY(f, f.shin[i], 0.06f, 0f, 0f));
-            lowest = Math.min(lowest, pointY(f, f.foot[i], 0.19f, -0.035f, 0f));
-            lowest = Math.min(lowest, pointY(f, f.foot[i], -0.08f, -0.035f, 0f));
+        float lowest = Float.POSITIVE_INFINITY;
+        for (FloorPart part : f.floorParts) {
+            handMatrix.set(f.instance.transform).mul(part.joint().globalTransform);
+            for (FloorContact shape : part.shapes()) lowest = Math.min(lowest, shape.lowestY(handMatrix));
         }
-        lowest = Math.min(lowest, pointY(f, f.head, 0f, 0.27f, 0f));
-        lowest = Math.min(lowest, pointY(f, f.head, 0.12f, 0.12f, 0f));
-        lowest = Math.min(lowest, pointY(f, f.torso, 0.13f, 0.3f, 0f));
-        lowest = Math.min(lowest, pointY(f, f.torso, -0.13f, 0.3f, 0f));
-        lowest = Math.min(lowest, pointY(f, f.torso, 0f, 0.46f, -0.2f));
-        lowest = Math.min(lowest, pointY(f, f.torso, 0f, 0.46f, 0.2f));
-        lowest = Math.min(lowest, pointY(f, f.pelvis, 0.13f, -0.08f, 0f));
-        lowest = Math.min(lowest, pointY(f, f.pelvis, -0.13f, -0.08f, 0f));
-        float floor = 0.01f;
-        if (lowest >= floor) return;
-        floorDeepest = Math.max(floorDeepest, floor - lowest);
+        float clearance = 0.002f - lowest;
+        if (clearance <= 0f) return;
+        floorDeepest = Math.max(floorDeepest, clearance);
         floorCorrections++;
-        f.instance.transform.trn(0f, floor - lowest, 0f);
-    }
-
-    private float pointY(Figure f, Node node, float x, float y, float z) {
-        handMatrix.set(f.instance.transform).mul(node.globalTransform);
-        return probe.set(x, y, z).mul(handMatrix).y;
+        f.instance.transform.trn(0f, clearance, 0f);
     }
 
     private static float smooth(float x) {

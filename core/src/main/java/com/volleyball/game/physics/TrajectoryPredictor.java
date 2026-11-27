@@ -116,6 +116,25 @@ public final class TrajectoryPredictor {
         for (int i = 0; i < MEMO_SIZE; i++) memos[i] = new Memo();
     }
 
+    /** Position after a short timed flight in open air, using the same integration as the forecast. */
+    public Vector3 positionAt(Ball ball, float seconds, Vector3 out) {
+        out.set(ball.position);
+        velocity.set(ball.velocity);
+        float remaining = seconds;
+        while (remaining > 1e-6f) {
+            float slice = Math.min(STEP, remaining);
+            int steps = BallPhysics.subSteps(velocity.len(), slice);
+            float h = slice / steps;
+            for (int i = 0; i < steps; i++) {
+                aerodynamics.acceleration(velocity, ball.spin, 0L, 0f, false, acceleration);
+                velocity.mulAdd(acceleration, h);
+                out.mulAdd(velocity, h);
+            }
+            remaining -= slice;
+        }
+        return out;
+    }
+
     /** Forecast for a ball currently in the given observable state. */
     public Prediction predict(Vector3 startPosition, Vector3 startVelocity, Vector3 startSpin, float maxTime, Prediction out) {
         out.reset();

@@ -57,6 +57,7 @@ uniform sampler2D u_courtShadowMap;
 uniform mat4 u_courtShadowMatrix;
 uniform float u_shadowOn;
 uniform float u_shadowTexel;
+uniform vec2 u_shadowProfile; // filter width, light retained in shadow by other sources
 
 // Occluders: capsule i from u_capA[i].xyz to u_capB[i].xyz with radius u_capA[i].w.
 const int MAX_CAPSULES = 24;
@@ -150,11 +151,14 @@ float shadowMap(sampler2D map, mat4 matrix, vec3 p, vec3 n) {
     vec2 base = floor(texel);
     vec2 f = texel - base;
     float lit = 0.0;
+    vec2 center = base + f + vec2(0.5);
     for (int y = 0; y < 4; y++) {
-        float s0 = step(ref, unpackDepth(texture2D(map, (base + vec2(-0.5, float(y) - 0.5)) * u_shadowTexel)));
-        float s1 = step(ref, unpackDepth(texture2D(map, (base + vec2(0.5, float(y) - 0.5)) * u_shadowTexel)));
-        float s2 = step(ref, unpackDepth(texture2D(map, (base + vec2(1.5, float(y) - 0.5)) * u_shadowTexel)));
-        float s3 = step(ref, unpackDepth(texture2D(map, (base + vec2(2.5, float(y) - 0.5)) * u_shadowTexel)));
+        vec2 tap = (center + (vec2(-0.5, float(y) - 0.5) - f - vec2(0.5)) * u_shadowProfile.x) * u_shadowTexel;
+        vec2 stride = vec2(u_shadowTexel * u_shadowProfile.x, 0.0);
+        float s0 = step(ref, unpackDepth(texture2D(map, tap)));
+        float s1 = step(ref, unpackDepth(texture2D(map, tap + stride)));
+        float s2 = step(ref, unpackDepth(texture2D(map, tap + 2.0 * stride)));
+        float s3 = step(ref, unpackDepth(texture2D(map, tap + 3.0 * stride)));
         // Three bilinear cells along x, weighted by the sub-texel position.
         float r = mix(s0, s1, f.x) + s1 * (1.0 - f.x) + s2 * f.x + mix(s2, s3, f.x);
         float w = (y == 0) ? 1.0 - f.y : (y == 3) ? f.y : 1.0;
@@ -279,7 +283,8 @@ void main() {
         specular += light * pow(max(dot(n, h), 0.0), u_surface.y) * u_surface.z * step(1e-4, ndl);
 #endif
     }
-    vec3 color = albedo.rgb * (ambient * caps.y + diffuse * shadow) + specular * shadow;
+    float diffuseShadow = mix(u_shadowProfile.y, 1.0, shadow);
+    vec3 color = albedo.rgb * (ambient * caps.y + diffuse * diffuseShadow) + specular * shadow;
 
     // Rim light: the bright venue behind outlines bodies.
     float rim = pow(1.0 - max(dot(n, v), 0.0), 3.0);

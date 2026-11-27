@@ -29,6 +29,7 @@ class ComputerServesTest {
                 h.step();
             }
             if (h.touches.size() == before) continue;
+            if (type.jump) assertTrue(h.touches.getLast().airborne(), "the jumper must hit before landing");
             hit++;
             if (type.jump && Math.abs(p.takeoffPosition.x) <= CourtDimensions.HALF_LENGTH) footFaults++;
             Vector3 landing = h.landing(4f);

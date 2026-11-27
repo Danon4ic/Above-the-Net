@@ -55,8 +55,6 @@ public final class ArenaScene implements Disposable {
     private static final Color SAND = new Color(0.86f, 0.75f, 0.55f, 1f);
     private static final Color SAND_OUTSIDE = new Color(0.83f, 0.72f, 0.52f, 1f);
     private static final Color BEACH_LINES = new Color(0.1f, 0.3f, 0.82f, 1f);
-    /** Scroll speed of the LED boards, in texture widths per second. */
-    private static final float LED_SPEED = 0.035f;
     /** The venue shadow map (stands, crowd) is refreshed every this many frames. */
     private static final int VENUE_SHADOW_INTERVAL = 3;
     /** Half size of the court shadow map's view (court, free zone, benches). */
@@ -122,7 +120,7 @@ public final class ArenaScene implements Disposable {
                       Matchup matchup) {
         this.court = court;
         this.venue = venue;
-        ledTexture = new LedBoardTexture(venue, matchup.home() + "  vs  " + matchup.away());
+        ledTexture = new LedBoardTexture(venue, matchup);
         floor = instance(factory.buildFloor());
         structure = instance(factory.buildStructure(venue));
         props = instance(factory.buildVenue(venue));
@@ -277,8 +275,7 @@ public final class ArenaScene implements Disposable {
     public void update(float delta) {
         time += delta;
         crowdMood.update(delta);
-        // The gym's banners are painted: they stay put.
-        if (venue != Venue.SCHOOL_GYM) ledScroll.offsetU = (ledScroll.offsetU + delta * LED_SPEED) % 1f;
+        ledScroll.offsetU = (ledScroll.offsetU + delta * ledTexture.speed()) % 1f;
         if (spidercam != null) placeSpidercam();
     }
 

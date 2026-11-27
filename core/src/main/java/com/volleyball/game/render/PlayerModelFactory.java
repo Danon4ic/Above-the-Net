@@ -6,6 +6,12 @@ import com.badlogic.gdx.graphics.g3d.Model;
 import com.badlogic.gdx.graphics.g3d.attributes.ColorAttribute;
 import com.badlogic.gdx.graphics.g3d.model.Node;
 import com.badlogic.gdx.graphics.g3d.utils.ModelBuilder;
+import com.volleyball.game.entities.VolleyballPlayer;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Procedural, skeleton-like humanoid used until skinned character models exist. Each body
@@ -17,6 +23,10 @@ import com.badlogic.gdx.graphics.g3d.utils.ModelBuilder;
  * the shirt front and the number panel on the back make the facing direction readable.
  */
 final class PlayerModelFactory {
+    record Rig(Model model, Map<String, List<FloorContact>> floorContacts) {
+    }
+
+    private final Map<String, List<FloorContact>> floorContacts = new LinkedHashMap<>();
     static final float MODEL_HEIGHT = 1.90f;
 
     static final String PELVIS = "pelvis";
@@ -26,6 +36,7 @@ final class PlayerModelFactory {
     static final String UPPER_ARM_RIGHT = "upperArmR";
     static final String FOREARM_LEFT = "forearmL";
     static final String FOREARM_RIGHT = "forearmR";
+    static final String REFEREE_FINGER = "refereeFinger";
     static final String THIGH_LEFT = "thighL";
     static final String THIGH_RIGHT = "thighR";
     static final String SHIN_LEFT = "shinL";
@@ -43,6 +54,7 @@ final class PlayerModelFactory {
     /** Ankle joint height above the sole. */
     static final float ANKLE_HEIGHT = 0.035f;
     static final float SHOULDER_HEIGHT = 0.44f;
+    static final float TORSO_HEIGHT = 0.10f;
     static final float SHOULDER_WIDTH = 0.26f;
     static final float UPPER_ARM_LENGTH = 0.34f;
     /** The palm in the forearm's frame (a little ahead of the forearm's axis, below the elbow). */
@@ -50,12 +62,9 @@ final class PlayerModelFactory {
     static final float HAND_Y = -0.345f;
 
     private static final Color SKIN = new Color(0.86f, 0.68f, 0.55f, 1f);
-    private static final Color HAIR = new Color(0.20f, 0.14f, 0.10f, 1f);
     private static final Color COACH_HAIR = new Color(0.52f, 0.50f, 0.48f, 1f);
     private static final Color SHOE = new Color(0.12f, 0.12f, 0.14f, 1f);
     private static final Color SOLE = new Color(0.92f, 0.92f, 0.92f, 1f);
-    private static final Color SOCK = new Color(0.95f, 0.95f, 0.95f, 1f);
-    private static final Color KNEE_PAD = new Color(0.15f, 0.15f, 0.17f, 1f);
     private static final Color EYE = new Color(0.08f, 0.08f, 0.1f, 1f);
     private static final Color NUMBER_PANEL = new Color(0.97f, 0.97f, 0.97f, 1f);
     private static final Color DARK_DIGITS = new Color(0.1f, 0.1f, 0.13f, 1f);
@@ -66,95 +75,139 @@ final class PlayerModelFactory {
     private static final String[] DIGIT_SEGMENTS = {
             "abcdef", "bc", "abged", "abgcd", "fgbc", "afgcd", "afgedc", "abc", "abcdefg", "abcdfg"};
 
-    Model build(Color shirt, Color shorts, int number) {
-        return build(shirt, shorts, number, false, null);
+    Rig build(Color shirt, Color shorts, int number, String club, VolleyballPlayer player) {
+        return build(shirt, shorts, number, null, club, player);
     }
 
     /**
      * The libero: a shirt of its own colour with trim in the team's colour (collar, shoulders and
      * side panels), so it is obviously a teammate and obviously the libero.
      */
-    Model buildLibero(Color shirt, Color teamColour, Color shorts, int number) {
-        return build(shirt, shorts, number, false, teamColour);
+    Rig buildLibero(Color shirt, Color teamColour, Color shorts, int number, String club, VolleyballPlayer player) {
+        return build(shirt, shorts, number, teamColour, club, player);
     }
 
     /**
      * A coach on the same skeleton (so the same poses work): a team-coloured track jacket with
      * long sleeves and a white collar, long trousers, grey hair, no number.
      */
-    Model buildCoach(Color jacket, Color trousers) {
-        return build(jacket, trousers, 0, true, null);
+    Rig buildCoach(Color jacket, Color trousers) {
+        return build(jacket, trousers, 0, null, null, null);
     }
 
-    private Model build(Color shirt, Color shorts, int number, boolean coach, Color liberoTrim) {
+    Rig buildReferee(Color shirt, Color trousers) {
+        return build(shirt, trousers, 0, null, null, null, true);
+    }
+
+    private Rig build(Color shirt, Color shorts, int number, Color liberoTrim, String club, VolleyballPlayer player) {
+        return build(shirt, shorts, number, liberoTrim, club, player, false);
+    }
+
+    private Rig build(Color shirt, Color shorts, int number, Color liberoTrim, String club, VolleyballPlayer player,
+                      boolean referee) {
+        floorContacts.clear();
         builder.begin();
         Material material = new Material(ColorAttribute.createDiffuse(Color.WHITE), ShadingAttribute.body());
+        Material cloth = new Material(ColorAttribute.createDiffuse(Color.WHITE),
+                new ShadingAttribute(0f, 13f, 0.055f, 0.27f, ShadingAttribute.PATTERN_NONE, 0f));
+        Material hairMaterial = new Material(ColorAttribute.createDiffuse(Color.WHITE),
+                new ShadingAttribute(0f, 31f, 0.19f, 0.19f, ShadingAttribute.PATTERN_NONE, 0f));
+        Material rubber = new Material(ColorAttribute.createDiffuse(Color.WHITE), ShadingAttribute.matte());
         Color shirtTrim = liberoTrim != null ? liberoTrim : new Color(shirt).lerp(Color.WHITE, 0.55f);
-        Color sleeve = coach ? shirt : SKIN;
-        Color leg = coach ? shorts : SKIN;
-        Color hair = coach ? COACH_HAIR : HAIR;
+        boolean coach = player == null;
+        PlayerMeshes.Style look = coach ? null : PlayerMeshes.of(club, player);
+        Map<PlayerMeshes.Surface, Color> palette = coach ? Map.of() : look.colors(shirt, shorts, shirtTrim);
+        Color skin = coach ? SKIN : look.skin();
+        Color sleeve = coach ? shirt : skin;
+        Color leg = coach ? shorts : skin;
+        String body = coach ? null : "body_" + look.build();
+        String equipment = coach ? null : "kit_" + look.equipment();
 
-        GeometryBuilder pelvis = node(PELVIS, 0f, PELVIS_HEIGHT, 0f, material);
-        pelvis.box(0f, 0.01f, 0f, 0.26f, 0.22f, 0.38f, shorts);
+        GeometryBuilder pelvis = node(PELVIS, 0f, PELVIS_HEIGHT, 0f, coach ? material : cloth);
+        if (coach) pelvis.box(0f, 0.01f, 0f, 0.26f, 0.22f, 0.38f, shorts);
+        else PlayerMeshes.draw(pelvis, body, "pelvis", palette);
 
-        GeometryBuilder torso = node(TORSO, 0f, 0.10f, 0f, material);
-        torso.box(0f, 0.05f, 0f, 0.22f, 0.12f, 0.36f, shirt);           // waist
-        torso.box(0f, 0.27f, 0f, 0.25f, 0.34f, 0.44f, shirt);           // chest
+        GeometryBuilder torso = node(TORSO, 0f, TORSO_HEIGHT, 0f, coach ? material : cloth);
         if (coach) {
+            torso.box(0f, 0.05f, 0f, 0.22f, 0.12f, 0.36f, shirt);
+            torso.box(0f, 0.27f, 0f, 0.25f, 0.34f, 0.44f, shirt);
             torso.box(0.127f, 0.24f, 0f, 0.01f, 0.36f, 0.025f, shirtTrim);   // zip
             torso.box(0.127f, 0.41f, 0f, 0.012f, 0.06f, 0.16f, NUMBER_PANEL); // white collar
             torso.box(0f, 0.30f, -0.222f, 0.26f, 0.03f, 0.01f, shirtTrim);   // shoulder stripes
             torso.box(0f, 0.30f, 0.222f, 0.26f, 0.03f, 0.01f, shirtTrim);
         } else {
-            torso.box(0.126f, 0.40f, 0f, 0.01f, 0.06f, 0.14f, shirtTrim);   // collar (front)
+            PlayerMeshes.draw(torso, body, "torso", palette);
             torso.box(-0.127f, 0.25f, 0f, 0.012f, 0.24f, 0.30f, NUMBER_PANEL); // number panel (back)
+            torso.box(0.13f, 0.315f, -0.096f, 0.009f, 0.045f, 0.047f, shirtTrim); // chest badge
             // A light shirt gets dark digits (white on the white panel would vanish).
             Color digits = com.volleyball.game.entities.Team.luminance(shirt) > 0.7f ? DARK_DIGITS : shirt;
             backNumber(torso, Math.max(0, Math.min(99, number)), digits);
             if (liberoTrim != null) {
-                // Side panels and a band across the shoulders in the team's colour.
-                torso.box(0f, 0.2f, -0.222f, 0.2f, 0.26f, 0.012f, liberoTrim);
-                torso.box(0f, 0.2f, 0.222f, 0.2f, 0.26f, 0.012f, liberoTrim);
                 torso.box(0f, 0.475f, 0f, 0.21f, 0.012f, 0.31f, liberoTrim);
             }
         }
         torso.box(0f, 0.43f, 0f, 0.20f, 0.07f, 0.30f, shirt);           // shoulders (trapezius)
-        torso.box(0f, 0.49f, 0f, 0.13f, 0.12f, 0.13f, SKIN);            // neck
+        torso.box(0f, 0.49f, 0f, 0.13f, 0.12f, 0.13f, skin);            // neck
 
         GeometryBuilder head = node(HEAD, 0f, 0.52f, 0f, material);
-        head.box(-0.005f, 0.0f, 0f, 0.12f, 0.12f, 0.12f, SKIN);          // top of the neck (inside the head)
-        head.sphere(0.01f, 0.125f, 0f, 0.23f, SKIN);
-        head.box(-0.005f, 0.13f, -0.118f, 0.04f, 0.06f, 0.02f, SKIN);     // ears
-        head.box(-0.005f, 0.13f, 0.118f, 0.04f, 0.06f, 0.02f, SKIN);
-        head.box(-0.025f, 0.235f, 0f, 0.21f, 0.06f, 0.21f, hair);
-        head.box(-0.075f, 0.16f, 0f, 0.1f, 0.14f, 0.2f, hair);          // back of the head
-        head.box(0.125f, 0.12f, 0f, 0.04f, 0.05f, 0.035f, SKIN);         // nose
-        head.box(0.112f, 0.165f, -0.045f, 0.02f, 0.025f, 0.03f, EYE);
-        head.box(0.112f, 0.165f, 0.045f, 0.02f, 0.025f, 0.03f, EYE);
+        head.box(-0.005f, 0.0f, 0f, 0.12f, 0.12f, 0.12f, skin);          // top of the neck (inside the head)
+        if (coach) {
+            head.sphere(0.01f, 0.125f, 0f, 0.23f, skin);
+            head.box(-0.005f, 0.13f, -0.118f, 0.04f, 0.06f, 0.02f, skin);
+            head.box(-0.005f, 0.13f, 0.118f, 0.04f, 0.06f, 0.02f, skin);
+            head.box(-0.025f, 0.235f, 0f, 0.21f, 0.06f, 0.21f, COACH_HAIR);
+            head.box(-0.075f, 0.16f, 0f, 0.1f, 0.14f, 0.2f, COACH_HAIR);
+            head.box(0.125f, 0.12f, 0f, 0.04f, 0.05f, 0.035f, skin);
+            head.box(0.112f, 0.165f, -0.045f, 0.02f, 0.025f, 0.03f, EYE);
+            head.box(0.112f, 0.165f, 0.045f, 0.02f, 0.025f, 0.03f, EYE);
+        } else {
+            PlayerMeshes.draw(head, "face_" + look.face(), "head", palette);
+            GeometryBuilder hair = new GeometryBuilder(builder, "hair", hairMaterial, floorContacts.get(HEAD));
+            if (look.hair().isEmpty()) {
+                for (LookDevelopment.HairBox piece : LookDevelopment.player(club + "/" + player.name).silhouette()) {
+                    piece.draw(hair, look.hairColor());
+                }
+            } else {
+                PlayerMeshes.draw(hair, "hair_" + look.hair(), "head", palette);
+            }
+        }
 
         for (int side = -1; side <= 1; side += 2) {
             boolean left = side < 0;
-            GeometryBuilder upper = node(left ? UPPER_ARM_LEFT : UPPER_ARM_RIGHT, 0f, SHOULDER_HEIGHT, side * SHOULDER_WIDTH, material);
-            upper.box(0f, -0.07f, 0f, 0.115f, 0.15f, 0.115f, shirt);
-            upper.box(0f, -0.01f, 0f, 0.13f, 0.09f, 0.13f, liberoTrim != null ? liberoTrim : shirt); // shoulder cap
+            GeometryBuilder upper = node(left ? UPPER_ARM_LEFT : UPPER_ARM_RIGHT, 0f, SHOULDER_HEIGHT, side * SHOULDER_WIDTH,
+                    coach ? material : cloth);
+            if (coach) {
+                upper.box(0f, -0.07f, 0f, 0.115f, 0.15f, 0.115f, shirt);
+                upper.box(0f, -0.01f, 0f, 0.13f, 0.09f, 0.13f, shirt);
+            } else PlayerMeshes.draw(upper, body, "upper", palette);
             upper.box(0f, -0.24f, 0f, coach ? 0.1f : 0.085f, 0.2f, coach ? 0.1f : 0.085f, sleeve);
             GeometryBuilder fore = node(left ? FOREARM_LEFT : FOREARM_RIGHT, 0f, -UPPER_ARM_LENGTH, 0f, material);
             fore.box(0f, -0.14f, 0f, coach ? 0.09f : 0.075f, coach ? 0.27f : 0.29f, coach ? 0.09f : 0.075f, sleeve);
-            fore.box(0.005f, -0.345f, 0f, 0.075f, 0.11f, 0.05f, SKIN);   // hand
+            if (referee && !left) {
+                fore.box(0.005f, -0.328f, 0f, 0.063f, 0.077f, 0.079f, skin);
+                for (int finger = 0; finger < 4; finger++) {
+                    float length = 0.065f - 0.005f * Math.abs(1 - finger);
+                    node(REFEREE_FINGER + finger, 0.006f, -0.36f, (finger - 1.5f) * 0.021f, material)
+                            .box(0f, -length / 2f, 0f, 0.016f, length, 0.015f, skin);
+                }
+            } else fore.box(0.005f, -0.345f, 0f, 0.075f, 0.11f, 0.05f, skin);
+            if (!coach && left != player.isLeftHanded()) PlayerMeshes.draw(fore, equipment, "forearm", palette);
 
             GeometryBuilder thigh = node(left ? THIGH_LEFT : THIGH_RIGHT, 0f, -HIP_DROP, side * HIP_WIDTH, material);
             thigh.box(0f, -0.21f, 0f, coach ? 0.16f : 0.15f, 0.42f, coach ? 0.16f : 0.15f, leg);
+            if (!coach) PlayerMeshes.draw(thigh, body, "thigh", palette);
             GeometryBuilder shin = node(left ? SHIN_LEFT : SHIN_RIGHT, 0f, -THIGH_LENGTH, 0f, material);
             if (coach) {
                 shin.box(0f, -0.21f, 0f, 0.13f, 0.44f, 0.13f, leg);     // trouser leg down to the shoe
             } else {
-                shin.box(0.025f, -0.035f, 0f, 0.13f, 0.11f, 0.135f, KNEE_PAD);
-                shin.box(0f, -0.22f, 0f, 0.115f, 0.34f, 0.115f, SKIN);
-                shin.box(0f, -0.41f, 0f, 0.105f, 0.09f, 0.105f, SOCK);
+                shin.box(0f, -0.22f, 0f, 0.115f, 0.34f, 0.115f, skin);
+                PlayerMeshes.draw(shin, equipment, "shin", palette);
             }
-            GeometryBuilder foot = node(left ? FOOT_LEFT : FOOT_RIGHT, 0f, -SHIN_LENGTH, 0f, material);
-            foot.box(0.05f, -0.01f, 0f, 0.27f, 0.05f, 0.115f, SHOE);
-            foot.box(0.05f, -0.03f, 0f, 0.275f, 0.012f, 0.12f, SOLE);
+            GeometryBuilder foot = node(left ? FOOT_LEFT : FOOT_RIGHT, 0f, -SHIN_LENGTH, 0f, coach ? material : rubber);
+            if (coach) {
+                foot.box(0.05f, -0.01f, 0f, 0.27f, 0.05f, 0.115f, SHOE);
+                foot.box(0.05f, -0.03f, 0f, 0.275f, 0.012f, 0.12f, SOLE);
+            } else PlayerMeshes.draw(foot, equipment, "foot", palette);
         }
         Model model = builder.end();
 
@@ -164,6 +217,9 @@ final class PlayerModelFactory {
         attach(model, UPPER_ARM_RIGHT, TORSO);
         attach(model, FOREARM_LEFT, UPPER_ARM_LEFT);
         attach(model, FOREARM_RIGHT, UPPER_ARM_RIGHT);
+        if (referee) {
+            for (int finger = 0; finger < 4; finger++) attach(model, REFEREE_FINGER + finger, FOREARM_RIGHT);
+        }
         attach(model, THIGH_LEFT, PELVIS);
         attach(model, THIGH_RIGHT, PELVIS);
         attach(model, SHIN_LEFT, THIGH_LEFT);
@@ -171,7 +227,7 @@ final class PlayerModelFactory {
         attach(model, FOOT_LEFT, SHIN_LEFT);
         attach(model, FOOT_RIGHT, SHIN_RIGHT);
         model.calculateTransforms();
-        return model;
+        return new Rig(model, Map.copyOf(floorContacts));
     }
 
     /**
@@ -219,7 +275,9 @@ final class PlayerModelFactory {
         Node node = builder.node();
         node.id = id;
         node.translation.set(x, y, z);
-        return new GeometryBuilder(builder, id, material);
+        List<FloorContact> shapes = new ArrayList<>();
+        floorContacts.put(id, shapes);
+        return new GeometryBuilder(builder, id, material, shapes);
     }
 
     /** ModelBuilder only creates root nodes; this moves a node under its parent joint. */

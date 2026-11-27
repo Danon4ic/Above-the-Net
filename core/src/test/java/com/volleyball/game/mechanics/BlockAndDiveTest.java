@@ -136,6 +136,8 @@ class BlockAndDiveTest {
         assertFalse(h.touches.isEmpty(), "the dive reached the ball");
         BallTouch dig = h.touches.get(0);
         assertEquals(ContactType.DIVE, dig.type());
+        assertEquals(com.volleyball.game.entities.ActionPose.DIVE_DIG, p.actionPose());
+        assertFalse(p.isActionPoseHeld());
         assertTrue(dig.quality() <= ContactZone.qualityCap(ContactType.DIVE) + 1e-6f);
         assertTrue(h.world.ball().velocity.y > 0f, "the ball is kept up");
 
@@ -178,6 +180,7 @@ class BlockAndDiveTest {
         h.runUntil(() -> !h.touches.isEmpty(), 1f);
         assertFalse(h.touches.isEmpty());
         assertEquals(ContactType.ONE_ARM, h.touches.get(0).type());
+        assertEquals(com.volleyball.game.entities.ActionPose.ONE_ARM_DIG, p.actionPose());
         assertTrue(h.touches.get(0).quality() <= ContactZone.qualityCap(ContactType.ONE_ARM) + 1e-6f);
     }
 }

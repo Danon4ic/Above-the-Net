@@ -13,6 +13,7 @@ import com.volleyball.game.match.MatchController;
 import com.volleyball.game.match.MatchListener;
 import com.volleyball.game.multiplayer.MatchSession;
 import com.volleyball.game.multiplayer.SessionMode;
+import com.volleyball.game.mechanics.ActionKind;
 import com.volleyball.game.mechanics.AttackType;
 import com.volleyball.game.rules.MatchFormat;
 import com.volleyball.game.mechanics.BallHandling;
@@ -21,6 +22,7 @@ import com.volleyball.game.mechanics.BallTouchListener;
 import com.volleyball.game.mechanics.ContactPurpose;
 import com.volleyball.game.mechanics.ContactType;
 import com.volleyball.game.mechanics.PassRating;
+import com.volleyball.game.mechanics.QuickSetWindow;
 import com.volleyball.game.mechanics.ServeType;
 import com.volleyball.game.mechanics.SetType;
 import com.volleyball.game.mechanics.TacticalTargets;
@@ -73,6 +75,12 @@ public final class DrillController implements BallTouchListener, BallContactList
     private boolean attackerHit;
     private boolean traineeBlocked;
     private String shotLabel = "";
+    private final QuickSetWindow quickWindow = new QuickSetWindow();
+    private final Vector3 quickRelease = new Vector3();
+    private final Vector3 quickTarget = new Vector3();
+    private VolleyballPlayer practiceMiddle;
+    private boolean practiceJumped;
+    private boolean practiceAttack;
 
     // Quick match (created on first use).
     private MatchController match;
@@ -314,6 +322,8 @@ public final class DrillController implements BallTouchListener, BallContactList
         netTouched = false;
         attackerHit = false;
         traineeBlocked = false;
+        practiceJumped = false;
+        practiceAttack = false;
         handling.clearServe();
         switch (drill) {
             case SERVE -> {
@@ -325,6 +335,8 @@ public final class DrillController implements BallTouchListener, BallContactList
             case SET -> {
                 Vector3 target = TacticalTargets.setterTarget(CourtSide.HOME, new Vector3());
                 trainee.placeAt(target.x - 0.6f, target.z);
+                practiceMiddle = firstOfRole(PlayerRole.MIDDLE_BLOCKER, 0);
+                if (practiceMiddle != trainee) practiceMiddle.placeAt(-1.10f, -0.25f);
                 parkBall();
                 phase = Phase.READY;
                 timer = READY_TIME;
@@ -392,11 +404,34 @@ public final class DrillController implements BallTouchListener, BallContactList
                 if (drill == Drill.BLOCK || drill == Drill.DEFENSE) {
                     opponentAttacker.update(attacker, Drill.ATTACK, world.time());
                 }
+                if (drill == Drill.SET) updateSettingPartner();
                 if (drill != Drill.FREE && timer > LIVE_TIMEOUT) finish(null);
             }
             case RESULT -> {
                 if (timer <= 0f) beginRepetition();
             }
+        }
+    }
+
+    private void updateSettingPartner() {
+        if (practiceMiddle == null || practiceMiddle == trainee || trainee.role != PlayerRole.SETTER) return;
+        world.intent(practiceMiddle).jump = false;
+        if (traineeTouch != null && traineeTouch.quickHitterId() == practiceMiddle.id && !practiceAttack
+                && practiceMiddle.isAirborne() && handling.teamTouches(trainee.side) == 2) {
+            if (!handling.isArmed(practiceMiddle)) handling.arm(practiceMiddle, ActionKind.PRIMARY, world.time());
+            return;
+        }
+        handling.setQuickSet(trainee, null);
+        if (!world.ball().isActive() || handling.teamTouches(trainee.side) != 1 || handling.isAutoSet(trainee)
+                || handling.setType(trainee) != SetType.QUICK_MIDDLE) return;
+        float lead = quickWindow.passLead(trainee, world.ball(), world.predictor(), quickRelease);
+        if (!Float.isFinite(lead)) return;
+        if (!practiceJumped && lead >= 0.13f && lead <= 0.24f) {
+            world.intent(practiceMiddle).jump = true;
+            world.intent(practiceMiddle).jumpHeightFactor = 0.72f;
+            practiceJumped = true;
+        } else if (Float.isFinite(quickWindow.read(practiceMiddle, quickRelease, world.court().net().topHeight(), lead, quickTarget))) {
+            handling.setQuickSet(trainee, new BallHandling.QuickSet(practiceMiddle, SetType.QUICK_MIDDLE, false));
         }
     }
 
@@ -495,6 +530,10 @@ public final class DrillController implements BallTouchListener, BallContactList
     public void onBallTouch(BallTouch touch) {
         if (phase != Phase.LIVE || drill == Drill.MATCH) return;
         if (attacker != null && touch.playerId() == attacker.id && touch.type() == ContactType.ATTACK) attackerHit = true;
+        if (drill == Drill.SET && practiceMiddle != null && touch.playerId() == practiceMiddle.id && touch.type() == ContactType.ATTACK) {
+            practiceAttack = true;
+            lastResult = "First tempo: hitter connected";
+        }
         if (trainee == null || touch.playerId() != trainee.id) return;
         if (touch.type() == ContactType.BLOCK) traineeBlocked = true;
         // The repetition is graded on the trainee's first contact; later ones are extra.
@@ -547,6 +586,10 @@ public final class DrillController implements BallTouchListener, BallContactList
                         && (drill == Drill.RECEIVE || traineeTouch.purpose() == ContactPurpose.SET);
                 default -> {
                 }
+            }
+            if (drill == Drill.SET && traineeTouch.quickHitterId() >= 0) {
+                success = practiceAttack;
+                text.append(practiceAttack ? " · First tempo: hitter connected" : " · First tempo: missed the swing");
             }
         }
         if (success) successes++;

@@ -15,11 +15,13 @@ import com.badlogic.gdx.utils.Align;
 import com.volleyball.game.VolleyballGame;
 import com.volleyball.game.ai.Difficulty;
 import com.volleyball.game.audio.SoundDirector;
+import com.volleyball.game.audio.SoundId;
 import com.volleyball.game.config.GameConfig;
 import com.volleyball.game.core.FixedStepLoop;
 import com.volleyball.game.match.MatchController;
 import com.volleyball.game.match.SidelineCoaches;
 import com.volleyball.game.multiplayer.SessionMode;
+import com.volleyball.game.i18n.Lang;
 import com.volleyball.game.render.ArenaScene;
 import com.volleyball.game.render.BallRenderer;
 import com.volleyball.game.render.PlayerRenderer;
@@ -73,8 +75,8 @@ public final class MainMenuScreen extends ScreenAdapter {
         PLAYBOOK("Playbook", "The attacking combinations the teams play - first tempo, decoys, cross runs, tandem, pipe, "
                 + "bic... Study them on the court and design your own: the computer teams call them in matches.",
                 "Study and design attacking plays", null),
-        ONLINE("Online", "Network play. The authoritative-server protocol is ready; the lobby comes later.",
-                "Play over the network", "The lobby and joining a game are in development."),
+        ONLINE("Online", "Join by address. To host a game, choose an online mode in Quick match.",
+                "Join a network match", null),
         SETTINGS("Settings", "Sound, display, mouse and arena.", "Graphics, sound, controls, arena", null),
         CONTROLS("Controls", "All keys and the most useful hints.", "All keys at a glance", null),
         EXIT("Exit", "Leave the game.", "Close the game", null);
@@ -225,9 +227,12 @@ public final class MainMenuScreen extends ScreenAdapter {
         time += delta;
         pageTime += delta;
         advanceTransitions(delta);
+        sound.setCourtSurface(scene.venue(), scene.theme());
+        sound.setMenuOpen(true);
         loop.advance(delta, dt -> {
             world.step(dt);
             demo.update(dt, List.of());
+            sound.updateMovement(dt);
             coaches.update(dt, demo, world.ball(), world.benchSign());
             referee.update(dt, world.benchSign());
         });
@@ -242,9 +247,7 @@ public final class MainMenuScreen extends ScreenAdapter {
         camera.up.set(0f, 1f, 0f);
         camera.update();
         sound.setListener(camera.position, camera.direction);
-        sound.setCourtSurface(scene.venue(), scene.theme());
         sound.setMatchActive(true);
-        sound.setMenuOpen(true);
         sound.update(delta);
         updateScoreboard();
         scene.setSidesSwapped(world.benchSign() < 0f);
@@ -362,6 +365,7 @@ public final class MainMenuScreen extends ScreenAdapter {
     /** Leaves the menu for another screen after a short fade to black. */
     private void leaveMenu(Runnable action) {
         if (exitTime >= 0f) return;
+        game.sound().play(SoundId.MODE_CHANGE, 0.42f, 1f, 0f);
         tooltips.dismiss();
         if (!config.uiAnimations) {
             action.run();
@@ -795,6 +799,7 @@ public final class MainMenuScreen extends ScreenAdapter {
 
     /** Goes to another page: the current one fades out first (unless the animations are off). */
     private void goTo(Page next, int row) {
+        game.sound().play(SoundId.MODE_CHANGE, 0.34f, 1f, 0f);
         tooltips.dismiss();
         if (!config.uiAnimations) {
             showPage(next, row);
@@ -837,6 +842,7 @@ public final class MainMenuScreen extends ScreenAdapter {
                     case TRAINING -> goTo(Page.TRAINING, 0);
                     case TWO_PLAYERS -> goTo(Page.MATCH, MatchSetupView.PLAYERS);
                     case PLAYBOOK -> leaveMenu(game::showPlaybook);
+                    case ONLINE -> joinOnline();
                     case SETTINGS -> goTo(Page.SETTINGS, 0);
                     case CONTROLS -> controls.toggle();
                     case EXIT -> Gdx.app.exit();
@@ -856,6 +862,25 @@ public final class MainMenuScreen extends ScreenAdapter {
             case SETTINGS -> {
             }
         }
+    }
+
+    private void joinOnline() {
+        Gdx.input.getTextInput(new Input.TextInputListener() {
+            @Override public void input(String text) {
+                String[] parts = text.strip().split("\\s+", 2);
+                var role = com.volleyball.game.entities.PlayerRole.OUTSIDE_HITTER;
+                if (parts.length == 2) {
+                    String wanted = parts[1].toUpperCase(java.util.Locale.ROOT).replace("-", "_");
+                    for (var option : com.volleyball.game.entities.PlayerRole.values()) {
+                        if (option.name().startsWith(wanted)) { role = option; break; }
+                    }
+                }
+                var selectedRole = role;
+                if (!parts[0].isEmpty()) Gdx.app.postRunnable(() -> game.joinOnline(parts[0], selectedRole));
+            }
+
+            @Override public void canceled() { }
+        }, Lang.t("Join a network match"), "127.0.0.1:27960", Lang.t("Address:port [setter / outside / middle / opposite / libero]"));
     }
 
     private void change(int direction) {
@@ -979,7 +1004,8 @@ public final class MainMenuScreen extends ScreenAdapter {
     @Override
     public void hide() {
         Gdx.input.setInputProcessor(null);
-        game.sound().setLoop(com.volleyball.game.audio.SoundId.MENU_MUSIC, 0f);
+        game.sound().setLoop(SoundId.MENU_MUSIC, 0f);
+        if (sound != null) sound.stopAmbience();
     }
 
     @Override

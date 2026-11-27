@@ -46,10 +46,10 @@ public enum PlayerAnimState {
             case CLAP, DISAPPOINTED -> {
                 return DISAPPOINTED;
             }
-            case PLATFORM -> {
+            case PLATFORM, ONE_ARM_DIG -> {
                 return RECEIVE;
             }
-            case OVERHEAD -> {
+            case OVERHEAD, SET_FORWARD, SET_BACK, SET_FAST, SET_FAST_BACK, SET_ONE_HAND -> {
                 return SET;
             }
             case TOSS, HOLD_BALL -> {
@@ -58,8 +58,8 @@ public enum PlayerAnimState {
             case BLOCK -> {
                 return BLOCK;
             }
-            case SWING -> {
-                return p.isAirborne() || !isServeSwing(p) ? SPIKE : SERVE;
+            case SWING, QUICK_SWING -> {
+                return p.swingStyle().serve() ? SERVE : SPIKE;
             }
             default -> {
             }
@@ -78,13 +78,6 @@ public enum PlayerAnimState {
         if (approaching && speed > RUN_SPEED) return APPROACH;
         if (speed > SPRINT_SPEED) return SPRINT;
         return speed > RUN_SPEED ? RUN : WALK;
-    }
-
-    private static boolean isServeSwing(VolleyballPlayer p) {
-        return switch (p.swingStyle()) {
-            case FLOAT_SERVE, TOPSPIN_SERVE, UNDERHAND_SERVE -> true;
-            default -> false;
-        };
     }
 
     /** States in which the legs walk or run (the step cycle drives them). */

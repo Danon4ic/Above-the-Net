@@ -4,6 +4,7 @@ import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Vector3;
 import com.volleyball.game.entities.Ball;
 import com.volleyball.game.entities.VolleyballPlayer;
+import com.volleyball.game.mechanics.BlockMechanic;
 import com.volleyball.game.world.CourtDimensions;
 import com.volleyball.game.world.Net;
 
@@ -204,10 +205,6 @@ public final class CollisionSystem {
      * Other arm contacts are deliberate and handled by the ball-handling mechanics.
      */
     private static final class BodyColliders {
-        static final float HAND_RADIUS = 0.065f;
-        /** Centre-to-centre distance of the blocker's hands; the gap between them is narrower than the ball. */
-        static final float HAND_SPREAD = 0.30f;
-
         private final VolleyballPlayer player;
         final Collider.Capsule legs;
         final Collider.Capsule torso;
@@ -224,8 +221,8 @@ public final class CollisionSystem {
             legs = new Collider.Capsule(ColliderKind.PLAYER_BODY, SurfaceMaterial.BODY, player.id, Vector3.Zero, Vector3.Zero, 0.12f);
             torso = new Collider.Capsule(ColliderKind.PLAYER_BODY, SurfaceMaterial.BODY, player.id, Vector3.Zero, Vector3.Zero, 0.17f);
             head = new Collider.Capsule(ColliderKind.PLAYER_BODY, SurfaceMaterial.BODY, player.id, Vector3.Zero, Vector3.Zero, 0.11f);
-            leftHand = new Collider.Capsule(ColliderKind.BLOCK, SurfaceMaterial.BLOCK_HANDS, player.id, Vector3.Zero, Vector3.Zero, HAND_RADIUS);
-            rightHand = new Collider.Capsule(ColliderKind.BLOCK, SurfaceMaterial.BLOCK_HANDS, player.id, Vector3.Zero, Vector3.Zero, HAND_RADIUS);
+            leftHand = new Collider.Capsule(ColliderKind.BLOCK, SurfaceMaterial.BLOCK_HANDS, player.id, Vector3.Zero, Vector3.Zero, BlockMechanic.HAND_RADIUS);
+            rightHand = new Collider.Capsule(ColliderKind.BLOCK, SurfaceMaterial.BLOCK_HANDS, player.id, Vector3.Zero, Vector3.Zero, BlockMechanic.HAND_RADIUS);
             update();
         }
 
@@ -274,21 +271,13 @@ public final class CollisionSystem {
             rightHand.enabled = active;
             if (!active) return;
             float towardsNet = -player.side.sign();
-            float tipY = p.y + player.standingReach() + 0.02f;
-            float tipX = p.x + towardsNet * (0.30f + player.blockPenetration());
             float shoulderX = p.x + towardsNet * 0.05f;
             float shoulderY = p.y + player.height * 0.78f;
             float centreZ = p.z + player.blockShift();
-            // Near the antenna the outside hand turns in ("sealing" the antenna), so a ball wiped
-            // off it goes back into the court rather than out.
-            float sideline = com.volleyball.game.world.CourtDimensions.HALF_WIDTH;
-            float nearSideline = Math.max(0f, Math.min(1f, (Math.abs(centreZ) - (sideline - 1.3f)) / 0.8f));
             for (int s = -1; s <= 1; s += 2) {
                 Collider.Capsule hand = s < 0 ? leftHand : rightHand;
-                float z = centreZ + s * HAND_SPREAD / 2f;
-                boolean outside = Math.signum(z - centreZ) == Math.signum(centreZ);
-                float tipZ = outside ? z - Math.signum(centreZ) * 0.14f * nearSideline : z;
-                hand.set(a.set(shoulderX, shoulderY, z), b.set(tipX, tipY, tipZ), HAND_RADIUS);
+                float z = centreZ + s * BlockMechanic.HAND_HALF_SPREAD;
+                hand.set(a.set(shoulderX, shoulderY, z), BlockMechanic.fingertip(player, s, b), BlockMechanic.HAND_RADIUS);
                 hand.velocity.set(player.velocity);
             }
         }

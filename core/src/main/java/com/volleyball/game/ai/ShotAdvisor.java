@@ -8,6 +8,7 @@ import com.volleyball.game.mechanics.AttackType;
 import com.volleyball.game.mechanics.SetType;
 import com.volleyball.game.mechanics.TacticalTargets;
 import com.volleyball.game.physics.PlayerLocomotion;
+import com.volleyball.game.physics.PhysicsConstants;
 import com.volleyball.game.physics.TrajectoryPredictor;
 import com.volleyball.game.rules.RotationManager;
 import com.volleyball.game.simulation.GameWorld;
@@ -34,6 +35,7 @@ public final class ShotAdvisor {
 
     /** How good the pass to the setter is, judged from where it comes down. */
     public enum PassQuality { GOOD, OK, POOR }
+    public enum SetReadiness { APPROACHING, AVAILABLE, RISKY, UNAVAILABLE }
 
     private final GameWorld world;
     private final TrajectoryPredictor.Prediction prediction = new TrajectoryPredictor.Prediction();
@@ -85,6 +87,40 @@ public final class ShotAdvisor {
         return miss < 1.2f ? PassQuality.GOOD : miss < 2.5f ? PassQuality.OK : PassQuality.POOR;
     }
 
+    /** Read the legal approach to this pass, including the extra flight time of a high set. */
+    public SetReadiness setReadiness(VolleyballPlayer setter, SetType type, VolleyballPlayer hitter) {
+        if (hitter == null || hitter == setter || !hitter.isOnCourt() || !hitter.isUpright()) return SetReadiness.UNAVAILABLE;
+        PassQuality pass = passQuality(setter.side);
+        float releaseDepth = Math.abs(setter.position.x);
+        float releaseHeight = TacticalTargets.SETTER_HEIGHT;
+        float beforeRelease = 0f;
+        if (world.ball().isActive() && prediction.reachesWatchHeight && CourtDimensions.sideOf(prediction.descentPoint.x) == setter.side) {
+            releaseDepth = Math.abs(prediction.descentPoint.x);
+            releaseHeight = prediction.descentPoint.y;
+            beforeRelease = prediction.timeToDescent;
+        }
+        float apex = type.targetFrom(setter.side, releaseDepth, tmp);
+        float rise = PlayerLocomotion.riseTime(PlayerLocomotion.jumpHeight(hitter));
+        float flight = (float) (Math.sqrt(2f * Math.max(0f, apex - releaseHeight) / PhysicsConstants.GRAVITY)
+                + Math.sqrt(2f * Math.max(0f, apex - tmp.y) / PhysicsConstants.GRAVITY));
+        float runway = type.depth >= CourtDimensions.ATTACK_LINE_DISTANCE ? 0.85f : 0.95f;
+        float dx = tmp.x + setter.side.sign() * runway - hitter.position.x;
+        float dz = tmp.z - hitter.position.z;
+        float distance = (float) Math.hypot(dx, dz);
+        float closing = distance < 0.1f ? 0f : (hitter.velocity.x * dx + hitter.velocity.z * dz) / distance;
+        float speed = PlayerLocomotion.maxRunSpeed(hitter);
+        float run = Math.max(0f, distance - 0.45f) / speed
+                + Math.max(0f, speed * 0.62f - closing) / PlayerLocomotion.acceleration(hitter);
+        float plantTime = beforeRelease + flight - rise;
+        boolean riskyTempo = type.fast() && pass == PassQuality.POOR;
+        if (hitter.isAirborne() || run > plantTime + 0.14f || riskyTempo && (releaseDepth > 4.1f || run > plantTime - 0.14f)) {
+            return SetReadiness.UNAVAILABLE;
+        }
+        if (riskyTempo || run > plantTime - 0.12f) return SetReadiness.RISKY;
+        boolean steppingIn = -hitter.velocity.x * setter.side.sign() > 0.65f && Math.abs(dz) < 1.35f;
+        return closing > 0.85f || steppingIn ? SetReadiness.APPROACHING : SetReadiness.AVAILABLE;
+    }
+
     /**
      * The best set now: only to lanes with a hitter; fast sets only off a good pass; away from
      * the opponent's blockers (counted near each hitting spot); the better hitter preferred.
@@ -98,6 +134,12 @@ public final class ShotAdvisor {
             VolleyballPlayer hitter = available.get(type.lane);
             if (hitter == null) continue;
             float score = 0.4f + hitter.attributes.attackPower / 250f;
+            if (pass == PassQuality.POOR) {
+                SetReadiness readiness = setReadiness(setter, type, hitter);
+                if (readiness == SetReadiness.UNAVAILABLE) continue;
+                if (readiness == SetReadiness.APPROACHING) score += 0.35f;
+                if (readiness == SetReadiness.RISKY) score -= 0.65f;
+            }
             if (type.fast() && pass != PassQuality.GOOD) score -= 0.8f;
             if (pass == PassQuality.POOR && type.apex < 5.5f) score -= 0.5f;
             if (pass == PassQuality.POOR && (type == SetType.HIGH_OUTSIDE || type == SetType.BACK_SET)) score += 0.3f;
@@ -142,7 +184,7 @@ public final class ShotAdvisor {
         float netTop = world.court().net().topHeight();
         // The hand's height at the contact: the hitter's reach at the top of the jump, unless the
         // ball is already lower than that (a set that dropped too far, a late approach).
-        float peak = hitter.standingReach() + PlayerLocomotion.jumpHeight(hitter.attributes) * 0.95f;
+        float peak = hitter.standingReach() + PlayerLocomotion.jumpHeight(hitter) * 0.95f;
         float contactHeight = ball.velocity.y < 0f && ball.position.y < peak ? ball.position.y : peak;
         if (contactHeight < netTop + 0.35f) return AttackType.TIP;
         if (contactHeight < netTop + 0.6f) return AttackType.ROLL_SHOT;

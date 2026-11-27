@@ -1,8 +1,11 @@
 package com.volleyball.game.mechanics;
 
+import com.badlogic.gdx.math.MathUtils;
+import com.badlogic.gdx.math.Vector3;
 import com.volleyball.game.entities.ActionPose;
 import com.volleyball.game.entities.Ball;
 import com.volleyball.game.entities.PlayerAttributes;
+import com.volleyball.game.entities.PlayerTrait;
 import com.volleyball.game.entities.VolleyballPlayer;
 import com.volleyball.game.world.CourtDimensions;
 
@@ -23,14 +26,28 @@ public final class BlockMechanic {
     public static final float MAX_NET_DISTANCE = 1.0f;
     /** Sideways hand shift for line / diagonal blocks. */
     public static final float STYLE_SHIFT = 0.2f;
+    public static final float HAND_HALF_SPREAD = 0.15f;
+    public static final float HAND_RADIUS = 0.065f;
+
+    /** The centre of the rounded tip of a blocking hand. */
+    public static Vector3 fingertip(VolleyballPlayer p, int hand, Vector3 out) {
+        float centreZ = p.position.z + p.blockShift();
+        float edge = Math.signum(centreZ);
+        float seal = MathUtils.clamp((Math.abs(centreZ) - (CourtDimensions.HALF_WIDTH - 1.3f)) / 0.8f, 0f, 1f);
+        float z = centreZ + hand * HAND_HALF_SPREAD;
+        if (hand == edge) z -= edge * 0.14f * seal;
+        return out.set(p.position.x - p.side.sign() * (0.30f + p.blockPenetration()),
+                p.position.y + p.standingReach() + 0.02f, z);
+    }
 
     /** How far the hands reach over the net right now. */
     public static float penetration(VolleyballPlayer p) {
         float skill = PlayerAttributes.normalized(p.attributes.blocking);
         float reach = 0.06f + 0.26f * skill;
         // Hands press over best near the top of the jump.
-        float timing = 1f - Math.min(0.75f, Math.abs(p.velocity.y) / 3.5f);
-        return reach * timing;
+        float window = p.velocity.y < 0f && p.has(PlayerTrait.LATE_BLOCKER) ? 5.4f : 3.5f;
+        float timing = 1f - Math.min(0.75f, Math.abs(p.velocity.y) / window);
+        return reach * timing * p.fatigueFactor(0.20f);
     }
 
     public void update(List<VolleyballPlayer> players, Ball ball, BallHandling handling) {

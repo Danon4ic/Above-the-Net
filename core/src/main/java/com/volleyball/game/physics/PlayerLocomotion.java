@@ -40,6 +40,7 @@ public final class PlayerLocomotion {
     public static final float DIVE_MIN_SPEED = 3.5f;
     public static final float DIVE_MAX_SPEED = 6.0f;
     public static final float DIVE_BOOST = 2.5f;
+    private static final float DIVE_DRAG = 1.5f;
     public static final float FLOOR_FRICTION = 7f;
     /** Movement speed factor while a jump is being charged (the player is sinking down). */
     public static final float CHARGING_FACTOR = 0.6f;
@@ -72,13 +73,25 @@ public final class PlayerLocomotion {
         return PlayerAttributes.scale(attributes.speed, 3.6f, 5.6f);
     }
 
+    public static float maxRunSpeed(VolleyballPlayer player) {
+        return maxRunSpeed(player.attributes) * player.fatigueFactor(0.26f);
+    }
+
     public static float acceleration(PlayerAttributes attributes) {
         return PlayerAttributes.scale(attributes.acceleration, 9f, 18f);
+    }
+
+    public static float acceleration(VolleyballPlayer player) {
+        return acceleration(player.attributes) * player.fatigueFactor(0.38f);
     }
 
     /** Standing vertical jump height (centre of mass rise), metres. */
     public static float jumpHeight(PlayerAttributes attributes) {
         return PlayerAttributes.scale(attributes.jump, 0.40f, 0.95f);
+    }
+
+    public static float jumpHeight(VolleyballPlayer player) {
+        return jumpHeight(player.attributes) * player.fatigueFactor(0.32f);
     }
 
     /** Time (s) from take-off to the top of a jump of the given height. */
@@ -93,20 +106,20 @@ public final class PlayerLocomotion {
 
     /** Take-off vertical speed for a jump of {@code heightFactor} times the player's normal height. */
     public static float takeoffSpeed(VolleyballPlayer player, float heightFactor) {
-        float approachBonus = 1f + 0.15f * MathUtils.clamp(player.groundSpeed() / maxRunSpeed(player.attributes), 0f, 1f);
-        return (float) Math.sqrt(2f * PhysicsConstants.GRAVITY * jumpHeight(player.attributes) * approachBonus * heightFactor);
+        float approachBonus = 1f + 0.15f * MathUtils.clamp(player.groundSpeed() / maxRunSpeed(player), 0f, 1f);
+        return (float) Math.sqrt(2f * PhysicsConstants.GRAVITY * jumpHeight(player) * approachBonus * heightFactor);
     }
 
     /** A workhorse (trait) spends this share of the usual stamina. */
     static final float WORKHORSE_DRAIN = 0.6f;
     /** Stamina (s per second) spent sprinting and running, and restored standing or walking. */
-    static final float SPRINT_DRAIN = 0.045f;
-    static final float RUN_DRAIN = 0.012f;
-    static final float REST_RECOVERY = 0.03f;
-    static final float WALK_RECOVERY = 0.012f;
+    static final float SPRINT_DRAIN = 0.073f;
+    static final float RUN_DRAIN = 0.020f;
+    static final float REST_RECOVERY = 0.018f;
+    static final float WALK_RECOVERY = 0.007f;
     /** Stamina spent by a full jump and by a dive. */
-    static final float JUMP_COST = 0.03f;
-    static final float DIVE_COST = 0.05f;
+    static final float JUMP_COST = 0.055f;
+    static final float DIVE_COST = 0.068f;
     /** Stamina never drops below this: a tired player is slower, not frozen. */
     static final float MIN_STAMINA = 0.15f;
 
@@ -127,7 +140,7 @@ public final class PlayerLocomotion {
         player.previousFacingYaw = player.facingYaw;
         player.tickRecovery(dt);
         player.tickBodyState(dt);
-        updateStamina(player, dt);
+        updateStamina(player, intent, dt);
 
         switch (player.bodyState()) {
             case DIVING -> updateDive(player, dt);
@@ -150,32 +163,34 @@ public final class PlayerLocomotion {
      * Fatigue: running hard costs stamina, standing and walking give it back (slowly; the breaks
      * between rallies restore more). Jumps and dives cost their share when they happen.
      */
-    private void updateStamina(VolleyballPlayer player, float dt) {
+    private void updateStamina(VolleyballPlayer player, MoveIntent intent, float dt) {
         if (!fatigue) {
             player.setStamina(1f);
             return;
         }
         if (player.isAirborne() || !player.isUpright()) return;
         float speed = player.groundSpeed();
-        float run = maxRunSpeed(player.attributes);
-        float change;
-        if (speed > run * 1.02f) change = -SPRINT_DRAIN;
-        else if (speed > 2.5f) change = -RUN_DRAIN;
-        else if (speed > 0.6f) change = WALK_RECOVERY;
-        else change = REST_RECOVERY;
-        if (change < 0f && player.has(PlayerTrait.WORKHORSE)) change *= WORKHORSE_DRAIN;
-        player.setStamina(Math.max(Math.min(player.stamina(), MIN_STAMINA), player.stamina() + change * dt));
+        boolean sprinting = intent.sprint && !intent.crouch && intent.direction.len2() > 0.25f && speed > 2.5f;
+        if (sprinting || speed > 2.5f) {
+            spend(player, (sprinting ? SPRINT_DRAIN : RUN_DRAIN) * dt, sprinting);
+        } else {
+            float recovery = speed > 0.6f ? WALK_RECOVERY : REST_RECOVERY;
+            if (player.has(PlayerTrait.QUICK_RECOVERY)) recovery *= 1.65f;
+            player.setStamina(player.stamina() + recovery * dt);
+        }
     }
 
-    private void spend(VolleyballPlayer player, float cost) {
+    private void spend(VolleyballPlayer player, float cost, boolean burst) {
+        if (!fatigue) return;
+        cost *= PlayerAttributes.scale(player.attributes.stamina, 1.20f, 0.78f);
         if (player.has(PlayerTrait.WORKHORSE)) cost *= WORKHORSE_DRAIN;
-        if (fatigue) player.setStamina(Math.max(MIN_STAMINA, player.stamina() - cost));
+        if (burst && player.has(PlayerTrait.EXPLOSIVE)) cost *= 1.25f;
+        player.setStamina(Math.max(Math.min(player.stamina(), MIN_STAMINA), player.stamina() - cost));
     }
 
     private void updateGrounded(VolleyballPlayer player, MoveIntent intent, float dt) {
         player.setCrouching(intent.crouch);
-        // A tired player runs a little slower (at most 12 %).
-        float limit = maxRunSpeed(player.attributes) * player.fatigueFactor(0.12f);
+        float limit = maxRunSpeed(player);
         if (intent.sprint && !intent.crouch) limit *= SPRINT_FACTOR;
         if (intent.crouch) limit *= CROUCH_FACTOR;
         if (intent.jumpChargeLevel > 0f) limit *= CHARGING_FACTOR;
@@ -195,7 +210,7 @@ public final class PlayerLocomotion {
         // Braking (target slower than current, or opposite) is stronger than accelerating.
         boolean braking = targetX * player.velocity.x + targetZ * player.velocity.z
                 < player.velocity.x * player.velocity.x + player.velocity.z * player.velocity.z;
-        float maxChange = acceleration(player.attributes) * (braking ? 1.6f : 1f) * dt;
+        float maxChange = (braking ? 1.6f * acceleration(player.attributes) : acceleration(player)) * dt;
         if (dv > maxChange) {
             dvx *= maxChange / dv;
             dvz *= maxChange / dv;
@@ -211,9 +226,8 @@ public final class PlayerLocomotion {
             // The last step of an approach plants the feet: most of the run-up turns into height.
             player.velocity.x *= TAKEOFF_CARRY;
             player.velocity.z *= TAKEOFF_CARRY;
-            // A tired player jumps a little lower (at most 10 % of the height).
-            player.velocity.y = takeoffSpeed(player, intent.jumpHeightFactor * player.fatigueFactor(0.1f));
-            spend(player, JUMP_COST * Math.max(0.4f, intent.jumpHeightFactor));
+            player.velocity.y = takeoffSpeed(player, intent.jumpHeightFactor);
+            spend(player, JUMP_COST * Math.max(0.4f, intent.jumpHeightFactor), true);
             player.setJumpCharge(0f);
             player.recordTakeoff();
             player.setAirborne(true);
@@ -223,7 +237,6 @@ public final class PlayerLocomotion {
 
     /** Launches a dive in the intended direction (or straight ahead), keeping part of the run-up speed. */
     private void startDive(VolleyballPlayer player, MoveIntent intent) {
-        spend(player, DIVE_COST);
         float dx = intent.direction.x;
         float dz = intent.direction.y;
         float length = (float) Math.sqrt(dx * dx + dz * dz);
@@ -235,7 +248,8 @@ public final class PlayerLocomotion {
             dz /= length;
         }
         float along = Math.max(0f, player.velocity.x * dx + player.velocity.z * dz);
-        float speed = MathUtils.clamp(along + DIVE_BOOST, DIVE_MIN_SPEED, DIVE_MAX_SPEED);
+        float speed = diveLaunchSpeed(player, along);
+        spend(player, DIVE_COST, true);
         player.velocity.set(dx * speed, 0f, dz * speed);
         player.diveDirection.set(dx, 0f, dz);
         // Far off the facing (typically shuffling sideways in the low stance) it is a sideways
@@ -253,11 +267,24 @@ public final class PlayerLocomotion {
             float maxTurn = DIVE_TURN_RATE * dt;
             player.facingYaw = wrap(player.facingYaw + MathUtils.clamp(delta, -maxTurn, maxTurn));
         }
-        float keep = (float) Math.exp(-1.5f * dt);
+        float keep = (float) Math.exp(-DIVE_DRAG * dt);
         player.velocity.x *= keep;
         player.velocity.z *= keep;
         moveHorizontally(player, dt);
         if (player.bodyStateTime() >= DIVE_TIME) player.setBodyState(BodyState.ON_FLOOR);
+    }
+
+    private static float diveLaunchSpeed(VolleyballPlayer player, float along) {
+        return MathUtils.clamp(along + DIVE_BOOST, DIVE_MIN_SPEED, DIVE_MAX_SPEED) * player.fatigueFactor(0.20f);
+    }
+
+    /** Horizontal travel during the dive and the first part of the slide. */
+    public static float diveTravel(VolleyballPlayer player, float along, float elapsed) {
+        float speed = diveLaunchSpeed(player, along);
+        float timeInDive = Math.min(elapsed, DIVE_TIME);
+        float keep = (float) Math.exp(-DIVE_DRAG * timeInDive);
+        float slide = Math.min(elapsed - timeInDive, speed * keep / FLOOR_FRICTION);
+        return speed * ((1f - keep) / DIVE_DRAG + keep * slide) - 0.5f * FLOOR_FRICTION * slide * slide;
     }
 
     private void updateOnFloor(VolleyballPlayer player, float dt) {

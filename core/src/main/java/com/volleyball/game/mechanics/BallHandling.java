@@ -66,11 +66,36 @@ public final class BallHandling {
 
     public enum ServePhase { NONE, HOLDING, TOSSED }
 
+    public enum ContactFeedback {
+        EARLY("Too early · the ball reached you after the input window"),
+        OUT_OF_REACH("Ball out of reach · move closer to the contact point"),
+        JUMP_SERVE("Jump serve · strike while airborne"),
+        RECOVERING("Still getting up · wait until you can play the ball"),
+        OFF_CENTER("Off-center contact · get behind the ball"),
+        OFF_BALANCE("Off-balance contact · steady yourself"),
+        TIRED("Fatigue reduced your control");
+
+        public final String label;
+
+        ContactFeedback(String label) {
+            this.label = label;
+        }
+    }
+
+    public record QuickSet(VolleyballPlayer hitter, SetType type, boolean contested) {
+    }
+
     /** Per-player request, aim and preferred variants. */
     private static final class PlayerState {
         boolean armed;
         ActionKind kind;
         double armedAt;
+        boolean manualAttempt;
+        long manualFlight;
+        boolean needsServeJump;
+        double watchMissUntil = -1;
+        ContactFeedback feedback;
+        double feedbackUntil;
         /** Previous normalized offset per technique, to detect the moment the ball starts moving away. */
         final float[] previousOffsets = new float[ContactType.values().length];
         boolean hasAim;
@@ -78,6 +103,7 @@ public final class BallHandling {
         ServeType serveType = ServeType.FLOAT;
         ServeSpin serveSpin = ServeSpin.TOPSPIN;
         SetType setType = SetType.HIGH_OUTSIDE;
+        QuickSet quickSet;
         AttackType attackType = AttackType.POWER;
         BlockStyle blockStyle = BlockStyle.NORMAL;
         /** The person left the set / shot to the game ("Auto": chosen from the situation at the contact). */
@@ -104,6 +130,8 @@ public final class BallHandling {
     private final List<BallTouchListener> listeners = new ArrayList<>();
 
     private final ContactContext context = new ContactContext();
+    private final QuickSetWindow quickSetWindow = new QuickSetWindow();
+    private final Vector3 quickRead = new Vector3();
     /** Set point or match point: the pressure traits (clutch, nervous) apply. */
     private boolean pressure;
     private final LaunchSolver.Solution solution = new LaunchSolver.Solution();
@@ -164,9 +192,35 @@ public final class BallHandling {
         }
         PlayerState s = states[p.id];
         s.armed = true;
+        s.manualAttempt = false;
+        s.watchMissUntil = -1;
         s.kind = kind;
         s.armedAt = now;
         s.resetOffsets();
+    }
+
+    /** Records a human input so the existing contact window can explain a miss or weak touch. */
+    public void armManual(VolleyballPlayer p, ActionKind kind, double now) {
+        if (!p.isOnCourt()) return;
+        boolean playing = ball.isActive() && !(p == server && servePhase == ServePhase.HOLDING);
+        arm(p, kind, now);
+        if (!playing) return;
+        PlayerState s = states[p.id];
+        s.manualAttempt = true;
+        s.manualFlight = ball.flightSeed();
+        s.needsServeJump = p == server && servePhase == ServePhase.TOSSED && serveType.jump;
+        s.feedback = null;
+    }
+
+    public ContactFeedback contactFeedback(VolleyballPlayer player, double now) {
+        PlayerState s = states[player.id];
+        return now < s.feedbackUntil ? s.feedback : null;
+    }
+
+    private static void feedback(PlayerState s, ContactFeedback feedback, double now) {
+        s.feedback = feedback;
+        s.feedbackUntil = now + 1.6;
+        s.watchMissUntil = -1;
     }
 
     public boolean isArmed(VolleyballPlayer p) {
@@ -174,7 +228,10 @@ public final class BallHandling {
     }
 
     public void cancel(VolleyballPlayer p) {
-        states[p.id].armed = false;
+        PlayerState s = states[p.id];
+        s.armed = false;
+        s.manualAttempt = false;
+        s.watchMissUntil = -1;
     }
 
     /** Floor point the player aims serves, attacks and free balls at. */
@@ -221,7 +278,18 @@ public final class BallHandling {
     }
 
     public void setSetType(VolleyballPlayer p, SetType type) {
-        states[p.id].setType = type;
+        PlayerState s = states[p.id];
+        if (s.setType != type) s.quickSet = null;
+        s.setType = type;
+    }
+
+    public void setQuickSet(VolleyballPlayer setter, QuickSet option) {
+        states[setter.id].quickSet = option;
+    }
+
+    public QuickSet quickSet(VolleyballPlayer setter) {
+        if (!ball.isActive() || teamTouches(setter.side) != 1) return null;
+        return states[setter.id].quickSet;
     }
 
     public AttackType attackType(VolleyballPlayer p) {
@@ -326,6 +394,7 @@ public final class BallHandling {
             case BLOCK -> s.blockStyle = BlockStyle.values()[index - 1];
             case SET -> {
                 s.autoSet = index == 0;
+                s.quickSet = null;
                 if (index > 0) s.setType = SetType.values()[index - 1];
             }
             default -> {
@@ -360,10 +429,17 @@ public final class BallHandling {
         serveType = type;
         states[p.id].serveType = type;
         servePhase = ServePhase.HOLDING;
+        p.setSwingStyle(swingFor(type));
         touchSide = null;
         touchCount = 0;
         lastToucherId = -1;
-        for (PlayerState s : states) s.armed = false;
+        for (PlayerState s : states) {
+            s.armed = false;
+            s.manualAttempt = false;
+            s.watchMissUntil = -1;
+            s.feedback = null;
+            s.quickSet = null;
+        }
         ball.hold(ServeMechanic.holdPoint(p, type, tmp));
     }
 
@@ -386,10 +462,23 @@ public final class BallHandling {
         return server;
     }
 
+    /** Presentation context for remote input hints. No contact or serve is simulated here. */
+    public void present(VolleyballPlayer serving, VolleyballPlayer next, ServePhase phase, ServeType type,
+                        CourtSide lastSide, int touches, int lastPlayer) {
+        server = serving;
+        nextServer = next;
+        servePhase = phase;
+        serveType = type;
+        touchSide = lastSide;
+        touchCount = touches;
+        lastToucherId = lastPlayer;
+    }
+
     /** Ends any serve sequence (e.g. when a drill or rally is reset). */
     public void clearServe() {
         servePhase = ServePhase.NONE;
         server = null;
+        for (PlayerState s : states) s.quickSet = null;
     }
 
     // ------------------------------------------------------------------ touch counting
@@ -430,12 +519,27 @@ public final class BallHandling {
         updateSwingStyles();
         for (VolleyballPlayer p : players) {
             PlayerState s = states[p.id];
-            if (!s.armed) continue;
+            if (!s.armed) {
+                if (s.watchMissUntil >= 0) observeMiss(p, s, now);
+                continue;
+            }
+            if (s.manualAttempt && s.manualFlight != ball.flightSeed()) s.manualAttempt = false;
+            if (p.isAirborne()) s.needsServeJump = false;
             float window = (!p.isUpright() ? DIVE_WINDOW : p.isAirborne() ? AIR_WINDOW : GROUND_WINDOW)
                     * (reachScale(p) > 1f ? ASSIST_WINDOW : 1f);
             double age = now - s.armedAt;
             if (age > window || !ball.isActive()) {
                 s.armed = false;
+                if (s.manualAttempt) {
+                    s.manualAttempt = false;
+                    if (s.needsServeJump) feedback(s, ContactFeedback.JUMP_SERVE, now);
+                    else if (p.bodyState() == com.volleyball.game.entities.BodyState.GETTING_UP) {
+                        feedback(s, ContactFeedback.RECOVERING, now);
+                    } else {
+                        s.watchMissUntil = now + 0.25;
+                        observeMiss(p, s, now);
+                    }
+                }
                 continue;
             }
             // Candidates are in order of preference: the first one within reach is used (a clean
@@ -456,18 +560,43 @@ public final class BallHandling {
                 }
             }
             if (best == null) continue;
-            if (p.isUpright()) p.holdActionPose(poseFor(best));
+            if (p.isUpright() || best == ContactType.DIVE) {
+                boolean setting = best.fingerSet() && teamTouches(p.side) == 1;
+                SetType requested = s.quickSet == null ? s.setType : s.quickSet.type();
+                p.holdActionPose(poseFor(p, best, setting ? requested : null));
+            }
             float previous = s.previousOffsets[best.ordinal()];
             if (bestOffset <= 1f) {
                 boolean movingAway = bestOffset > previous + 1e-4f && previous <= 1f;
                 boolean lastChance = age + dt >= window;
-                if (movingAway || bestOffset < 0.12f || lastChance || aboutToHitBody(p, dt)) {
+                boolean earlyQuick = best == ContactType.OVERHEAD_PASS && bestOffset < 0.43f
+                        && s.quickSet != null && ball.velocity.y <= 0f && teamTouches(p.side) == 1
+                        && Float.isFinite(quickSetWindow.read(s.quickSet.hitter(), ball.position, net.topHeight(), 0f, quickRead));
+                if (movingAway || bestOffset < 0.12f || earlyQuick || lastChance || aboutToHitBody(p, dt)) {
                     contact(p, s, best, bestOffset, now);
                     continue;
                 }
             }
             for (ContactType type : candidates) {
                 s.previousOffsets[type.ordinal()] = ContactZone.normalizedOffset(p, type, serveTypeFor(p), ball.position, tmp) / reachScale(p);
+            }
+        }
+    }
+
+    /** Calls an input early only if the same flight actually enters a legal contact zone shortly after. */
+    private void observeMiss(VolleyballPlayer p, PlayerState s, double now) {
+        if (s.manualFlight != ball.flightSeed() || !p.isOnCourt()) {
+            s.watchMissUntil = -1;
+            return;
+        }
+        if (now >= s.watchMissUntil || !ball.isActive()) {
+            feedback(s, ContactFeedback.OUT_OF_REACH, now);
+            return;
+        }
+        for (ContactType type : candidates(p, s.kind)) {
+            if (ContactZone.normalizedOffset(p, type, serveTypeFor(p), ball.position, tmp) <= reachScale(p)) {
+                feedback(s, ContactFeedback.EARLY, now);
+                return;
             }
         }
     }
@@ -491,6 +620,7 @@ public final class BallHandling {
 
     private List<ContactType> candidates(VolleyballPlayer p, ActionKind kind) {
         if (p == server && servePhase == ServePhase.TOSSED) {
+            if (serveType.jump && !p.isAirborne()) return List.of();
             return ball.velocity.y <= SERVE_MAX_RISING_SPEED ? List.of(ContactType.SERVE) : List.of();
         }
         if (p == server && servePhase == ServePhase.HOLDING) return List.of();
@@ -541,26 +671,45 @@ public final class BallHandling {
     }
 
     static SwingStyle swingFor(ServeType type) {
-        if (!type.overhand) return SwingStyle.UNDERHAND_SERVE;
-        return type.topspin > 0f ? SwingStyle.TOPSPIN_SERVE : SwingStyle.FLOAT_SERVE;
+        return switch (type) {
+            case UNDERHAND -> SwingStyle.UNDERHAND_SERVE;
+            case FLOAT -> SwingStyle.FLOAT_SERVE;
+            case POWER -> SwingStyle.TOPSPIN_SERVE;
+            case JUMP_FLOAT -> SwingStyle.JUMP_FLOAT_SERVE;
+            case JUMP_TOPSPIN -> SwingStyle.JUMP_TOPSPIN_SERVE;
+        };
     }
 
     /** Before the contact the wind-up already shows the shot being prepared (the jump, the toss). */
     private void updateSwingStyles() {
         for (VolleyballPlayer p : players) {
             PlayerState s = states[p.id];
-            if (p == server && servePhase != ServePhase.NONE) p.setSwingStyle(swingFor(serveType));
-            else if (p.isAirborne() && p.actionPose() != ActionPose.SWING) {
+            if (p == server && servePhase != ServePhase.NONE) {
+                p.setSwingStyle(swingFor(serveType));
+                continue;
+            }
+            if (p.actionPose().swing() || p.swingStyle().jumpServe() && p.isAirborne()) continue;
+            if (p.isAirborne() || p.swingStyle().jumpServe()) {
                 p.setSwingStyle(windUpFor(s.kind == ActionKind.SECONDARY && s.armed ? AttackType.TIP : s.attackType));
             }
         }
     }
 
-    private static ActionPose poseFor(ContactType type) {
+    private static ActionPose poseFor(VolleyballPlayer p, ContactType type, SetType set) {
         return switch (type) {
-            case FOREARM_PASS, ONE_ARM, DIVE -> ActionPose.PLATFORM;
-            case OVERHEAD_PASS, ONE_HAND_SET -> ActionPose.OVERHEAD;
-            case ATTACK, SERVE -> ActionPose.SWING;
+            case FOREARM_PASS -> ActionPose.PLATFORM;
+            case ONE_ARM -> ActionPose.ONE_ARM_DIG;
+            case DIVE -> ActionPose.DIVE_DIG;
+            case OVERHEAD_PASS -> {
+                if (set == null) yield ActionPose.OVERHEAD;
+                boolean back = SetType.isBackSet(set);
+                if (set.fast()) yield back ? ActionPose.SET_FAST_BACK : ActionPose.SET_FAST;
+                yield back ? ActionPose.SET_BACK : ActionPose.SET_FORWARD;
+            }
+            case ONE_HAND_SET -> ActionPose.SET_ONE_HAND;
+            case ATTACK -> p.actionPose() == ActionPose.QUICK_READY || p.actionPose() == ActionPose.QUICK_SWING
+                    ? ActionPose.QUICK_SWING : ActionPose.SWING;
+            case SERVE -> ActionPose.SWING;
             case BLOCK -> ActionPose.BLOCK;
         };
     }
@@ -574,6 +723,7 @@ public final class BallHandling {
         c.netTop = net.topHeight();
         c.quality = Math.max(0.05f, Math.min(ContactZone.qualityCap(type),
                 ContactZone.spatialQuality(offset) * ContactZone.balanceFactor(p, type)));
+        c.quality *= ContactZone.fatigueControl(p, type);
         // At set point the clutch players rise and the nervous ones tighten up.
         if (pressure && p.has(PlayerTrait.CLUTCH)) c.quality = Math.min(ContactZone.qualityCap(type), c.quality * 1.08f);
         if (pressure && p.has(PlayerTrait.NERVOUS)) c.quality *= 0.85f;
@@ -586,6 +736,8 @@ public final class BallHandling {
         else if (type == ContactType.SERVE && c.serveType != null) p.setSwingStyle(swingFor(c.serveType));
 
         int previousTouches = teamTouches(p.side);
+        int quickHitterId = -1;
+        float quickFlight = Float.NaN;
         String variant = "";
         if (type == ContactType.SERVE) {
             c.purpose = ContactPurpose.SERVE;
@@ -597,7 +749,7 @@ public final class BallHandling {
             c.purpose = ContactPurpose.ATTACK;
             aimOrDefault(p, s, c.target);
             if (c.attackType == AttackType.TOOL) toolTarget(p, c.target);
-            else if (c.attackType == AttackType.OFF_THE_TOP) offTheTopTarget(p, c.target);
+            c.aimAtFingertips = c.attackType == AttackType.OFF_THE_TOP && offTheTopTarget(p, c.target);
             attackMechanic.attack(c, random, solution);
             variant = c.attackType.label;
         } else if (previousTouches == 0) {
@@ -623,18 +775,20 @@ public final class BallHandling {
             receiveMechanic.pass(c, random, solution);
         } else if (previousTouches == 1) {
             c.purpose = ContactPurpose.SET;
-            c.setType.target(p.side, c.target);
-            c.apex = c.setType.apex;
-            // Set from deep in the court: the ball comes in at an angle, so it is aimed further off the
-            // net (and a fast set gets more height), or a small error puts it into the net.
-            float fromNet = Math.abs(c.ballPosition.x);
-            if (fromNet > 1.5f) {
-                c.target.x += p.side.sign() * Math.min(1.2f, 0.35f * (fromNet - 1.5f));
-                if (c.setType.fast()) c.apex += Math.min(1.2f, 0.4f * (fromNet - 1.5f));
+            QuickSet option = s.quickSet;
+            if (option != null && option.hitter().side == p.side && type == ContactType.OVERHEAD_PASS && c.quality >= 0.38f) {
+                quickFlight = quickSetWindow.read(option.hitter(), c.ballPosition, c.netTop, 0f, c.target);
+            }
+            if (Float.isFinite(quickFlight)) {
+                c.setType = option.type();
+                quickHitterId = option.hitter().id;
+                setMechanic.leadQuick(c, quickFlight, random, solution);
+            } else {
+                c.apex = c.setType.targetFrom(p.side, Math.abs(c.ballPosition.x), c.target);
+                if (type.fingerSet()) setMechanic.set(c, random, solution);
+                else receiveMechanic.pass(c, random, solution);
             }
             variant = c.setType.label;
-            if (type.fingerSet()) setMechanic.set(c, random, solution);
-            else receiveMechanic.pass(c, random, solution); // bump set
         } else {
             c.purpose = ContactPurpose.SEND_OVER;
             aimOrDefault(p, s, c.target);
@@ -645,14 +799,23 @@ public final class BallHandling {
 
         ball.hit(solution.velocity, solution.spin, random.nextLong());
         collisions.ignoreBodyUntil(p.id, now + BODY_IGNORE_AFTER_CONTACT);
-        if (p.isUpright()) p.setActionPose(poseFor(type), 0.35f);
+        if (p.isUpright() || type == ContactType.DIVE) {
+            ActionPose pose = poseFor(p, type, c.purpose == ContactPurpose.SET ? c.setType : null);
+            float duration = pose == ActionPose.QUICK_SWING ? 0.22f : pose.fastSet() || type == ContactType.DIVE ? 0.23f : 0.35f;
+            p.setActionPose(pose, duration);
+            if (pose.overhead() || pose.swing()) p.recordActionContact(c.ballPosition);
+        }
+        if (quickHitterId >= 0) optionHitterReady(quickHitterId);
         s.armed = false;
 
         countTouch(p, now);
 
         PassRating rating = null;
         float miss = Float.NaN;
-        if (c.purpose == ContactPurpose.PASS || c.purpose == ContactPurpose.SET) {
+        if (quickHitterId >= 0) {
+            miss = predictor.positionAt(ball, quickFlight, quickRead).dst(c.target);
+            rating = PassRating.classify(miss, quickRead.x * p.side.sign() < 0f);
+        } else if (c.purpose == ContactPurpose.PASS || c.purpose == ContactPurpose.SET) {
             prediction.watchHeight = c.target.y;
             predictor.predict(ball, 6f, prediction);
             prediction.watchHeight = Float.NaN;
@@ -666,8 +829,24 @@ public final class BallHandling {
             rating = PassRating.classify(miss, overNet);
         }
         BallTouch touch = new BallTouch(p.id, p.side, type, c.purpose, c.quality, rating, miss,
-                c.ballPosition.cpy(), p.position.cpy(), p.isAirborne(), touchCount, ball.velocity.cpy(), variant, now);
+                c.ballPosition.cpy(), p.position.cpy(), p.isAirborne(), touchCount, ball.velocity.cpy(), variant, now,
+                ball.velocity.dst(c.incomingVelocity), quickHitterId);
+        if (s.manualAttempt) {
+            s.manualAttempt = false;
+            if (c.quality < 0.42f || rating == PassRating.LIMITED || rating == PassRating.EMERGENCY) {
+                if (offset > 0.51f) feedback(s, ContactFeedback.OFF_CENTER, now);
+                else if (ContactZone.balanceFactor(p, type) < 0.78f) feedback(s, ContactFeedback.OFF_BALANCE, now);
+                else if (ContactZone.fatigueControl(p, type) < 0.85f) feedback(s, ContactFeedback.TIRED, now);
+            }
+        }
         for (BallTouchListener listener : listeners) listener.onBallTouch(touch);
+    }
+
+    private void optionHitterReady(int hitterId) {
+        VolleyballPlayer hitter = player(hitterId);
+        if (hitter == null) return;
+        if (hitter.actionPose().swing() && hitter.isActionPoseHeld()) hitter.holdActionPose(ActionPose.QUICK_SWING);
+        else if (!hitter.actionPose().swing()) hitter.setActionPose(ActionPose.QUICK_READY, 0.35f);
     }
 
     /**
@@ -675,6 +854,14 @@ public final class BallHandling {
      * count as one of the blocking team's three touches; the next touch by that team is its first.
      */
     public void onBallContact(BallContact contact) {
+        if (contact.kind() == ColliderKind.FLOOR) {
+            for (PlayerState s : states) {
+                if ((!s.manualAttempt && s.watchMissUntil < 0) || s.manualFlight != ball.flightSeed()) continue;
+                s.manualAttempt = false;
+                feedback(s, s.needsServeJump ? ContactFeedback.JUMP_SERVE : ContactFeedback.OUT_OF_REACH, contact.time());
+            }
+            return;
+        }
         if (contact.kind() == ColliderKind.PLAYER_BODY) {
             // The ball bouncing off a body is a touch of that player's team too.
             VolleyballPlayer touched = player(contact.playerId());
@@ -688,12 +875,14 @@ public final class BallHandling {
         if (contact.time() - s.lastBlockTouch < BLOCK_TOUCH_COOLDOWN) return;
         s.lastBlockTouch = contact.time();
         touchSide = blocker.side;
+        for (PlayerState state : states) state.quickSet = null;
         touchCount = 0;
         lastToucherId = blocker.id;
         lastTouchTime = contact.time();
         BallTouch touch = new BallTouch(blocker.id, blocker.side, ContactType.BLOCK, ContactPurpose.BLOCK,
                 Math.min(1f, blocker.blockPenetration() / 0.3f), null, Float.NaN, contact.position().cpy(),
-                blocker.position.cpy(), blocker.isAirborne(), 0, ball.velocity.cpy(), s.blockStyle.label, contact.time());
+                blocker.position.cpy(), blocker.isAirborne(), 0, ball.velocity.cpy(), s.blockStyle.label, contact.time(),
+                contact.impactSpeed());
         for (BallTouchListener listener : listeners) listener.onBallTouch(touch);
     }
 
@@ -732,6 +921,7 @@ public final class BallHandling {
     private void countTouch(VolleyballPlayer p, double now) {
         boolean sameAction = touchSide == p.side && p.id == lastToucherId && now - lastTouchTime < BallTouch.SAME_ACTION_WINDOW;
         if (!sameAction) {
+            for (PlayerState state : states) state.quickSet = null;
             if (touchSide == p.side) touchCount++;
             else {
                 touchSide = p.side;
@@ -743,37 +933,27 @@ public final class BallHandling {
     }
 
     /**
-     * Off the top of the block: if opponents are up in the block in front of the hitter, drive the
-     * ball through the middle of their hands towards a spot well beyond the end line. The line is
-     * nearly flat, so it meets the fingertips and the ball flies on, long and out. With no block
-     * the aimed spot stays (and the drive is usually out).
+     * Aim a grazing shot above a real fingertip collider. A point between blockers, or merely
+     * beyond the end line, can send the ball cleanly past the hands.
      */
-    void offTheTopTarget(VolleyballPlayer hitter, Vector3 out) {
-        float blockZ = 0f;
-        float blockX = 0f;
-        int blockers = 0;
+    boolean offTheTopTarget(VolleyballPlayer hitter, Vector3 out) {
+        float closest = Float.POSITIVE_INFINITY;
         for (VolleyballPlayer o : players) {
-            if (o.side == hitter.side || !o.isAirborne() || Math.abs(o.position.x) > BlockMechanic.MAX_NET_DISTANCE + 0.3f) continue;
-            if (Math.abs(o.position.z - ball.position.z) > 1.6f) continue;
-            blockZ += o.position.z;
-            blockX += o.position.x;
-            blockers++;
+            if (o.side == hitter.side || !o.isOnCourt() || !o.isBlocking()) continue;
+            for (int hand = -1; hand <= 1; hand += 2) {
+                BlockMechanic.fingertip(o, hand, tmp);
+                if ((tmp.x - ball.position.x) * o.side.sign() <= 0.05f
+                        || Math.abs(tmp.z - ball.position.z) > 1.6f
+                        || tmp.y < net.topHeight()) continue;
+                float distance = tmp.dst2(ball.position);
+                if (distance >= closest) continue;
+                closest = distance;
+                out.set(tmp);
+                out.y += (Ball.RADIUS + BlockMechanic.HAND_RADIUS) * 0.70f;
+            }
         }
-        if (blockers == 0) return;
-        blockZ /= blockers;
-        blockX /= blockers;
-        float hx = ball.position.x;
-        float hz = ball.position.z;
-        float towardsBlock = blockX - hx;
-        if (Math.abs(towardsBlock) < 0.05f) return;
-        // Extend the line from the contact through the block to well beyond the opponent's end line.
-        float farX = hitter.side.opposite().sign() * (CourtDimensions.HALF_LENGTH + OFF_THE_TOP_BEYOND);
-        float t = (farX - hx) / towardsBlock;
-        out.set(farX, 0f, hz + (blockZ - hz) * t);
+        return Float.isFinite(closest);
     }
-
-    /** How far beyond the end line (m) a shot off the top of the block is aimed. */
-    static final float OFF_THE_TOP_BEYOND = 2.5f;
 
     private VolleyballPlayer player(int id) {
         for (VolleyballPlayer p : players) if (p.id == id) return p;

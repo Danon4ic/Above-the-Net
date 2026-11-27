@@ -123,12 +123,14 @@ public final class PauseMenu implements Disposable {
 
         batch.begin();
         UiKit.text(batch, title, "PAUSED", x0, top, panelW, Align.center, false, UiKit.TEXT, appear);
-        UiKit.text(batch, small, subtitle.toUpperCase(java.util.Locale.ROOT), x0, top - 56f * s, panelW, Align.center, false, UiKit.TEXT_DIM, appear);
+        UiKit.text(batch, small, subtitle.toUpperCase(java.util.Locale.ROOT), x0 + 20f * s, top - 56f * s,
+                panelW - 40f * s, Align.center, false, UiKit.TEXT_DIM, appear);
         for (int i = 0; i < actions.size(); i++) {
             float rowY = listTop - (i + 1) * rowH;
             boolean sel = i == selected;
             UiKit.text(batch, item, actions.get(i).label.toUpperCase(java.util.Locale.ROOT), rows[i][0] + 24f * s + (sel ? 6f * s : 0f),
-                    rowY + rowH / 2f + item.getCapHeight() / 2f, sel ? UiKit.TEXT : UiKit.TEXT_DIM, appear);
+                    rowY + rowH / 2f + item.getCapHeight() / 2f, rows[i][2] - 54f * s, Align.left, false,
+                    sel ? UiKit.TEXT : UiKit.TEXT_DIM, appear);
         }
         batch.end();
     }

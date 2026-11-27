@@ -933,7 +933,7 @@ public final class SettingsView {
         for (Category c : Category.values()) {
             float[] r = tabRects[c.ordinal()];
             Color col = c == category ? UiKit.TEXT : c.ordinal() == hoverTab ? UiKit.TEXT : UiKit.TEXT_DIM;
-            UiKit.text(batch, tabFont, tabLabel(c), r[0] + tabInset, tabY, col, alpha);
+            UiKit.text(batch, tabFont, tabLabel(c), r[0] + tabInset, tabY, r[2] - 2f * tabInset, Align.left, false, col, alpha);
         }
         for (int i = 0; i < rows.size(); i++) {
             Setting<?> st = rows.get(i);
@@ -942,10 +942,14 @@ public final class SettingsView {
             float ty = r[1] + r[3] / 2f + labelFont.getCapHeight() / 2f;
             float h = rowHighlight[i];
             float lx = r[0] + 22f * s;
-            UiKit.text(batch, labelFont, st.label, lx, ty, h > 0.5f ? UiKit.TEXT : UiKit.TEXT_DIM, alpha * appear);
-            float after = lx + UiKit.width(labelFont, st.label) + 10f * s;
+            float labelW = c[0] - lx - 14f * s;
+            float tagW = st.restart ? UiKit.width(tagFont, "RESTART") + 1f : 0f;
+            float titleW = st.restart ? labelW - tagW - 10f * s : labelW;
+            String fitted = UiKit.fit(labelFont, st.label, titleW - 1f);
+            UiKit.text(batch, labelFont, fitted, lx, ty, titleW, Align.left, false, h > 0.5f ? UiKit.TEXT : UiKit.TEXT_DIM, alpha * appear);
             if (st.restart) {
-                UiKit.text(batch, tagFont, "RESTART", after, ty - 3f * s, UiKit.TEXT_FAINT, alpha * appear);
+                float after = lx + UiKit.width(labelFont, fitted) + 10f * s;
+                UiKit.text(batch, tagFont, "RESTART", after, ty - 3f * s, tagW, Align.left, false, UiKit.TEXT_FAINT, alpha * appear);
             }
             drawRowText(batch, st, i, c, valueFont, alpha * appear);
         }
@@ -959,7 +963,8 @@ public final class SettingsView {
         float age = time - statusTime;
         if (status != null && age < 3.5f) {
             float a = Math.min(1f, Math.min(age / 0.15f, (3.5f - age) / 0.4f));
-            UiKit.text(batch, helpFont, status, panelX + pad, by + buttonH + 16f * s, statusWarning ? UiKit.RED : UiKit.GREEN, alpha * a);
+            UiKit.text(batch, helpFont, status, panelX + pad, by + buttonH + 16f * s, panelW - 2f * pad, Align.left, false,
+                    statusWarning ? UiKit.RED : UiKit.GREEN, alpha * a);
         } else if (dirty) {
             UiKit.text(batch, helpFont, "Changes not applied yet", panelX + pad, by + buttonH + 16f * s, UiKit.JADE, alpha);
         }

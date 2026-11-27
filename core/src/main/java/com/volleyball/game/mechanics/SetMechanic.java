@@ -3,6 +3,8 @@ package com.volleyball.game.mechanics;
 import com.volleyball.game.entities.PlayerAttributes;
 import com.volleyball.game.entities.PlayerTrait;
 import com.volleyball.game.physics.LaunchSolver;
+import com.volleyball.game.physics.PhysicsConstants;
+import com.volleyball.game.physics.TrajectoryPredictor;
 
 import java.util.Random;
 
@@ -24,19 +26,34 @@ public final class SetMechanic {
     }
 
     public void set(ContactContext c, Random random, LaunchSolver.Solution out) {
-        float skill = PlayerAttributes.normalized(c.player.attributes.setting);
         if (!solver.solveArc(c.ballPosition, c.target, c.apex, 0f, out)) {
             out.velocity.set((c.target.x - c.ballPosition.x) * 0.4f, 6f, (c.target.z - c.ballPosition.z) * 0.4f);
         }
         // Quick sets (low apex relative to the contact) are the hardest to place.
         float tempo = ExecutionError.clamp01(1f - (c.apex - c.ballPosition.y) / 4f);
+        applyErrors(c, random, out, tempo, 1f);
+    }
+
+    /** A short feed to a hand at a given time, with extra execution error at this tempo. */
+    public void leadQuick(ContactContext c, float flight, Random random, LaunchSolver.Solution out) {
+        out.velocity.set(c.target).sub(c.ballPosition).scl(1f / flight);
+        out.velocity.y += 0.5f * PhysicsConstants.GRAVITY * (flight + TrajectoryPredictor.STEP);
+        // A short flight still loses some horizontal speed to drag.
+        out.velocity.x *= 1.035f;
+        out.velocity.z *= 1.035f;
+        applyErrors(c, random, out, 1f, 1.35f);
+    }
+
+    private void applyErrors(ContactContext c, Random random, LaunchSolver.Solution out, float tempo, float risk) {
+        float skill = PlayerAttributes.normalized(c.player.attributes.setting);
         float difficulty = ReceiveMechanic.difficulty(c.incomingVelocity);
         ExecutionError.deflectRight(out.velocity, c.lateralOffset * 8f);
         float sigma = 1.4f * (1.7f - c.quality) * (1.5f - skill) * (1f + 0.6f * tempo + difficulty);
         // Specialists: the tempo setter places the fast sets, the high-ball setter the high ones.
         if (tempo > 0.5f ? c.player.has(PlayerTrait.TEMPO_SETTER) : c.player.has(PlayerTrait.HIGH_BALL_SETTER)) sigma *= 0.8f;
+        if (SetType.isBackSet(c.setType) && c.player.has(PlayerTrait.BACK_SETTER)) sigma *= 0.70f;
         if (c.type == ContactType.ONE_HAND_SET) sigma *= ONE_HAND_ERROR + tempo;
-        ExecutionError.apply(out.velocity, sigma, 0.035f * (1.6f - c.quality), random);
+        ExecutionError.apply(out.velocity, sigma * risk, 0.035f * risk * (1.6f - c.quality), random);
         // Clean hands leave almost no spin; a sloppy set spins (and in a match may be called a double).
         float spinNoise = 4f * (1.1f - c.quality);
         out.spin.set(ExecutionError.gaussian(random) * spinNoise, ExecutionError.gaussian(random) * spinNoise,

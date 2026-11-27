@@ -42,11 +42,13 @@ public final class UdpTransport implements Transport {
 
     /** Client side: talks to the host at {@code host:port}. */
     public static UdpTransport connect(String host, int port) {
+        InetSocketAddress endpoint = new InetSocketAddress(host, port);
+        if (endpoint.isUnresolved()) throw new IllegalArgumentException("Unknown host");
         try {
             DatagramChannel channel = DatagramChannel.open();
             channel.bind(null);
             channel.configureBlocking(false);
-            return new UdpTransport(channel, new InetSocketAddress(host, port));
+            return new UdpTransport(channel, endpoint);
         } catch (IOException e) {
             throw new UncheckedIOException("Cannot open a UDP socket", e);
         }
@@ -75,7 +77,7 @@ public final class UdpTransport implements Transport {
     @Override
     public byte[] poll() {
         try {
-            while (true) {
+            for (int attempts = 0; attempts < 32; attempts++) {
                 receiveBuffer.clear();
                 SocketAddress from = channel.receive(receiveBuffer);
                 if (from == null) return null;
@@ -87,6 +89,7 @@ public final class UdpTransport implements Transport {
                 receiveBuffer.get(message);
                 return message;
             }
+            return null;
         } catch (IOException e) {
             return null;
         }

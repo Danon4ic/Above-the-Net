@@ -12,7 +12,8 @@ import java.util.Objects;
 
 /** Layered pose offsets sampled from the editable Blender actions in art/animation. */
 public enum JumpMotion {
-    PLANT, JUMP_SET, BACK_ATTACK, LANDING;
+    PLANT, JUMP_SET, BACK_ATTACK, LANDING, JUMP_FLOAT_SERVE, JUMP_TOPSPIN_SERVE, QUICK_SET, QUICK_ATTACK,
+    WING_ATTACK, BLOCK_JUMP;
 
     public static final int LEAN = 0, TWIST = 1, BANK = 2, COMPRESSION = 3;
     public static final int LEFT_ARM = 4, RIGHT_ARM = 5;

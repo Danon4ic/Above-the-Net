@@ -3,6 +3,7 @@ package com.volleyball.game.mechanics;
 import com.badlogic.gdx.math.Vector3;
 import com.volleyball.game.entities.SwingStyle;
 import com.volleyball.game.entities.VolleyballPlayer;
+import com.volleyball.game.physics.ColliderKind;
 import com.volleyball.game.physics.LaunchSolver;
 import com.volleyball.game.physics.TrajectoryPredictor;
 import com.volleyball.game.world.CourtDimensions;
@@ -68,39 +69,38 @@ class FeintTopAndOneHandTest {
     }
 
     @Test
-    void offTheTopGoesThroughTheBlockersFingertipsAndLong() {
+    void offTheTopGrazesTheRaisedHandAndFliesLong() {
         Harness h = new Harness();
         VolleyballPlayer hitter = h.home(3);
         VolleyballPlayer blocker = h.world.away().players().get(2);
-        hitter.placeAt(-0.7f, 1.0f);
-        blocker.placeAt(0.45f, 1.3f);
+        hitter.placeAt(-1.2f, 1.0f);
+        blocker.placeAt(0.5f, 1.3f);
         blocker.setAirborne(true);
-        Vector3 contact = new Vector3(-0.6f, 3.3f, 1.0f);
+        blocker.position.y = 0.8f;
+        Vector3 contact = new Vector3(-0.8f, blocker.standingReach() + 0.92f, 1.0f);
         h.world.ball().launch(contact, new Vector3(0f, -1f, 0f), Vector3.Zero, 1);
+        h.step();
+        assertTrue(blocker.isBlocking());
+
         Vector3 target = new Vector3(4f, 0f, 1f);
-        h.handling.offTheTopTarget(hitter, target);
-        assertEquals(CourtDimensions.HALF_LENGTH + BallHandling.OFF_THE_TOP_BEYOND, target.x, 1e-4f, "aimed well beyond the end line");
-        assertTrue(target.z > 1.0f, "on the line from the contact through the block: " + target.z);
+        assertTrue(h.handling.offTheTopTarget(hitter, target));
+        Vector3 fingertip = BlockMechanic.fingertip(blocker, -1, new Vector3());
+        assertEquals(fingertip.x, target.x, 1e-5f);
+        assertEquals(fingertip.z, target.z, 1e-5f);
+        assertTrue(target.y > fingertip.y);
 
         hitter.attributes.attackPower = 80;
         LaunchSolver.Solution s = new LaunchSolver.Solution();
         ContactContext c = attack(h, hitter, AttackType.OFF_THE_TOP, contact, target);
         c.quality = 1f;
+        c.aimAtFingertips = true;
         new AttackMechanic(h.solver).attack(c, new Random(2), s);
-        // Where the line crosses the blocker's plane: at the height of the hands, not down into the court.
-        TrajectoryPredictor.Prediction p = new TrajectoryPredictor.Prediction();
-        h.world.predictor().predict(contact, s.velocity, s.spin, 3f, p);
-        float atBlock = Float.NaN;
-        for (int i = 1; i < p.pathSize(); i++) {
-            Vector3 a = p.path.get(i - 1);
-            Vector3 b = p.path.get(i);
-            if (a.x < blocker.position.x && b.x >= blocker.position.x) {
-                atBlock = a.y + (b.y - a.y) * (blocker.position.x - a.x) / (b.x - a.x);
-                break;
-            }
-        }
-        assertTrue(atBlock > 2.9f && atBlock < 3.6f, "passes the block at fingertip height: " + atBlock);
-        assertTrue(p.lands && p.landing.x > CourtDimensions.HALF_LENGTH, "untouched, it lands long: " + p.landing);
+        h.world.ball().launch(contact, s.velocity, s.spin, 2);
+        Vector3 landing = h.landing(3f);
+        assertTrue(h.contacts.stream().anyMatch(hit -> hit.kind() == ColliderKind.BLOCK && hit.playerId() == blocker.id));
+        assertTrue(h.touches.stream().anyMatch(hit -> hit.type() == ContactType.BLOCK && hit.playerId() == blocker.id));
+        assertNotNull(landing);
+        assertFalse(CourtDimensions.isInsideCourt(landing.x, landing.z, 0f), "the ball flies out: " + landing);
     }
 
     @Test
@@ -110,7 +110,7 @@ class FeintTopAndOneHandTest {
         hitter.placeAt(-0.7f, 1.0f);
         h.world.ball().launch(new Vector3(-0.6f, 3.3f, 1.0f), new Vector3(0f, -1f, 0f), Vector3.Zero, 1);
         Vector3 target = new Vector3(4f, 0f, 1f);
-        h.handling.offTheTopTarget(hitter, target);
+        assertFalse(h.handling.offTheTopTarget(hitter, target));
         assertEquals(4f, target.x, 1e-6f);
     }
 

@@ -1,11 +1,13 @@
 package com.volleyball.game.match;
 
+import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Vector2;
 import com.volleyball.game.ai.CoachAI;
 import com.volleyball.game.ai.Difficulty;
 import com.volleyball.game.ai.OffenseSystem;
 import com.volleyball.game.rules.SubstitutionManager;
 import com.volleyball.game.ai.TeamAI;
+import com.volleyball.game.entities.ActionPose;
 import com.volleyball.game.entities.PlayerRole;
 import com.volleyball.game.entities.Team;
 import com.volleyball.game.entities.VolleyballPlayer;
@@ -359,7 +361,7 @@ public final class MatchController {
         rallies++;
         statistics.onPoint(lastPoint);
         // A breather between rallies (more at the end of a set).
-        for (VolleyballPlayer p : world.players()) p.rest(lastPoint.setWon() ? 0.8f : 0.3f);
+        for (VolleyballPlayer p : world.players()) p.rest(lastPoint.setWon() ? 0.8f : 0.07f);
         world.ballHandling().clearServe();
         world.ballHandling().setNextServer(lastPoint.matchWon() ? null : world.player(rules.currentServer()));
         CourtSide winner = lastPoint.outcome().winner();
@@ -481,15 +483,35 @@ public final class MatchController {
                 float dz = spot.y - p.position.z;
                 boolean arrived = dx * dx + dz * dz <= ARRIVAL_RADIUS * ARRIVAL_RADIUS
                         && p.isUpright() && !p.isAirborne() && p.groundSpeed() < 0.85f;
+                if (p.actionPose() == ActionPose.BENCH_RISE) {
+                    world.intent(p).clear();
+                    ready = false;
+                    continue;
+                }
                 if (arrived) {
                     world.intent(p).clear();
                     if (zone < 0 && p.isOnCourt()) {
-                        p.sitOnBench(spot.x, spot.y);
-                        p.setOnCourt(false);
+                        world.intent(p).facingYaw = world.benchSign() * MathUtils.HALF_PI;
+                        if (p.actionPose() == ActionPose.BENCH_SIT && p.actionPoseProgress() >= 0.96f) {
+                            p.setOnCourt(false);
+                        } else {
+                            if (p.actionPose() != ActionPose.BENCH_SIT && Math.abs(dz) > 0.008f) {
+                                world.intent(p).direction.set(dx, dz).scl(2.5f);
+                            } else if (p.actionPose() != ActionPose.BENCH_SIT && p.facingZ() * world.benchSign() < -0.98f) {
+                                p.velocity.setZero();
+                                p.setActionPose(ActionPose.BENCH_SIT, 0.44f);
+                            }
+                            ready = false;
+                        }
                     }
                 } else {
-                    p.setOnCourt(true);
-                    ai(team.side).walkToLineup(p, spot.x, spot.y);
+                    if (p.isOnCourt()) {
+                        ai(team.side).walkToLineup(p, spot.x, spot.y);
+                    } else {
+                        p.setOnCourt(true);
+                        p.setActionPose(ActionPose.BENCH_RISE, 0.45f);
+                        world.intent(p).clear();
+                    }
                     ready = false;
                 }
             }
@@ -526,6 +548,39 @@ public final class MatchController {
 
     public Phase phase() {
         return phase;
+    }
+
+    /** Mirrors host presentation state. The client never advances this controller's rules. */
+    public void presentState(Phase next, float seconds, CourtSide timeout, int homeLeft, int awayLeft, int rallyCount) {
+        phase = next;
+        timer = seconds;
+        timeoutSide = timeout;
+        timeoutsUsed[0] = TIMEOUTS_PER_SET - homeLeft;
+        timeoutsUsed[1] = TIMEOUTS_PER_SET - awayLeft;
+        rallies = rallyCount;
+    }
+
+    public void presentPoint(MatchRules.PointSummary point) {
+        lastPoint = point;
+        statistics.onPoint(point);
+        for (MatchListener listener : listeners) listener.onPoint(point, rules.score());
+    }
+
+    public void presentServeWhistle(VolleyballPlayer server) {
+        if (server != null) for (MatchListener listener : listeners) listener.onServeWhistle(server, rules.score());
+    }
+
+    public void presentSubstitution(CourtSide side, VolleyballPlayer out, VolleyballPlayer in, int used) {
+        if (out == null || in == null) return;
+        for (MatchListener listener : listeners) listener.onSubstitution(side, out, in, used);
+    }
+
+    public void presentTimeout(CourtSide side, int used) {
+        for (MatchListener listener : listeners) listener.onTimeout(side, used);
+    }
+
+    public void presentChangeOfEnds(boolean swapped) {
+        for (MatchListener listener : listeners) listener.onChangeOfEnds(swapped);
     }
 
     public MatchRules rules() {
